@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
+from hydra.core.config_store import ConfigStore
+
 
 @dataclass
 class Files:
@@ -17,3 +19,6 @@ class Paths:
 class LTDSConfig:
     files: Files
     paths: Paths
+
+cs = ConfigStore.instance()
+cs.store(name="ltds_config", node=LTDSConfig)

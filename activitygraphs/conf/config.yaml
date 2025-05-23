@@ -5,5 +5,5 @@ files:
   raw_stage: Stage.xlsx
 
 paths:
-  data_raw: ../data/raw
+  data_raw: data/raw
   data_raw_ltds: ${paths.data_raw}/LTDS0515
