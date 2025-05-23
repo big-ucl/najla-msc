@@ -1,0 +1,9 @@
+files:
+  raw_household: Household.xlsx
+  raw_person: Person.xlsx
+  raw_trip: Trip.xlsx
+  raw_stage: Stage.xlsx
+
+paths:
+  data_raw: ../data/raw
+  data_raw_ltds: ${paths.data_raw}/LTDS0515

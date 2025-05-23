@@ -5,9 +5,13 @@ build/
 dist/
 wheels/
 *.egg-info
+outputs
 
 # Virtual environments
 .venv
 
 # Marimo cache
 __marimo__
+
+# Data
+data/raw
