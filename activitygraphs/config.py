@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
+
+from hydra import compose, initialize_config_dir
 from hydra.core.config_store import ConfigStore
 
 
@@ -22,3 +24,9 @@ class LTDSConfig:
 
 cs = ConfigStore.instance()
 cs.store(name="ltds_config", node=LTDSConfig)
+
+def load_config(project_root: Path) -> LTDSConfig:
+    _config_dir = str(project_root / "activitygraphs/conf")
+
+    with initialize_config_dir(version_base=None, config_dir=_config_dir):
+        return compose(config_name="config")

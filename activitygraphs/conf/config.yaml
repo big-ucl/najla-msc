@@ -1,8 +1,8 @@
 files:
-  raw_household: Household.xlsx
-  raw_person: Person.xlsx
-  raw_trip: Trip.xlsx
-  raw_stage: Stage.xlsx
+  raw_household: Household.parquet
+  raw_person: Person.parquet
+  raw_trip: Trip.parquet
+  raw_stage: Stage.parquet
 
 paths:
   data_raw: data/raw

@@ -8,7 +8,7 @@ cs.store(name="ltds_config", node=LTDSConfig)
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: LTDSConfig):
-    print(cfg.paths.data_raw_ltds)
+    print(cfg)
 
 
 if __name__ == "__main__":
