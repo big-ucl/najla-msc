@@ -215,10 +215,18 @@ def _(
 
 
 @app.cell
-def _(Purposes):
+def _(LandUses, Purposes):
     def generate_node_attribute_df(
         single_hh_person_df: pl.DataFrame, single_trip_df: pl.DataFrame
     ):
+        schema_df = pl.DataFrame(schema = {
+            "postcode": pl.String,
+            "is_home": pl.Boolean,
+            "is_work": pl.Boolean,
+            "land_use": LandUses.polars_enum(),
+            "purpose": Purposes.polars_enum(),
+        })
+
         origin_trip_nodes = single_trip_df.select(
             postcode="loc_origin_postcode",
             is_home=False,
@@ -240,7 +248,7 @@ def _(Purposes):
             is_home=True,
             is_work=False,
             land_use=None,
-            purpose=pl.lit(Purposes.HOME, dtype=Purposes.polars_enum()),
+            purpose=pl.lit(Purposes.HOME).cast(Purposes.polars_enum()),
         ).unique()
 
         work_nodes = (
@@ -250,15 +258,13 @@ def _(Purposes):
                 is_home=False,
                 is_work=True,
                 land_use=None,
-                purpose=pl.lit(Purposes.WORK, dtype=Purposes.polars_enum()),
+                purpose=pl.lit(Purposes.WORK).cast(Purposes.polars_enum()),
             )
             .unique()
         )
 
-
-
         nodes = pl.concat(
-            [origin_trip_nodes, dest_trip_nodes, home_nodes, work_nodes]
+            [schema_df, origin_trip_nodes, dest_trip_nodes, home_nodes, work_nodes]
         )
 
         return nodes.group_by("postcode").agg(
@@ -343,16 +349,36 @@ def _(
     new_graph_button,
     trip_df,
 ):
-    from plotting import draw_hh_graph
+    from plotting import draw_hh_graph, line_styles_by_key
 
     _hh_id = new_graph_button.value
 
     nodelist_df, edgelist_df = generate_hh_node_and_edgelist(
         _hh_id, hh_person_df, trip_df
     )
+
     G = generate_hh_graph(nodelist_df, edgelist_df)
-    draw_hh_graph(G, _hh_id)
-    return (G,)
+
+    line_styles = line_styles_by_key(G, key="person_id")
+    draw_hh_graph(G, _hh_id, line_styles=line_styles)
+    return G, edgelist_df, line_styles
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(line_styles):
+    print(line_styles)
+    return
+
+
+@app.cell
+def _(edgelist_df):
+    edgelist_df
+    return
 
 
 @app.cell
