@@ -96,8 +96,8 @@ def _():
         "12",
     ]
 
-    purposes_mapping = { k: v for k, v in zip(purposes_keys, Purposes.names())}
-    land_uses_mapping = { k: v for k, v in zip(land_uses_keys, LandUses.names())}
+    purposes_mapping = {k: v for k, v in zip(purposes_keys, Purposes.names())}
+    land_uses_mapping = {k: v for k, v in zip(land_uses_keys, LandUses.names())}
     return LandUses, Purposes, land_uses_mapping, purposes_mapping
 
 
@@ -144,12 +144,15 @@ def _():
 def _(raw_household_df, raw_person_df):
     SURVEY_START_YEAR = 2000
 
+
     def is_ltds_entry_valid(colname: str) -> bool:
         return (pl.col(colname) != "-1") & (pl.col(colname) != "-2")
 
 
     def combine_postcode_col(pc_out: str, pc_in: str) -> pl.Expr:
-        postcode_non_null = is_ltds_entry_valid(pc_out) & is_ltds_entry_valid(pc_in)
+        postcode_non_null = is_ltds_entry_valid(pc_out) & is_ltds_entry_valid(
+            pc_in
+        )
         return (
             pl.when(postcode_non_null)
             .then(pl.col(pc_out) + " " + pl.col(pc_in))
@@ -203,9 +206,15 @@ def _(
         mode="tdbmmode",
         duration="tdurn",
         distance="tlenn",
-        purpose=pl.col("topurpi").replace(purposes_mapping).cast(Purposes.polars_enum()),
-        purpose_dest=pl.col("tdpurp").replace(purposes_mapping).cast(Purposes.polars_enum()),
-        land_use=pl.col("toland").replace(land_uses_mapping).cast(LandUses.polars_enum()),
+        purpose=pl.col("topurpi")
+        .replace(purposes_mapping)
+        .cast(Purposes.polars_enum()),
+        purpose_dest=pl.col("tdpurp")
+        .replace(purposes_mapping)
+        .cast(Purposes.polars_enum()),
+        land_use=pl.col("toland")
+        .replace(land_uses_mapping)
+        .cast(LandUses.polars_enum()),
         start_time="tstime",
         end_time="tetime",
     )
@@ -219,13 +228,15 @@ def _(LandUses, Purposes):
     def generate_node_attribute_df(
         single_hh_person_df: pl.DataFrame, single_trip_df: pl.DataFrame
     ):
-        schema_df = pl.DataFrame(schema = {
-            "postcode": pl.String,
-            "is_home": pl.Boolean,
-            "is_work": pl.Boolean,
-            "land_use": LandUses.polars_enum(),
-            "purpose": Purposes.polars_enum(),
-        })
+        schema_df = pl.DataFrame(
+            schema={
+                "postcode": pl.String,
+                "is_home": pl.Boolean,
+                "is_work": pl.Boolean,
+                "land_use": LandUses.polars_enum(),
+                "purpose": Purposes.polars_enum(),
+            }
+        )
 
         origin_trip_nodes = single_trip_df.select(
             postcode="loc_origin_postcode",
@@ -349,7 +360,12 @@ def _(
     new_graph_button,
     trip_df,
 ):
-    from plotting import draw_hh_graph, line_styles_by_key
+    from plotting import (
+        draw_hh_graph,
+        line_styles_by_key,
+        node_colours_by_purpose,
+        node_short_labels_by_purpose,
+    )
 
     _hh_id = new_graph_button.value
 
@@ -358,21 +374,12 @@ def _(
     )
 
     G = generate_hh_graph(nodelist_df, edgelist_df)
-
     line_styles = line_styles_by_key(G, key="person_id")
-    draw_hh_graph(G, _hh_id, line_styles=line_styles)
-    return G, edgelist_df, line_styles
+    node_colours = node_colours_by_purpose(G)
+    node_labels = node_short_labels_by_purpose(G)
 
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _(line_styles):
-    print(line_styles)
-    return
+    draw_hh_graph(G, _hh_id, line_styles=line_styles, node_colours=node_colours, node_labels=node_labels)
+    return G, edgelist_df
 
 
 @app.cell
