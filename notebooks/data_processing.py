@@ -14,6 +14,11 @@ with app.setup:
     from config import load_config
     import numpy as np
     import random
+    from pyproj import Transformer
+    import matplotlib.pyplot as plt
+    import contextily as cly
+    import geopandas as gpd
+
 
     # Load configuration from files
     project_root = mo.notebook_dir().parent
@@ -141,12 +146,42 @@ def _():
 
 
 @app.cell
-def _(raw_household_df, raw_person_df):
+def _(raw_person_df):
+    def bng_to_lat_long(df: pl.DataFrame, eastings_col: str, northings_col: str):
+        BNG_EPSG_CODE = 27700
+        LAT_LONG_EPSG_CODE = 4326
+        transformer = Transformer.from_crs(BNG_EPSG_CODE, LAT_LONG_EPSG_CODE)
+
+        return transformer.transform(df[eastings_col], df[northings_col])
+
+
+    df = raw_person_df.head(10)
+    lat, lon = bng_to_lat_long(df, "pwsose", "pwsosn")
+    lat, lon
+    return (bng_to_lat_long,)
+
+
+@app.cell
+def _(bng_to_lat_long, raw_household_df, raw_person_df):
     SURVEY_START_YEAR = 2000
 
 
-    def is_ltds_entry_valid(colname: str) -> bool:
-        return (pl.col(colname) != "-1") & (pl.col(colname) != "-2")
+    def is_ltds_entry_valid(colname: str, dtype="str") -> bool:
+        invalid_values = {"-1", "-2"} if dtype == "str" else {-1, -2}
+        return ~pl.col(colname).is_in(invalid_values)
+
+
+    def propagate_invalid_entries(
+        input_expr: pl.Expr,
+        transformed_expr: pl.Expr,
+        error_value=None,
+        dtype="str",
+    ) -> pl.Expr:
+        return (
+            pl.when(is_ltds_entry_valid(input_expr, dtype=dtype))
+            .then(transformed_expr)
+            .otherwise(error_value)
+        )
 
 
     def combine_postcode_col(pc_out: str, pc_in: str) -> pl.Expr:
@@ -156,8 +191,26 @@ def _(raw_household_df, raw_person_df):
         return (
             pl.when(postcode_non_null)
             .then(pl.col(pc_out) + " " + pl.col(pc_in))
-            .otherwise(-1)
+            .otherwise(None)
         )
+
+
+    def add_lat_lon_columns(
+        df: pl.DataFrame,
+        east: str,
+        north: str,
+        lat: str,
+        lon: str,
+        remove_cols=True,
+    ):
+        lats, lons = bng_to_lat_long(df, east, north)
+
+        df_lat_lon = df.with_columns(
+            propagate_invalid_entries(east, lats, dtype="int").alias(lat),
+            propagate_invalid_entries(north, lons, dtype="int").alias(lon),
+        )
+
+        return df_lat_lon.drop([east, north]) if remove_cols else df_lat_lon
 
 
     def create_hh_person_df(
@@ -168,12 +221,24 @@ def _(raw_household_df, raw_person_df):
             person_id="ppid",
             year=pl.col("pyearid") + SURVEY_START_YEAR,
             loc_work_postcode=combine_postcode_col("pwspcout", "pwspcin"),
+            easting="pwsose",
+            northing="pwsosn",
+        )
+
+        person_df = add_lat_lon_columns(
+            person_df, "easting", "northing", "loc_work_lat", "loc_work_lon"
         )
 
         household_df = raw_household_df.select(
             hh_id="hhid",
             loc_home_postcode=combine_postcode_col("hhpcout", "hhpcin"),
             year=pl.col("hyearid") + SURVEY_START_YEAR,
+            easting="hhose",
+            northing="hhosn",
+        )
+
+        household_df = add_lat_lon_columns(
+            household_df, "easting", "northing", "loc_home_lat", "loc_home_lon"
         )
 
         hh_person_df = person_df.join(household_df, on=["hh_id", "year"])
@@ -182,7 +247,12 @@ def _(raw_household_df, raw_person_df):
 
     hh_person_df = create_hh_person_df(raw_person_df, raw_household_df)
     hh_person_df.head()
-    return SURVEY_START_YEAR, combine_postcode_col, hh_person_df
+    return (
+        SURVEY_START_YEAR,
+        add_lat_lon_columns,
+        combine_postcode_col,
+        hh_person_df,
+    )
 
 
 @app.cell
@@ -190,19 +260,24 @@ def _(
     LandUses,
     Purposes,
     SURVEY_START_YEAR,
+    add_lat_lon_columns,
     combine_postcode_col,
     land_uses_mapping,
     purposes_mapping,
     raw_trip_df,
 ):
-    trip_df = raw_trip_df.select(
+    _trip_df = raw_trip_df.select(
         hh_id="thid",
         person_id="tpid",
         trip_id="ttid",
         trip_number="tseqno",
         year=pl.col("tyearid") + SURVEY_START_YEAR,
         loc_origin_postcode=combine_postcode_col("topcout", "topcin"),
+        o_easting="toose",
+        o_northing="toosn",
         loc_dest_postcode=combine_postcode_col("tdpcout", "tdpcin"),
+        d_easting="tdose",
+        d_northing="tdosn",
         mode="tdbmmode",
         duration="tdurn",
         distance="tlenn",
@@ -217,6 +292,17 @@ def _(
         .cast(LandUses.polars_enum()),
         start_time="tstime",
         end_time="tetime",
+    )
+
+    _trip_df = add_lat_lon_columns(
+        _trip_df, "o_easting", "o_northing", "loc_origin_lat", "loc_origin_lon"
+    )
+    trip_df = add_lat_lon_columns(
+        _trip_df,
+        "d_easting",
+        "d_northing",
+        "loc_destination_lat",
+        "loc_destination_lon",
     )
 
     trip_df.head()
@@ -235,6 +321,8 @@ def _(LandUses, Purposes):
                 "is_work": pl.Boolean,
                 "land_use": LandUses.polars_enum(),
                 "purpose": Purposes.polars_enum(),
+                "lat": pl.Float64(),
+                "lon": pl.Float64(),
             }
         )
 
@@ -244,6 +332,8 @@ def _(LandUses, Purposes):
             is_work=False,
             land_use="land_use",
             purpose="purpose",
+            lat="loc_origin_lat",
+            lon="loc_origin_lon",
         ).unique()
 
         dest_trip_nodes = single_trip_df.select(
@@ -252,6 +342,8 @@ def _(LandUses, Purposes):
             is_work=False,
             land_use=None,
             purpose="purpose_dest",
+            lat="loc_destination_lat",
+            lon="loc_destination_lon",
         ).unique()
 
         home_nodes = single_hh_person_df.select(
@@ -260,6 +352,8 @@ def _(LandUses, Purposes):
             is_work=False,
             land_use=None,
             purpose=pl.lit(Purposes.HOME).cast(Purposes.polars_enum()),
+            lat="loc_home_lat",
+            lon="loc_home_lon",
         ).unique()
 
         work_nodes = (
@@ -270,6 +364,8 @@ def _(LandUses, Purposes):
                 is_work=True,
                 land_use=None,
                 purpose=pl.lit(Purposes.WORK).cast(Purposes.polars_enum()),
+                lat="loc_work_lat",
+                lon="loc_work_lon",
             )
             .unique()
         )
@@ -283,6 +379,8 @@ def _(LandUses, Purposes):
             pl.col("is_work").any(),
             pl.col("land_use").unique().drop_nulls().alias("land_uses"),
             pl.col("purpose").unique().drop_nulls().alias("purposes"),
+            pl.col("lat").drop_nulls().first().alias("lat"),
+            pl.col("lon").drop_nulls().first().alias("lon"),
         )
     return (generate_node_attribute_df,)
 
@@ -336,23 +434,6 @@ def _():
 
 
 @app.cell
-def _(hh_person_df, interesting_hh_id, new_graph_switch):
-    def _draw_new_random_hh_id(value: str) -> str:
-        return hh_person_df.select("hh_id").unique().sample(1)[0, "hh_id"]
-
-
-    new_graph_button = mo.ui.button(
-        label="Click to draw new random graph",
-        disabled=not new_graph_switch.value,
-        value=interesting_hh_id,
-        on_click=_draw_new_random_hh_id,
-    )
-
-    mo.hstack([new_graph_switch, new_graph_button])
-    return (new_graph_button,)
-
-
-@app.cell
 def _(
     generate_hh_graph,
     generate_hh_node_and_edgelist,
@@ -377,14 +458,77 @@ def _(
     line_styles = line_styles_by_key(G, key="person_id")
     node_colours = node_colours_by_purpose(G)
     node_labels = node_short_labels_by_purpose(G)
-
-    draw_hh_graph(G, _hh_id, line_styles=line_styles, node_colours=node_colours, node_labels=node_labels)
-    return G, edgelist_df
+    return (
+        G,
+        draw_hh_graph,
+        line_styles,
+        node_colours,
+        node_labels,
+        nodelist_df,
+    )
 
 
 @app.cell
-def _(edgelist_df):
-    edgelist_df
+def _(hh_person_df, interesting_hh_id, new_graph_switch):
+    def _draw_new_random_hh_id(value: str) -> str:
+        return hh_person_df.select("hh_id").unique().sample(1)[0, "hh_id"]
+
+
+    new_graph_button = mo.ui.button(
+        label="Click to draw new random graph",
+        disabled=not new_graph_switch.value,
+        value=interesting_hh_id,
+        on_click=_draw_new_random_hh_id,
+    )
+
+    mo.hstack([new_graph_switch, new_graph_button])
+    return (new_graph_button,)
+
+
+@app.cell
+def _(
+    G,
+    draw_hh_graph,
+    line_styles,
+    new_graph_button,
+    node_colours,
+    node_labels,
+):
+    fig, ax = draw_hh_graph(
+        G,
+        new_graph_button.value,
+        line_styles=line_styles,
+        node_colours=node_colours,
+        node_labels=node_labels,
+        use_coords=True,
+    )
+
+    fig
+    return (ax,)
+
+
+@app.cell
+def _():
+    generate_map_toggle = mo.ui.run_button(label="Show on map")
+    generate_map_toggle
+    return (generate_map_toggle,)
+
+
+@app.cell
+def _(ax, generate_map_toggle, nodelist_df):
+    def _draw_on_map(ax, nodelist_df):
+        geo = gpd.GeoDataFrame(
+            nodelist_df,
+            geometry=gpd.points_from_xy(nodelist_df["lon"], nodelist_df["lat"]),
+            crs="EPSG:4326",
+        )
+        ax = geo.plot(ax=ax)
+        cly.add_basemap(ax, crs=geo.crs.to_string(), attribution=False)
+        return ax
+
+    mo.stop(not generate_map_toggle.value)
+
+    _draw_on_map(ax, nodelist_df)
     return
 
 

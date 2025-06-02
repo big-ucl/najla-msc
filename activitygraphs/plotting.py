@@ -1,10 +1,11 @@
-import networkx as nx
-import matplotlib.pyplot as plt
 import itertools
 
+import matplotlib.pyplot as plt
+import networkx as nx
 from dataprocessing import Purposes
 
 PURPOSE_IMPORTANCE = [Purposes.HOME, Purposes.WORK, Purposes.EDUCATION]
+
 
 def line_styles_by_key(G: nx.MultiDiGraph, key: str = "person_id"):
     person_ids = [person_id for _, _, person_id in G.edges.data(data=key)]
@@ -36,6 +37,7 @@ def node_colours_by_purpose(G: nx.MultiDiGraph):
 
     return node_colours
 
+
 def node_short_labels_by_purpose(G: nx.MultiDiGraph) -> dict[str, str]:
     node_labels = {}
 
@@ -45,6 +47,7 @@ def node_short_labels_by_purpose(G: nx.MultiDiGraph) -> dict[str, str]:
         node_labels[n] = short_label
 
     return node_labels
+
 
 def _map_purpose_to_colour(purpose: Purposes):
     match Purposes(purpose):
@@ -79,7 +82,7 @@ def _map_purpose_to_colour(purpose: Purposes):
             return "#012749"
         case _:
             raise ValueError(purpose)
-        
+
 
 def _map_purpose_to_short_label(purpose: Purposes):
     match Purposes(purpose):
@@ -129,23 +132,44 @@ def _ax_centered_text(text: str, ax: plt.Axes):
         horizontalalignment="center",
         verticalalignment="center",
         transform=ax.transAxes,
+        color="black"
     )
 
 
-def draw_hh_graph(G: nx.MultiDiGraph, hh_id=None, line_styles=None, node_colours=None, node_labels=None):
+def draw_hh_graph(
+    G: nx.MultiDiGraph,
+    hh_id=None,
+    line_styles=None,
+    node_colours=None,
+    node_labels=None,
+    use_coords=False,
+):
     title = "Activity graph" if hh_id is None else f"Act. graph of household: {hh_id}"
 
     fig, ax = plt.subplots()
-    ax.set_title(title, loc="left")
+    fig.set_facecolor("white")
+    fig.set_size_inches(8, 6)
+
+    ax.set_title(title, loc="left", color="black")
+    ax.axis("off")
 
     if len(G.nodes) == 0:
         _ax_centered_text("No activities.", ax)
 
-    pos = nx.layout.kamada_kawai_layout(G, weight="distance")
+    if use_coords:
+        pos = {node: (data["lon"], data["lat"]) for node, data in G.nodes(data=True)}
+    else:
+        pos = nx.layout.kamada_kawai_layout(G, weight="distance")
+
+
     nx.draw_networkx_nodes(G, pos=pos, ax=ax, node_color=node_colours)
     nx.draw_networkx_labels(G, pos=pos, ax=ax, labels=node_labels, font_color="white")
     nx.draw_networkx_edges(
         G, pos=pos, ax=ax, connectionstyle="arc3,rad=0.1", style=line_styles
     )
 
-    return fig
+    return fig, ax
+
+
+def draw_hh_geo_graph():
+    pass
