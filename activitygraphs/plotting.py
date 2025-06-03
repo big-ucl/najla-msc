@@ -2,9 +2,9 @@ import itertools
 
 import matplotlib.pyplot as plt
 import networkx as nx
-from dataprocessing import Purposes
+from dataprocessing import Purpose
 
-PURPOSE_IMPORTANCE = [Purposes.HOME, Purposes.WORK, Purposes.EDUCATION]
+PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
 
 
 def line_styles_by_key(G: nx.MultiDiGraph, key: str = "person_id"):
@@ -49,71 +49,71 @@ def node_short_labels_by_purpose(G: nx.MultiDiGraph) -> dict[str, str]:
     return node_labels
 
 
-def _map_purpose_to_colour(purpose: Purposes):
-    match Purposes(purpose):
-        case Purposes.HOME:
+def _map_purpose_to_colour(purpose: Purpose):
+    match Purpose(purpose):
+        case Purpose.HOME:
             return "#6929c4"
-        case Purposes.WORK | Purposes.EDUCATION:
+        case Purpose.WORK | Purpose.EDUCATION:
             return "#1192e8"
-        case Purposes.WORK_DELIVERY | Purposes.WORK_OTHER:
+        case Purpose.WORK_DELIVERY | Purpose.WORK_OTHER:
             return "#005d5d"
-        case Purposes.ENTERTAINMENT | Purposes.SPORT | Purposes.LEISURE:
+        case Purpose.ENTERTAINMENT | Purpose.SPORT | Purpose.LEISURE:
             return "#9f1853"
-        case Purposes.SHOPPING_FOOD | Purposes.SHOPPING_OTHER:
+        case Purpose.SHOPPING_FOOD | Purpose.SHOPPING_OTHER:
             return "#fa4d56"
-        case Purposes.PERSONAL_BUSINESS:
+        case Purpose.PERSONAL_BUSINESS:
             return "#570408"
-        case Purposes.HOTEL:
+        case Purpose.HOTEL:
             return "#198038"
         case (
-            Purposes.ESCORT_WORK
-            | Purposes.ESCORT_HEALTH
-            | Purposes.ESCORT_SCHOOL
-            | Purposes.ESCORT_OTHER
+            Purpose.ESCORT_WORK
+            | Purpose.ESCORT_HEALTH
+            | Purpose.ESCORT_SCHOOL
+            | Purpose.ESCORT_OTHER
         ):
             return "#002d9c"
-        case Purposes.WORSHIP:
+        case Purpose.WORSHIP:
             return "#ee538b"
-        case Purposes.OTHER:
+        case Purpose.OTHER:
             return "#b28600"
-        case Purposes.HEALTH:
+        case Purpose.HEALTH:
             return "#009d9a"
-        case Purposes.SOCIAL_VISIT | Purposes.SOCIAL_OTHER:
+        case Purpose.SOCIAL_VISIT | Purpose.SOCIAL_OTHER:
             return "#012749"
         case _:
             raise ValueError(purpose)
 
 
-def _map_purpose_to_short_label(purpose: Purposes):
-    match Purposes(purpose):
-        case Purposes.HOME:
+def _map_purpose_to_short_label(purpose: Purpose):
+    match Purpose(purpose):
+        case Purpose.HOME:
             return "H"
-        case Purposes.WORK:
+        case Purpose.WORK:
             return "W"
-        case Purposes.EDUCATION:
+        case Purpose.EDUCATION:
             return "Ed"
-        case Purposes.WORK_DELIVERY | Purposes.WORK_OTHER:
+        case Purpose.WORK_DELIVERY | Purpose.WORK_OTHER:
             return "Wo"
-        case Purposes.ENTERTAINMENT | Purposes.SPORT | Purposes.LEISURE:
+        case Purpose.ENTERTAINMENT | Purpose.SPORT | Purpose.LEISURE:
             return "L"
-        case Purposes.SHOPPING_FOOD | Purposes.SHOPPING_OTHER:
+        case Purpose.SHOPPING_FOOD | Purpose.SHOPPING_OTHER:
             return "Sh"
-        case Purposes.PERSONAL_BUSINESS | Purposes.HOTEL:
+        case Purpose.PERSONAL_BUSINESS | Purpose.HOTEL:
             return "P"
         case (
-            Purposes.ESCORT_WORK
-            | Purposes.ESCORT_HEALTH
-            | Purposes.ESCORT_SCHOOL
-            | Purposes.ESCORT_OTHER
+            Purpose.ESCORT_WORK
+            | Purpose.ESCORT_HEALTH
+            | Purpose.ESCORT_SCHOOL
+            | Purpose.ESCORT_OTHER
         ):
             return "Es"
-        case Purposes.WORSHIP:
+        case Purpose.WORSHIP:
             return "Wo"
-        case Purposes.OTHER:
+        case Purpose.OTHER:
             return "O"
-        case Purposes.HEALTH:
+        case Purpose.HEALTH:
             return "H"
-        case Purposes.SOCIAL_VISIT | Purposes.SOCIAL_OTHER:
+        case Purpose.SOCIAL_VISIT | Purpose.SOCIAL_OTHER:
             return "So"
         case _:
             raise ValueError(purpose)

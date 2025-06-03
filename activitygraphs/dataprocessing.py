@@ -1,7 +1,9 @@
-from pathlib import Path
 from enum import Enum
+from pathlib import Path
 
+import numpy as np
 import polars as pl
+from pyproj import Transformer
 
 
 def convert_excel_to_parquet(data_path: Path, *files: list[Path]) -> list[Path]:
@@ -17,6 +19,23 @@ def convert_excel_to_parquet(data_path: Path, *files: list[Path]) -> list[Path]:
     return new_files
 
 
+def read_from_parquet(path: Path, schema: dict = None) -> pl.DataFrame:
+    schema = {} if schema is None else schema
+
+    df = pl.read_parquet(path)
+    return pl.DataFrame(df, schema_overrides=schema)
+
+
+def bng_to_lat_long(
+    df: pl.DataFrame, eastings_col: str, northings_col: str
+) -> tuple[np.ndarray, np.ndarray]:
+    BNG_EPSG_CODE = 27700
+    LAT_LONG_EPSG_CODE = 4326
+    transformer = Transformer.from_crs(BNG_EPSG_CODE, LAT_LONG_EPSG_CODE)
+
+    return transformer.transform(df[eastings_col], df[northings_col])
+
+
 class _PolarsEnum(Enum):
     @classmethod
     def names(cls):
@@ -27,7 +46,7 @@ class _PolarsEnum(Enum):
         return pl.Enum(cls)
 
 
-class Purposes(_PolarsEnum):
+class Purpose(_PolarsEnum):
     MISSING = "Missing"
     NOT_ASKED = "Not asked"
     HOME = "Home"
@@ -53,7 +72,7 @@ class Purposes(_PolarsEnum):
     SHOPPING_OTHER = "Shopping - Other"
 
 
-class LandUses(_PolarsEnum):
+class LandUse(_PolarsEnum):
     MISSING = "Missing"
     NOT_ASKED = "Not asked"
     RESIDENTIAL = "Residential"
@@ -68,3 +87,62 @@ class LandUses(_PolarsEnum):
     OTHER = "Other"
     HOSPITAL = "Hospital"
     GP = "GP/Dentist/Other health service"
+
+
+HH_PERSON_SCHEMA = pl.Schema(
+    {
+        "hh_id": pl.String,
+        "person_id": pl.String,
+        "year": pl.Int64,
+        "loc_work_pid": pl.String,
+        "loc_work_lat": pl.Float64,
+        "loc_work_lon": pl.Float64,
+        "loc_home_pid": pl.String,
+        "loc_home_lat": pl.Float64,
+        "loc_home_lon": pl.Float64,
+    }
+)
+
+TRIP_SCHEMA = pl.Schema(
+    {
+        "hh_id": pl.String,
+        "person_id": pl.String,
+        "trip_id": pl.String,
+        "trip_number": pl.Int64,
+        "year": pl.Int64,
+        "mode": pl.Int64,
+        "duration": pl.Int64,
+        "distance": pl.Float64,
+        "purpose": Purpose.polars_enum(),
+        "purpose_dest": Purpose.polars_enum(),
+        "land_use": LandUse.polars_enum(),
+        "start_time": pl.Int64,
+        "end_time": pl.Int64,
+        "loc_origin_pid": pl.String,
+        "loc_origin_lat": pl.Float64,
+        "loc_origin_lon": pl.Float64,
+        "loc_dest_pid": pl.String,
+        "loc_destination_lat": pl.Float64,
+        "loc_destination_lon": pl.Float64,
+    }
+)
+
+def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
+    df_items = set(df.schema.items())
+    schema_items = set(schema.items())
+
+    difference = df_items ^ schema_items
+
+    if difference:
+        raise ValueError(f"Schemas do not match:\nExpected: {schema}\nGot:      {df.schema}\nDifferent elements: {difference}")
+    
+    return df
+
+
+class ActivityDataset:
+    hh_person_df: pl.DataFrame
+    trip_df: pl.DataFrame
+
+    def __init__(self, hh_person_df: pl.DataFrame, trip_df: pl.DataFrame):
+        self.hh_person_df = check_schema(hh_person_df, HH_PERSON_SCHEMA)
+        self.trip_df = check_schema(trip_df, TRIP_SCHEMA)
