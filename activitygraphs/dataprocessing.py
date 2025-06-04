@@ -1,5 +1,6 @@
 from enum import Enum
 from pathlib import Path
+from typing import Self
 
 import numpy as np
 import polars as pl
@@ -127,6 +128,7 @@ TRIP_SCHEMA = pl.Schema(
     }
 )
 
+
 def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
     df_items = set(df.schema.items())
     schema_items = set(schema.items())
@@ -134,15 +136,64 @@ def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
     difference = df_items ^ schema_items
 
     if difference:
-        raise ValueError(f"Schemas do not match:\nExpected: {schema}\nGot:      {df.schema}\nDifferent elements: {difference}")
-    
+        raise ValueError(
+            f"Schemas do not match:\nExpected: {schema}\nGot:      {df.schema}\nDifferent elements: {difference}"
+        )
+
     return df
 
 
 class ActivityDataset:
+    name: str
     hh_person_df: pl.DataFrame
     trip_df: pl.DataFrame
 
-    def __init__(self, hh_person_df: pl.DataFrame, trip_df: pl.DataFrame):
+    _HHP_FILENAME = "hh_person_df.parquet"
+    _TRIP_FILENAME = "trip_df.parquet"
+
+    def __init__(self, name: str, hh_person_df: pl.DataFrame, trip_df: pl.DataFrame):
+        self.name = name
         self.hh_person_df = check_schema(hh_person_df, HH_PERSON_SCHEMA)
         self.trip_df = check_schema(trip_df, TRIP_SCHEMA)
+
+    def save(self, path: Path, dir_name: str = None) -> Path:
+        dir_name = dir_name if dir_name is not None else self.name
+
+        dataset_dir = path / dir_name
+        dataset_dir.mkdir(exist_ok=True)
+
+        hh_path = dataset_dir / self._add_file_prefix(self.name, self._HHP_FILENAME)
+        trip_path = dataset_dir / self._add_file_prefix(self.name, self._TRIP_FILENAME)
+
+        self.hh_person_df.write_parquet(hh_path)
+        self.trip_df.write_parquet(trip_path)
+
+        return dataset_dir
+
+    @classmethod
+    def load(cls, path: Path, dir_name: str, name: str = None) -> Self:
+        name = dir_name if name is None else dir_name
+        dataset_dir = path / dir_name
+
+        hh_path = dataset_dir / cls._add_file_prefix(name, cls._HHP_FILENAME)
+        trip_path = dataset_dir / cls._add_file_prefix(name, cls._TRIP_FILENAME)
+
+        hh_person_df = check_schema(pl.read_parquet(hh_path), HH_PERSON_SCHEMA)
+        trip_df = check_schema(pl.read_parquet(trip_path), TRIP_SCHEMA)
+
+        return ActivityDataset(name, hh_person_df, trip_df)
+
+    @classmethod
+    def exists_on_disk(cls, path: Path, dir_name: str, name: str = None) -> bool:
+        name = dir_name if name is None else dir_name
+        dataset_dir = path / dir_name
+
+        hh_path = dataset_dir / cls._add_file_prefix(name, cls._HHP_FILENAME)
+        trip_path = dataset_dir / cls._add_file_prefix(name, cls._TRIP_FILENAME)
+
+        return dataset_dir.exists() and hh_path.exists() and trip_path.exists()
+
+    @classmethod
+    def _add_file_prefix(cls, name: str, filename: str):
+        name = name if not name else name + "_"
+        return name + filename

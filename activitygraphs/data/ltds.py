@@ -52,7 +52,7 @@ LTDS_LAND_USES = {k: v for k, v in zip(_LTDS_LAND_USES_KEYS, dp.LandUse.names())
 SURVEY_START_YEAR = 2000
 
 
-def read_raw_data(
+def _read_raw_data(
     cfg: LTDSConfig, project_root=None
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     project_root = project_root if project_root is not None else Path(".")
@@ -207,3 +207,12 @@ def create_trip_df(raw_trip_df: pl.DataFrame) -> pl.DataFrame:
     )
 
     return dp.check_schema(trip_df, dp.TRIP_SCHEMA)
+
+
+def read_and_parse_ltds(cfg: LTDSConfig, name: str = "LTDS") -> dp.ActivityDataset:
+    raw_household_df, raw_person_df, raw_trip_df = _read_raw_data(cfg)
+    
+    hh_person_df = create_hh_person_df(raw_person_df, raw_household_df)
+    trip_df = create_trip_df(raw_trip_df)
+
+    return dp.ActivityDataset(name, hh_person_df, trip_df)

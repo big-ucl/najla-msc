@@ -14,6 +14,7 @@ class Files:
 
 @dataclass
 class Paths:
+    data_processed: Path
     data_raw: Path
     data_raw_ltds: Path
 

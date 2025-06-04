@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.13.11"
+__generated_with = "0.13.15"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -33,6 +33,18 @@ with app.setup:
 
 @app.cell
 def _():
+    mo.md(
+        r"""
+    # Excel to parquet conversion
+
+    Does not need to be run unless converting from LTDS Access `.xslx` exports
+    """
+    )
+    return
+
+
+@app.cell
+def _():
     run_button = mo.ui.run_button(
         kind="warn", label="Run excel to parquet conversion"
     )
@@ -53,54 +65,50 @@ def _(run_button):
 
 @app.cell
 def _():
-    from data.ltds import LTDS_PURPOSES, LTDS_LAND_USES
-
-    purposes_mapping = LTDS_PURPOSES
-    land_uses_mapping = LTDS_LAND_USES
-    return
-
-
-@app.cell
-def _():
     mo.md(r"""# Data loading and processing""")
     return
 
 
 @app.cell
 def _():
-    from data.ltds import read_raw_data
-
-    raw_household_df, raw_person_df, raw_trip_df = read_raw_data(cfg)
-    raw_household_df.head()
-    return raw_household_df, raw_person_df, raw_trip_df
+    reprocess_button = mo.ui.run_button(label="Reprocess raw data")
+    reprocess_button
+    return (reprocess_button,)
 
 
 @app.cell
-def _(raw_person_df):
-    from dataprocessing import bng_to_lat_long
+def _(reprocess_button):
+    from dataprocessing import ActivityDataset
+    from data.ltds import read_and_parse_ltds
 
-    df = raw_person_df.head(10)
-    lat, lon = bng_to_lat_long(df, "pwsose", "pwsosn")
-    lat, lon
+    _ltds_name = "LTDS"
+    _dataset_path = Path(cfg.paths.data_processed)
+
+    if (
+        ActivityDataset.exists_on_disk(_dataset_path, _ltds_name)
+        and not reprocess_button.value
+    ):
+        dataset = ActivityDataset.load(_dataset_path, _ltds_name)
+        print(f"Loaded `{dataset.name}` dataset from disk.")
+    else:
+        dataset = read_and_parse_ltds(cfg, name=_ltds_name)
+        dataset.save(_dataset_path)
+        print(f"Read, processed and saved `{dataset.name}` dataset from raw data")
+
+    dataset.name
+    return (dataset,)
+
+
+@app.cell
+def _(dataset):
+    dataset.hh_person_df.head()
     return
 
 
 @app.cell
-def _(raw_household_df, raw_person_df):
-    from data.ltds import create_hh_person_df
-
-    hh_person_df = create_hh_person_df(raw_person_df, raw_household_df)
-    hh_person_df.head()
-    return (hh_person_df,)
-
-
-@app.cell
-def _(raw_trip_df):
-    from data.ltds import create_trip_df
-
-    trip_df = create_trip_df(raw_trip_df)
-    trip_df.head()
-    return (trip_df,)
+def _(dataset):
+    dataset.trip_df.head()
+    return
 
 
 @app.cell
@@ -112,6 +120,7 @@ def _():
 @app.cell
 def _():
     from dataprocessing import Purpose, LandUse
+
 
     def generate_node_attribute_df(
         single_hh_person_df: pl.DataFrame, single_trip_df: pl.DataFrame
@@ -237,11 +246,10 @@ def _():
 
 @app.cell
 def _(
+    dataset,
     generate_hh_graph,
     generate_hh_node_and_edgelist,
-    hh_person_df,
     new_graph_button,
-    trip_df,
 ):
     from plotting import (
         draw_hh_graph,
@@ -253,7 +261,7 @@ def _(
     _hh_id = new_graph_button.value
 
     nodelist_df, edgelist_df = generate_hh_node_and_edgelist(
-        _hh_id, hh_person_df, trip_df
+        _hh_id, dataset.hh_person_df, dataset.trip_df
     )
 
     G = generate_hh_graph(nodelist_df, edgelist_df)
@@ -271,13 +279,19 @@ def _(
 
 
 @app.cell
-def _(hh_person_df, interesting_hh_id, new_graph_switch):
+def _():
+    mo.md("# Visualisation")
+    return
+
+
+@app.cell
+def _(dataset, interesting_hh_id, new_graph_switch):
     def _draw_new_random_hh_id(value: str) -> str:
-        return hh_person_df.select("hh_id").unique().sample(1)[0, "hh_id"]
+        return dataset.hh_person_df.select("hh_id").unique().sample(1)[0, "hh_id"]
 
 
     new_graph_button = mo.ui.button(
-        label="Click to sample new graph from data set ",
+        label="Sample new graph from dataset ",
         disabled=not new_graph_switch.value,
         value=interesting_hh_id,
         on_click=_draw_new_random_hh_id,
@@ -311,7 +325,9 @@ def _(
 
 @app.cell
 def _(new_graph_button):
-    generate_map_toggle = mo.ui.run_button(label=f"Show household {new_graph_button.value} on map")
+    generate_map_toggle = mo.ui.run_button(
+        label=f"Show household {new_graph_button.value} on map"
+    )
     generate_map_toggle
     return (generate_map_toggle,)
 
@@ -327,6 +343,7 @@ def _(ax, generate_map_toggle, nodelist_df):
         ax = geo.plot(ax=ax)
         cly.add_basemap(ax, crs=geo.crs.to_string(), attribution=False)
         return ax
+
 
     mo.stop(not generate_map_toggle.value)
 
