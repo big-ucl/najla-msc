@@ -142,7 +142,7 @@ def create_hh_person_df(
         hh_id="phid",
         person_id="ppid",
         year=pl.col("pyearid") + SURVEY_START_YEAR,
-        loc_work_pid=combine_postcode_col("pwspcout", "pwspcin"),
+        loc_work_locid=combine_postcode_col("pwspcout", "pwspcin"),
         easting="pwsose",
         northing="pwsosn",
     )
@@ -153,7 +153,7 @@ def create_hh_person_df(
 
     household_df = raw_household_df.select(
         hh_id="hhid",
-        loc_home_pid=combine_postcode_col("hhpcout", "hhpcin"),
+        loc_home_locid=combine_postcode_col("hhpcout", "hhpcin"),
         year=pl.col("hyearid") + SURVEY_START_YEAR,
         easting="hhose",
         northing="hhosn",
@@ -181,10 +181,10 @@ def create_trip_df(raw_trip_df: pl.DataFrame) -> pl.DataFrame:
         purpose_dest=pl.col("tdpurp")
         .replace(LTDS_PURPOSES)
         .cast(dp.Purpose.polars_enum()),
-        loc_origin_pid=combine_postcode_col("topcout", "topcin"),
+        loc_origin_locid=combine_postcode_col("topcout", "topcin"),
         o_easting="toose",
         o_northing="toosn",
-        loc_dest_pid=combine_postcode_col("tdpcout", "tdpcin"),
+        loc_dest_locid=combine_postcode_col("tdpcout", "tdpcin"),
         d_easting="tdose",
         d_northing="tdosn",
         land_use=pl.col("toland")
