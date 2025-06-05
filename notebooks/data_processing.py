@@ -78,6 +78,8 @@ def _():
 
 @app.cell
 def _(reprocess_button):
+    import dataprocessing as dp
+
     from dataprocessing import ActivityDataset
     from data.ltds import read_and_parse_ltds
 
@@ -96,7 +98,7 @@ def _(reprocess_button):
         print(f"Read, processed and saved `{dataset.name}` dataset from raw data")
 
     dataset.name
-    return (dataset,)
+    return dataset, dp
 
 
 @app.cell
@@ -119,122 +121,25 @@ def _():
 
 @app.cell
 def _():
-    from dataprocessing import Purpose, LandUse
-
-
-    def generate_node_attribute_df(
-        single_hh_person_df: pl.DataFrame, single_trip_df: pl.DataFrame
-    ):
-        schema_df = pl.DataFrame(
-            schema={
-                "pid": pl.String,
-                "is_home": pl.Boolean,
-                "is_work": pl.Boolean,
-                "land_use": LandUse.polars_enum(),
-                "purpose": Purpose.polars_enum(),
-                "lat": pl.Float64(),
-                "lon": pl.Float64(),
-            }
-        )
-
-        origin_trip_nodes = single_trip_df.select(
-            pid="loc_origin_pid",
-            is_home=False,
-            is_work=False,
-            land_use="land_use",
-            purpose="purpose",
-            lat="loc_origin_lat",
-            lon="loc_origin_lon",
-        ).unique()
-
-        dest_trip_nodes = single_trip_df.select(
-            pid="loc_dest_pid",
-            is_home=False,
-            is_work=False,
-            land_use=None,
-            purpose="purpose_dest",
-            lat="loc_destination_lat",
-            lon="loc_destination_lon",
-        ).unique()
-
-        home_nodes = single_hh_person_df.select(
-            pid="loc_home_pid",
-            is_home=True,
-            is_work=False,
-            land_use=None,
-            purpose=pl.lit(Purpose.HOME).cast(Purpose.polars_enum()),
-            lat="loc_home_lat",
-            lon="loc_home_lon",
-        ).unique()
-
-        work_nodes = (
-            single_hh_person_df.filter(pl.col("loc_work_pid") != "-1")
-            .select(
-                pid="loc_work_pid",
-                is_home=False,
-                is_work=True,
-                land_use=None,
-                purpose=pl.lit(Purpose.WORK).cast(Purpose.polars_enum()),
-                lat="loc_work_lat",
-                lon="loc_work_lon",
-            )
-            .unique()
-        )
-
-        nodes = pl.concat(
-            [schema_df, origin_trip_nodes, dest_trip_nodes, home_nodes, work_nodes]
-        )
-
-        return nodes.group_by("pid").agg(
-            pl.col("is_home").any(),
-            pl.col("is_work").any(),
-            pl.col("land_use").unique().drop_nulls().alias("land_uses"),
-            pl.col("purpose").unique().drop_nulls().alias("purposes"),
-            pl.col("lat").drop_nulls().first().alias("lat"),
-            pl.col("lon").drop_nulls().first().alias("lon"),
-        )
-    return (generate_node_attribute_df,)
+    from graphs import generate_hh_node_and_edgelist, generate_hh_graph, generate_node_attribute_df
+    return (
+        generate_hh_graph,
+        generate_hh_node_and_edgelist,
+        generate_node_attribute_df,
+    )
 
 
 @app.cell
-def _(generate_node_attribute_df):
-    def generate_hh_node_and_edgelist(
-        hh_id: str, hh_person_df: pl.DataFrame, trip_df: pl.DataFrame
-    ):
-        single_hh_person_df = hh_person_df.filter(pl.col("hh_id") == hh_id)
-        single_trip_df = trip_df.filter(pl.col("hh_id") == hh_id)
-
-        node_attribute_df = generate_node_attribute_df(
-            single_hh_person_df, single_trip_df
-        )
-
-        return node_attribute_df, single_trip_df
+def _(dataset, generate_node_attribute_df):
+    ndf = generate_node_attribute_df(dataset.hh_person_df, dataset.trip_df)
+    ndf.head()
+    return
 
 
-    def generate_hh_graph(nodelist_df: pl.DataFrame, edgelist_df: pl.DataFrame):
-        G = nx.from_pandas_edgelist(
-            edgelist_df,
-            source="loc_origin_pid",
-            target="loc_dest_pid",
-            edge_key="trip_id",
-            create_using=nx.MultiDiGraph,
-            edge_attr=[
-                "person_id",
-                "mode",
-                "duration",
-                "distance",
-                "start_time",
-                "end_time",
-            ],
-        )
-
-        node_attribute_dict = nodelist_df.rows_by_key(
-            key="pid", named=True, unique=True
-        )
-        nx.set_node_attributes(G, node_attribute_dict)
-
-        return G
-    return generate_hh_graph, generate_hh_node_and_edgelist
+@app.cell
+def _(dp):
+    dp.Purpose(2097280)
+    return
 
 
 @app.cell
@@ -280,7 +185,7 @@ def _(
 
 @app.cell
 def _():
-    mo.md("# Visualisation")
+    mo.md("""# Visualisation""")
     return
 
 

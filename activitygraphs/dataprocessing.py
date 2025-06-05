@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import IntFlag, auto
 from pathlib import Path
 from typing import Self
 
@@ -37,96 +37,147 @@ def bng_to_lat_long(
     return transformer.transform(df[eastings_col], df[northings_col])
 
 
-class _PolarsEnum(Enum):
+class _PolarsEnum(IntFlag):
     @classmethod
     def names(cls):
-        return [member.value for member in cls]
+        return [cls.description(member) for member in cls]
 
     @classmethod
     def polars_enum(cls):
-        return pl.Enum(cls)
+        return pl.UInt32
+
+    @classmethod
+    def description(cls, member: Self):
+        return cls(member).name
 
 
 class Purpose(_PolarsEnum):
-    MISSING = "Missing"
-    NOT_ASKED = "Not asked"
-    HOME = "Home"
-    WORK = "Work - Usual workplace"
-    WORK_DELIVERY = "Work - Delivery/loading"
-    WORK_OTHER = "Work - Other"
-    ENTERTAINMENT = "Entertainment/recreation"
-    SHOPPING_FOOD = "Shopping - Food"
-    PERSONAL_BUSINESS = "Personal business / use services"
-    EDUCATION = "Education (as a pupil)"
-    HOTEL = "Hotel / holiday home"
-    ESCORT_WORK = "Drop off/pick up someone to/from work"
-    ESCORT_SCHOOL = "Drop off/pick up someone to/from school"
-    ESCORT_HEALTH = "Drop off/pick up someone to/from health visit"
-    WORSHIP = "Worship or religious observance"
-    OTHER = "Other"
-    HEALTH = "Health or medical visit"
-    ESCORT_OTHER = "Drop off/pick up someone to/from other place"
-    SPORT = "Participate in Sport"
-    LEISURE = "Leisure trip - enjoyment"
-    SOCIAL_VISIT = "Visit friends/relatives at home"
-    SOCIAL_OTHER = "Other Social"
-    SHOPPING_OTHER = "Shopping - Other"
+    MISSING = auto()
+    NOT_ASKED = auto()
+    HOME = auto()
+    WORK = auto()
+    WORK_DELIVERY = auto()
+    WORK_OTHER = auto()
+    ENTERTAINMENT = auto()
+    SHOPPING_FOOD = auto()
+    PERSONAL_BUSINESS = auto()
+    EDUCATION = auto()
+    HOTEL = auto()
+    ESCORT_WORK = auto()
+    ESCORT_SCHOOL = auto()
+    ESCORT_HEALTH = auto()
+    WORSHIP = auto()
+    OTHER = auto()
+    HEALTH = auto()
+    ESCORT_OTHER = auto()
+    SPORT = auto()
+    LEISURE = auto()
+    SOCIAL_VISIT = auto()
+    SOCIAL_OTHER = auto()
+    SHOPPING_OTHER = auto()
+
+    @classmethod
+    def description(cls, member: Self):
+        descriptions = {
+            cls.MISSING: "Missing",
+            cls.NOT_ASKED: "Not asked",
+            cls.HOME: "Home",
+            cls.WORK: "Work - Usual workplace",
+            cls.WORK_DELIVERY: "Work - Delivery/loading",
+            cls.WORK_OTHER: "Work - Other",
+            cls.ENTERTAINMENT: "Entertainment/recreation",
+            cls.SHOPPING_FOOD: "Shopping - Food",
+            cls.PERSONAL_BUSINESS: "Personal business / use services",
+            cls.EDUCATION: "Education (as a pupil)",
+            cls.HOTEL: "Hotel / holiday home",
+            cls.ESCORT_WORK: "Drop off/pick up someone to/from work",
+            cls.ESCORT_SCHOOL: "Drop off/pick up someone to/from school",
+            cls.ESCORT_HEALTH: "Drop off/pick up someone to/from health visit",
+            cls.WORSHIP: "Worship or religious observance",
+            cls.OTHER: "Other",
+            cls.HEALTH: "Health or medical visit",
+            cls.ESCORT_OTHER: "Drop off/pick up someone to/from other place",
+            cls.SPORT: "Participate in Sport",
+            cls.LEISURE: "Leisure trip - enjoyment",
+            cls.SOCIAL_VISIT: "Visit friends/relatives at home",
+            cls.SOCIAL_OTHER: "Other Social",
+            cls.SHOPPING_OTHER: "Shopping - Other",
+        }
+
+        return descriptions[member]
 
 
 class LandUse(_PolarsEnum):
-    MISSING = "Missing"
-    NOT_ASKED = "Not asked"
-    RESIDENTIAL = "Residential"
-    OFFICE = "Office"
-    FACTORY = "Factory/warehouse"
-    SCHOOL = "School/College"
-    SHOPS = "Shops"
-    PUBLIC_BUILDING = "Public Buildings"
-    OPEN_SPACE = "Open space"
-    MYSTERY = "MYSTERY LAND USE"
-    WORSHIP = "Place of worship"
-    OTHER = "Other"
-    HOSPITAL = "Hospital"
-    GP = "GP/Dentist/Other health service"
+    MISSING = auto()
+    NOT_ASKED = auto()
+    RESIDENTIAL = auto()
+    OFFICE = auto()
+    FACTORY = auto()
+    SCHOOL = auto()
+    SHOPS = auto()
+    PUBLIC_BUILDING = auto()
+    OPEN_SPACE = auto()
+    MYSTERY = auto()
+    WORSHIP = auto()
+    OTHER = auto()
+    HOSPITAL = auto()
+    GP = auto()
+
+    @classmethod
+    def description(cls, member: Self):
+        descriptions = {
+            cls.MISSING: "Missing",
+            cls.NOT_ASKED: "Not asked",
+            cls.RESIDENTIAL: "Residential",
+            cls.OFFICE: "Office",
+            cls.FACTORY: "Factory/warehouse",
+            cls.SCHOOL: "School/College",
+            cls.SHOPS: "Shops",
+            cls.PUBLIC_BUILDING: "Public Buildings",
+            cls.OPEN_SPACE: "Open space",
+            cls.MYSTERY: "MYSTERY LAND USE",
+            cls.WORSHIP: "Place of worship",
+            cls.OTHER: "Other",
+            cls.HOSPITAL: "Hospital",
+            cls.GP: "GP/Dentist/Other health service",
+        }
+
+        return descriptions[member]
 
 
-HH_PERSON_SCHEMA = pl.Schema(
-    {
-        "hh_id": pl.String,
-        "person_id": pl.String,
-        "year": pl.Int64,
-        "loc_work_locid": pl.String,
-        "loc_work_lat": pl.Float64,
-        "loc_work_lon": pl.Float64,
-        "loc_home_locid": pl.String,
-        "loc_home_lat": pl.Float64,
-        "loc_home_lon": pl.Float64,
-    }
-)
+HH_PERSON_SCHEMA = pl.Schema({
+    "hh_id": pl.String,
+    "person_id": pl.String,
+    "year": pl.Int64,
+    "loc_work_loc_id": pl.String,
+    "loc_work_lat": pl.Float64,
+    "loc_work_lon": pl.Float64,
+    "loc_home_loc_id": pl.String,
+    "loc_home_lat": pl.Float64,
+    "loc_home_lon": pl.Float64,
+})
 
-TRIP_SCHEMA = pl.Schema(
-    {
-        "hh_id": pl.String,
-        "person_id": pl.String,
-        "trip_id": pl.String,
-        "trip_number": pl.Int64,
-        "year": pl.Int64,
-        "mode": pl.Int64,
-        "duration": pl.Int64,
-        "distance": pl.Float64,
-        "purpose": Purpose.polars_enum(),
-        "purpose_dest": Purpose.polars_enum(),
-        "land_use": LandUse.polars_enum(),
-        "start_time": pl.Int64,
-        "end_time": pl.Int64,
-        "loc_origin_locid": pl.String,
-        "loc_origin_lat": pl.Float64,
-        "loc_origin_lon": pl.Float64,
-        "loc_dest_locid": pl.String,
-        "loc_destination_lat": pl.Float64,
-        "loc_destination_lon": pl.Float64,
-    }
-)
+TRIP_SCHEMA = pl.Schema({
+    "hh_id": pl.String,
+    "person_id": pl.String,
+    "trip_id": pl.String,
+    "trip_number": pl.Int64,
+    "year": pl.Int64,
+    "mode": pl.Int64,
+    "duration": pl.Int64,
+    "distance": pl.Float64,
+    "purpose": Purpose.polars_enum(),
+    "purpose_dest": Purpose.polars_enum(),
+    "land_use": LandUse.polars_enum(),
+    "start_time": pl.Int64,
+    "end_time": pl.Int64,
+    "loc_origin_loc_id": pl.String,
+    "loc_origin_lat": pl.Float64,
+    "loc_origin_lon": pl.Float64,
+    "loc_dest_loc_id": pl.String,
+    "loc_destination_lat": pl.Float64,
+    "loc_destination_lon": pl.Float64,
+})
 
 
 def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:

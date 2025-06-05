@@ -50,7 +50,7 @@ def node_short_labels_by_purpose(G: nx.MultiDiGraph) -> dict[str, str]:
 
 
 def _map_purpose_to_colour(purpose: Purpose):
-    match Purpose(purpose):
+    match purpose:
         case Purpose.HOME:
             return "#6929c4"
         case Purpose.WORK | Purpose.EDUCATION:
@@ -85,14 +85,16 @@ def _map_purpose_to_colour(purpose: Purpose):
 
 
 def _map_purpose_to_short_label(purpose: Purpose):
-    match Purpose(purpose):
+    match purpose:
         case Purpose.HOME:
             return "H"
         case Purpose.WORK:
             return "W"
         case Purpose.EDUCATION:
             return "Ed"
-        case Purpose.WORK_DELIVERY | Purpose.WORK_OTHER:
+        case Purpose.WORK_DELIVERY:
+            return "Wd"
+        case Purpose.WORK_OTHER:
             return "Wo"
         case Purpose.ENTERTAINMENT | Purpose.SPORT | Purpose.LEISURE:
             return "L"
@@ -132,7 +134,7 @@ def _ax_centered_text(text: str, ax: plt.Axes):
         horizontalalignment="center",
         verticalalignment="center",
         transform=ax.transAxes,
-        color="black"
+        color="black",
     )
 
 
@@ -160,7 +162,6 @@ def draw_hh_graph(
         pos = {node: (data["lon"], data["lat"]) for node, data in G.nodes(data=True)}
     else:
         pos = nx.layout.kamada_kawai_layout(G, weight="distance")
-
 
     nx.draw_networkx_nodes(G, pos=pos, ax=ax, node_color=node_colours)
     nx.draw_networkx_labels(G, pos=pos, ax=ax, labels=node_labels, font_color="white")

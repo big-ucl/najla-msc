@@ -47,8 +47,8 @@ _LTDS_LAND_USES_KEYS = [
     "12",
 ]
 
-LTDS_PURPOSES = {k: v for k, v in zip(_LTDS_PURPOSES_KEYS, dp.Purpose.names())}
-LTDS_LAND_USES = {k: v for k, v in zip(_LTDS_LAND_USES_KEYS, dp.LandUse.names())}
+LTDS_PURPOSES = {k: v for k, v in zip(_LTDS_PURPOSES_KEYS, dp.Purpose)}
+LTDS_LAND_USES = {k: v for k, v in zip(_LTDS_LAND_USES_KEYS, dp.LandUse)}
 SURVEY_START_YEAR = 2000
 
 
@@ -142,7 +142,7 @@ def create_hh_person_df(
         hh_id="phid",
         person_id="ppid",
         year=pl.col("pyearid") + SURVEY_START_YEAR,
-        loc_work_locid=combine_postcode_col("pwspcout", "pwspcin"),
+        loc_work_loc_id=combine_postcode_col("pwspcout", "pwspcin"),
         easting="pwsose",
         northing="pwsosn",
     )
@@ -153,7 +153,7 @@ def create_hh_person_df(
 
     household_df = raw_household_df.select(
         hh_id="hhid",
-        loc_home_locid=combine_postcode_col("hhpcout", "hhpcin"),
+        loc_home_loc_id=combine_postcode_col("hhpcout", "hhpcin"),
         year=pl.col("hyearid") + SURVEY_START_YEAR,
         easting="hhose",
         northing="hhosn",
@@ -181,10 +181,10 @@ def create_trip_df(raw_trip_df: pl.DataFrame) -> pl.DataFrame:
         purpose_dest=pl.col("tdpurp")
         .replace(LTDS_PURPOSES)
         .cast(dp.Purpose.polars_enum()),
-        loc_origin_locid=combine_postcode_col("topcout", "topcin"),
+        loc_origin_loc_id=combine_postcode_col("topcout", "topcin"),
         o_easting="toose",
         o_northing="toosn",
-        loc_dest_locid=combine_postcode_col("tdpcout", "tdpcin"),
+        loc_dest_loc_id=combine_postcode_col("tdpcout", "tdpcin"),
         d_easting="tdose",
         d_northing="tdosn",
         land_use=pl.col("toland")
@@ -211,7 +211,7 @@ def create_trip_df(raw_trip_df: pl.DataFrame) -> pl.DataFrame:
 
 def read_and_parse_ltds(cfg: LTDSConfig, name: str = "LTDS") -> dp.ActivityDataset:
     raw_household_df, raw_person_df, raw_trip_df = _read_raw_data(cfg)
-    
+
     hh_person_df = create_hh_person_df(raw_person_df, raw_household_df)
     trip_df = create_trip_df(raw_trip_df)
 
