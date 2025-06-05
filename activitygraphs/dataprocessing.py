@@ -50,6 +50,14 @@ class _PolarsEnum(IntFlag):
     def description(cls, member: Self):
         return cls(member).name
 
+    @classmethod
+    def _check_description(cls, desciption: dict[Self, str]) -> dict[Self, str]:
+        mismatch = set(cls) ^ set(desciption.keys())
+        if mismatch:
+            raise KeyError(f"Missing keys in desciption: {mismatch}")
+
+        return desciption
+
 
 class Purpose(_PolarsEnum):
     MISSING = auto()
@@ -104,7 +112,7 @@ class Purpose(_PolarsEnum):
             cls.SHOPPING_OTHER: "Shopping - Other",
         }
 
-        return descriptions[member]
+        return cls._check_description(descriptions[member])
 
 
 class LandUse(_PolarsEnum):
@@ -142,7 +150,46 @@ class LandUse(_PolarsEnum):
             cls.GP: "GP/Dentist/Other health service",
         }
 
-        return descriptions[member]
+        return cls._check_description(descriptions[member])
+
+
+class Mode(_PolarsEnum):
+    MISSING = auto()
+    NOT_ASKED = auto()
+    WALK = auto()
+    CYCLE = auto()
+    CAR = auto()
+    MOTORCYCLE = auto()
+    VAN = auto()
+    LORRY = auto()
+    BUS = auto()
+    METRO = auto()
+    TRAIN = auto()
+    TRAM = auto()
+    TAXI = auto()
+    VEH_PASS = auto()
+    OTHER = auto()
+
+    @classmethod
+    def description(cls, member: Self) -> str:
+        descriptions = {
+            cls.MISSING: "Missing",
+            cls.NOT_ASKED: "Not asked",
+            cls.WALK: "Walk (/ roller-blades / scooters)",
+            cls.CYCLE: "Cycle",
+            cls.CAR: "Car driver",
+            cls.MOTORCYCLE: "Motorcycle rider",
+            cls.VAN: "Van (small) driver",
+            cls.LORRY: "Lorry driver",
+            cls.BUS: "Bus",
+            cls.METRO: "Metro (/Light rail)",
+            cls.TRAIN: "Rail",
+            cls.TAXI: "Taxi",
+            cls.VEH_PASS: "Vehicle passenger",
+            cls.OTHER: "Other",
+        }
+
+        return cls._check_description(descriptions[member])
 
 
 HH_PERSON_SCHEMA = pl.Schema({
@@ -163,7 +210,7 @@ TRIP_SCHEMA = pl.Schema({
     "trip_id": pl.String,
     "trip_number": pl.Int64,
     "year": pl.Int64,
-    "mode": pl.Int64,
+    "mode": Mode.polars_enum(),
     "duration": pl.Int64,
     "distance": pl.Float64,
     "purpose": Purpose.polars_enum(),

@@ -85,7 +85,9 @@ def generate_hh_node_and_edgelist(
     hh_id: str, hh_person_df: pl.DataFrame, trip_df: pl.DataFrame
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     single_hh_person_df = hh_person_df.filter(pl.col("hh_id") == hh_id)
-    single_trip_df = trip_df.filter(pl.col("hh_id") == hh_id)
+    single_trip_df = trip_df.filter(pl.col("hh_id") == hh_id).with_columns(
+        pl.col("mode").map_elements(dp.Mode, return_dtype=pl.Object),
+    )
 
     node_attribute_df = generate_node_attribute_df(single_hh_person_df, single_trip_df)
 
