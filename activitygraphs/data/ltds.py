@@ -195,7 +195,7 @@ def create_hh_person_df(
     return dp.check_schema(hh_person_df, dp.HH_PERSON_SCHEMA)
 
 
-def create_trip_df(raw_trip_df: pl.DataFrame) -> pl.DataFrame:
+def create_trip_df(raw_trip_df: pl.DataFrame, filter_null: bool = True) -> pl.DataFrame:
     trip_df = raw_trip_df.select(
         hh_id="thid",
         person_id="tpid",
@@ -221,6 +221,16 @@ def create_trip_df(raw_trip_df: pl.DataFrame) -> pl.DataFrame:
         start_time="tstime",
         end_time="tetime",
     )
+
+    if filter_null:
+        trip_df = trip_df.drop_nulls([
+            "loc_origin_loc_id",
+            "o_easting",
+            "o_northing",
+            "loc_dest_loc_id",
+            "d_easting",
+            "d_northing",
+        ])
 
     trip_df = add_lat_lon_columns(
         trip_df, "o_easting", "o_northing", "loc_origin_lat", "loc_origin_lon"

@@ -3,12 +3,21 @@ import marimo
 __generated_with = "0.13.15"
 app = marimo.App(width="medium")
 
-with app.setup:
+
+@app.cell
+def _():
+    import marimo as mo
+
+    mo.md("# Data processing")
+    return (mo,)
+
+
+@app.cell
+def _(mo):
     # Initialization code that runs before all other cells
 
     # Import modules
     import networkx as nx
-    import marimo as mo
     import polars as pl
     from pathlib import Path
     from config import load_config
@@ -17,22 +26,26 @@ with app.setup:
     import contextily as cly
     import geopandas as gpd
 
-
     # Load configuration from files
     project_root = mo.notebook_dir().parent
-
-    cfg = load_config(project_root)
-    data_path = project_root / cfg.paths.data_raw_ltds
-
-    print(f"Configuration loaded: {cfg}")
 
     # Set random seeds
     np.random.seed(42)
     random.seed(42)
+    return Path, cly, gpd, load_config, project_root
 
 
 @app.cell
-def _():
+def _(load_config, project_root):
+    cfg = load_config(project_root)
+    data_path = project_root / cfg.paths.data_raw_ltds
+
+    print(f"Configuration loaded: {cfg}")
+    return cfg, data_path
+
+
+@app.cell
+def _(mo):
     mo.md(
         r"""
     # Excel to parquet conversion
@@ -44,16 +57,14 @@ def _():
 
 
 @app.cell
-def _():
-    run_button = mo.ui.run_button(
-        kind="warn", label="Run excel to parquet conversion"
-    )
+def _(mo):
+    run_button = mo.ui.run_button(kind="warn", label="Run excel to parquet conversion")
     run_button
     return (run_button,)
 
 
 @app.cell
-def _(run_button):
+def _(Path, cfg, data_path, mo, run_button):
     from dataprocessing import convert_excel_to_parquet
 
     mo.stop(not run_button.value, mo.md("Click button above to run conversion"))
@@ -64,20 +75,20 @@ def _(run_button):
 
 
 @app.cell
-def _():
+def _(mo):
     mo.md(r"""# Data loading and processing""")
     return
 
 
 @app.cell
-def _():
+def _(mo):
     reprocess_button = mo.ui.run_button(label="Reprocess raw data")
     reprocess_button
     return (reprocess_button,)
 
 
 @app.cell
-def _(reprocess_button):
+def _(Path, cfg, reprocess_button):
     import dataprocessing as dp
 
     from dataprocessing import ActivityDataset
@@ -98,7 +109,7 @@ def _(reprocess_button):
         print(f"Read, processed and saved `{dataset.name}` dataset from raw data")
 
     dataset.name
-    return dataset, dp
+    return (dataset,)
 
 
 @app.cell
@@ -114,48 +125,40 @@ def _(dataset):
 
 
 @app.cell
-def _():
+def _(mo):
     mo.md("""# Graph Generation""")
     return
 
 
 @app.cell
-def _():
-    from graphs import generate_hh_node_and_edgelist, generate_hh_graph, generate_node_attribute_df
-    return (
-        generate_hh_graph,
-        generate_hh_node_and_edgelist,
-        generate_node_attribute_df,
-    )
+def _(dataset):
+    from graphs import ActivityGraph
+
+    graph = ActivityGraph.from_dataset(dataset)
+
+    print(f"Loaded {graph} with {graph.n_subgraphs} subgraphs")
+    return (graph,)
 
 
 @app.cell
-def _(dataset, generate_node_attribute_df):
-    ndf = generate_node_attribute_df(dataset.hh_person_df, dataset.trip_df)
-    ndf.head()
+def _(Path, cfg, graph, mo):
+    import pickle
+    from multi import parallel_to_nx
+
+    mo.stop(True)
+    Gs = parallel_to_nx(graph)
+
+    _G = None
+    with open(Path(cfg.paths.data_processed) / "networkx-graphs.pickle", "rb") as _f:
+        _G = pickle.load(_f)
+
+    with open(Path(cfg.paths.data_processed) / "networkx-graphs.pickle", "wb") as _f:
+        pickle.dump(Gs, _f)
     return
 
 
 @app.cell
-def _(dp):
-    dp.Purpose(2097280)
-    return
-
-
-@app.cell
-def _():
-    interesting_hh_id = "12109151"
-    new_graph_switch = mo.ui.switch(label="Use sampled graph")
-    return interesting_hh_id, new_graph_switch
-
-
-@app.cell
-def _(
-    dataset,
-    generate_hh_graph,
-    generate_hh_node_and_edgelist,
-    new_graph_button,
-):
+def _(graph, new_graph_button):
     from plotting import (
         draw_hh_graph,
         line_styles_by_key,
@@ -165,35 +168,31 @@ def _(
 
     _hh_id = new_graph_button.value
 
-    nodelist_df, edgelist_df = generate_hh_node_and_edgelist(
-        _hh_id, dataset.hh_person_df, dataset.trip_df
-    )
-
-    G = generate_hh_graph(nodelist_df, edgelist_df)
+    G = graph.to_nx(_hh_id)
+    hh_graph = graph.hh_graph(_hh_id)
     line_styles = line_styles_by_key(G, key="person_id")
     node_colours = node_colours_by_purpose(G)
     node_labels = node_short_labels_by_purpose(G)
-    return (
-        G,
-        draw_hh_graph,
-        line_styles,
-        node_colours,
-        node_labels,
-        nodelist_df,
-    )
+    return G, draw_hh_graph, hh_graph, line_styles, node_colours, node_labels
 
 
 @app.cell
-def _():
+def _(mo):
+    interesting_hh_id = "12109151"
+    new_graph_switch = mo.ui.switch(label="Use sampled graph")
+    return interesting_hh_id, new_graph_switch
+
+
+@app.cell
+def _(mo):
     mo.md("""# Visualisation""")
     return
 
 
 @app.cell
-def _(dataset, interesting_hh_id, new_graph_switch):
+def _(dataset, interesting_hh_id, mo, new_graph_switch):
     def _draw_new_random_hh_id(value: str) -> str:
         return dataset.hh_person_df.select("hh_id").unique().sample(1)[0, "hh_id"]
-
 
     new_graph_button = mo.ui.button(
         label="Sample new graph from dataset ",
@@ -229,7 +228,7 @@ def _(
 
 
 @app.cell
-def _(new_graph_button):
+def _(mo, new_graph_button):
     generate_map_toggle = mo.ui.run_button(
         label=f"Show household {new_graph_button.value} on map"
     )
@@ -238,7 +237,7 @@ def _(new_graph_button):
 
 
 @app.cell
-def _(ax, generate_map_toggle, nodelist_df):
+def _(ax, cly, generate_map_toggle, gpd, hh_graph, mo):
     def _draw_on_map(ax, nodelist_df):
         geo = gpd.GeoDataFrame(
             nodelist_df,
@@ -249,10 +248,9 @@ def _(ax, generate_map_toggle, nodelist_df):
         cly.add_basemap(ax, crs=geo.crs.to_string(), attribution=False)
         return ax
 
-
     mo.stop(not generate_map_toggle.value)
 
-    _draw_on_map(ax, nodelist_df)
+    _draw_on_map(ax, hh_graph.node_df)
     return
 
 
@@ -271,14 +269,13 @@ def _(G):
 
 
 @app.cell
-def _():
+def _(mo):
     mo.md(
         r"""
     TODO Notes:
 
-     - Draw graph in a more interesting manner
-     - Handle case with unknown location (negative weights)
-     - Add physical location information to graph
+     - Multiprocess / Pre process nx graphs
+     - Start to compute statistics
     """
     )
     return
