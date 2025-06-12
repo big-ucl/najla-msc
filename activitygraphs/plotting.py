@@ -1,10 +1,21 @@
 import itertools
 
+import altair as alt
+import geopandas as gpd
 import matplotlib.pyplot as plt
+import matplotlib.style
 import networkx as nx
+import polars as pl
+
 from dataprocessing import Purpose
+from metrics import Metrics
 
 PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
+
+alt.data_transformers.enable("vegafusion")
+
+matplotlib.style.use("fivethirtyeight")
+alt.theme.enable("fivethirtyeight")
 
 
 def line_styles_by_key(G: nx.MultiDiGraph, key: str = "person_id"):
@@ -65,12 +76,7 @@ def _map_purpose_to_colour(purpose: Purpose):
             return "#570408"
         case Purpose.HOTEL:
             return "#198038"
-        case (
-            Purpose.ESCORT_WORK
-            | Purpose.ESCORT_HEALTH
-            | Purpose.ESCORT_SCHOOL
-            | Purpose.ESCORT_OTHER
-        ):
+        case Purpose.ESCORT_WORK | Purpose.ESCORT_HEALTH | Purpose.ESCORT_SCHOOL | Purpose.ESCORT_OTHER:
             return "#002d9c"
         case Purpose.WORSHIP:
             return "#ee538b"
@@ -102,12 +108,7 @@ def _map_purpose_to_short_label(purpose: Purpose):
             return "Sh"
         case Purpose.PERSONAL_BUSINESS | Purpose.HOTEL:
             return "P"
-        case (
-            Purpose.ESCORT_WORK
-            | Purpose.ESCORT_HEALTH
-            | Purpose.ESCORT_SCHOOL
-            | Purpose.ESCORT_OTHER
-        ):
+        case Purpose.ESCORT_WORK | Purpose.ESCORT_HEALTH | Purpose.ESCORT_SCHOOL | Purpose.ESCORT_OTHER:
             return "Es"
         case Purpose.WORSHIP:
             return "Wo"
@@ -165,12 +166,59 @@ def draw_hh_graph(
 
     nx.draw_networkx_nodes(G, pos=pos, ax=ax, node_color=node_colours)
     nx.draw_networkx_labels(G, pos=pos, ax=ax, labels=node_labels, font_color="white")
-    nx.draw_networkx_edges(
-        G, pos=pos, ax=ax, connectionstyle="arc3,rad=0.1", style=line_styles
-    )
+    nx.draw_networkx_edges(G, pos=pos, ax=ax, connectionstyle="arc3,rad=0.1", style=line_styles)
 
     return fig, ax
 
 
-def draw_hh_geo_graph():
-    pass
+def _plot_metric_historgram(metric_col: str, results: pl.DataFrame, bin_count=20) -> alt.Chart:
+    return results.plot.bar(alt.X(metric_col).bin(maxbins=bin_count), alt.Y("count()"))
+
+
+def plot_metric_histograms(metrics: Metrics, results: pl.DataFrame, n_cols=2) -> alt.Chart:
+    chart = alt.vconcat()
+
+    for batch in itertools.batched(metrics.names(), n_cols):
+        row = alt.hconcat()
+        for metric_col in batch:
+            row |= _plot_metric_historgram(metric_col, results)
+        chart &= row
+
+    return chart
+
+
+def geo_plot_mean_stat(
+    mean_stats_by_postcode: pl.DataFrame,
+    geo_postcode_shapes: gpd.GeoDataFrame,
+    postcode_split: str,
+    stat: str,
+):
+    mean_gdf = geo_postcode_shapes.merge(
+        mean_stats_by_postcode.to_pandas(),
+        left_on="name",
+        right_on=postcode_split,
+    )
+
+    title = f"Average HH Graph {stat} by uk postcode {postcode_split}"
+
+    if postcode_split != "sector":
+        return (
+            alt.Chart(mean_gdf, title=title)
+            .mark_geoshape()
+            .encode(color=stat, tooltip=["name", stat, "n_samples"])
+            .properties(width=500, height=500)
+        )
+
+    else:
+        fig, ax = plt.subplots()
+
+        ax = mean_gdf.plot(
+            ax=ax,
+            column=stat,
+            legend=True,
+            legend_kwds={"label": stat, "orientation": "horizontal"},
+        )
+
+        ax.set_title(title)
+
+        return fig

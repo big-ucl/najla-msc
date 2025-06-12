@@ -1,10 +1,7 @@
-files:
-  raw_household: Household.parquet
-  raw_person: Person.parquet
-  raw_trip: Trip.parquet
-  raw_stage: Stage.parquet
+defaults:
+  - _self_
+  - data: ltds
 
 paths:
-  data_processed: data/processed
-  data_raw: data/raw
-  data_raw_ltds: ${paths.data_raw}/LTDS0515
+  reports: reports
+  figures: ${..paths.reports}/figures

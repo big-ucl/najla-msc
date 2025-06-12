@@ -16,3 +16,4 @@ __marimo__
 # Data
 data/processed
 data/raw
+data/external

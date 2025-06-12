@@ -27,9 +27,7 @@ def read_from_parquet(path: Path, schema: dict = None) -> pl.DataFrame:
     return pl.DataFrame(df, schema_overrides=schema)
 
 
-def bng_to_lat_long(
-    df: pl.DataFrame, eastings_col: str, northings_col: str
-) -> tuple[np.ndarray, np.ndarray]:
+def bng_to_lat_long(df: pl.DataFrame, eastings_col: str, northings_col: str) -> tuple[np.ndarray, np.ndarray]:
     BNG_EPSG_CODE = 27700
     LAT_LONG_EPSG_CODE = 4326
     transformer = Transformer.from_crs(BNG_EPSG_CODE, LAT_LONG_EPSG_CODE)
@@ -254,11 +252,12 @@ class ActivityDataset:
         self.hh_person_df = check_schema(hh_person_df, HH_PERSON_SCHEMA)
         self.trip_df = check_schema(trip_df, TRIP_SCHEMA)
 
-    def save(self, path: Path, dir_name: str = None) -> Path:
+    def save(self, path: Path | str, dir_name: str = None) -> Path:
+        path = path if isinstance(path, Path) else Path(path)
         dir_name = dir_name if dir_name is not None else self.name
 
         dataset_dir = path / dir_name
-        dataset_dir.mkdir(exist_ok=True)
+        dataset_dir.mkdir(exist_ok=True, parents=True)
 
         hh_path = dataset_dir / self._add_file_prefix(self.name, self._HHP_FILENAME)
         trip_path = dataset_dir / self._add_file_prefix(self.name, self._TRIP_FILENAME)
@@ -269,7 +268,8 @@ class ActivityDataset:
         return dataset_dir
 
     @classmethod
-    def load(cls, path: Path, dir_name: str, name: str = None) -> Self:
+    def load(cls, path: Path | str, dir_name: str, name: str = None) -> Self:
+        path = path if isinstance(path, Path) else Path(path)
         name = dir_name if name is None else dir_name
         dataset_dir = path / dir_name
 
@@ -282,7 +282,8 @@ class ActivityDataset:
         return ActivityDataset(name, hh_person_df, trip_df)
 
     @classmethod
-    def exists_on_disk(cls, path: Path, dir_name: str, name: str = None) -> bool:
+    def exists_on_disk(cls, path: Path | str, dir_name: str, name: str = None) -> bool:
+        path = path if isinstance(path, Path) else Path(path)
         name = dir_name if name is None else dir_name
         dataset_dir = path / dir_name
 

@@ -13,12 +13,8 @@ def _():
 
 
 @app.cell
-def _(mo):
-    # Initialization code that runs before all other cells
-
+def _():
     # Import modules
-    import networkx as nx
-    import polars as pl
     from pathlib import Path
     from config import load_config
     import numpy as np
@@ -26,22 +22,17 @@ def _(mo):
     import contextily as cly
     import geopandas as gpd
 
-    # Load configuration from files
-    project_root = mo.notebook_dir().parent
-
     # Set random seeds
     np.random.seed(42)
     random.seed(42)
-    return Path, cly, gpd, load_config, project_root
+    return Path, cly, gpd, load_config
 
 
 @app.cell
-def _(load_config, project_root):
+def _(load_config, mo):
+    project_root = mo.notebook_dir().parent
     cfg = load_config(project_root)
-    data_path = project_root / cfg.paths.data_raw_ltds
-
-    print(f"Configuration loaded: {cfg}")
-    return cfg, data_path
+    return (cfg,)
 
 
 @app.cell
@@ -64,13 +55,13 @@ def _(mo):
 
 
 @app.cell
-def _(Path, cfg, data_path, mo, run_button):
+def _(Path, cfg, mo, run_button):
     from dataprocessing import convert_excel_to_parquet
 
     mo.stop(not run_button.value, mo.md("Click button above to run conversion"))
 
     _files = (Path(s) for s in cfg.files.values())
-    convert_excel_to_parquet(data_path, *_files)
+    convert_excel_to_parquet(cfg.data.paths.raw, *_files)
     return
 
 
@@ -88,24 +79,24 @@ def _(mo):
 
 
 @app.cell
-def _(Path, cfg, reprocess_button):
+def _(cfg, mo, reprocess_button):
     import dataprocessing as dp
 
     from dataprocessing import ActivityDataset
-    from data.ltds import read_and_parse_ltds
+    from data.ltds import read_and_process_ltds
 
-    _ltds_name = "LTDS"
-    _dataset_path = Path(cfg.paths.data_processed)
+    _dataset_name = cfg.data.name
+    _dataset_path = cfg.data.paths.act_dataset
 
-    if (
-        ActivityDataset.exists_on_disk(_dataset_path, _ltds_name)
-        and not reprocess_button.value
-    ):
-        dataset = ActivityDataset.load(_dataset_path, _ltds_name)
+    if (ActivityDataset.exists_on_disk(_dataset_path, _dataset_name) and not reprocess_button.value):
+        dataset = ActivityDataset.load(_dataset_path, _dataset_name)
         print(f"Loaded `{dataset.name}` dataset from disk.")
     else:
-        dataset = read_and_parse_ltds(cfg, name=_ltds_name)
-        dataset.save(_dataset_path)
+        with mo.status.spinner(title="Processing data...") as _spinner:
+            dataset = read_and_process_ltds(cfg.data)
+            _spinner.update("Saving to file...")
+            dataset.save(_dataset_path)
+            _spinner.update("Done")
         print(f"Read, processed and saved `{dataset.name}` dataset from raw data")
 
     dataset.name
@@ -265,24 +256,6 @@ def _(G):
 def _(G):
     for _e in G.edges(data=True):
         print(_e)
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        r"""
-    TODO Notes:
-
-     - Multiprocess / Pre process nx graphs
-     - Start to compute statistics
-    """
-    )
-    return
-
-
-@app.cell
-def _():
     return
 
 

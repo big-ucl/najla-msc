@@ -2,11 +2,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hydra import compose, initialize_config_dir
-from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
 
 
 @dataclass
-class Files:
+class RawFiles:
+    pass
+
+
+@dataclass
+class RawLTDSFiles(RawFiles):
     raw_household: str
     raw_person: str
     raw_trip: str
@@ -15,25 +20,36 @@ class Files:
 
 @dataclass
 class Paths:
-    data_processed: Path
-    data_raw: Path
-    data_raw_ltds: Path
+    processed: Path
+    raw: Path
+    act_dataset: Path
+    graphs: Path
+    metrics: Path
 
 
 @dataclass
-class LTDSConfig:
-    files: Files
+class DataConfig:
+    name: str
+    files: RawFiles
     paths: Paths
 
 
-cs = ConfigStore.instance()
-cs.store(name="ltds_config", node=LTDSConfig)
+@dataclass
+class Config:
+    data: DataConfig
 
 
-def load_config(project_root: Path) -> LTDSConfig:
+# cs = ConfigStore.instance()
+# cs.store(name="ltds_config", node=Config)
+
+
+def load_config(project_root: Path, verbose=True) -> Config:
     _config_dir = str(project_root / "activitygraphs/conf")
 
     with initialize_config_dir(version_base=None, config_dir=_config_dir):
         cfg = compose(config_name="config")
+
+    if verbose:
+        print(f"Loaded config file \n{OmegaConf.to_yaml(cfg)}")
 
     return cfg
