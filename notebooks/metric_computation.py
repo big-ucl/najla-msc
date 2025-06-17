@@ -124,15 +124,18 @@ def _(
     selected_metric,
     selected_postcode_split,
 ):
-    from plotting import geo_plot_mean_stat
+    from plotting import (
+        geo_plot_mean_stat_by_postcode,
+        geo_plot_mean_stat_by_municipality,
+    )
 
-    geo_plot_mean_stat(
+    geo_plot_mean_stat_by_postcode(
         mean_stats_by_postcode,
         geo_postcode_shapes,
         postcode_split=selected_postcode_split.value,
         stat=selected_metric.value,
     )
-    return
+    return (geo_plot_mean_stat_by_municipality,)
 
 
 @app.cell
@@ -162,7 +165,7 @@ def _(Path, selected_postcode_split):
 
 
     geo_postcode_shapes = read_geo_postcode_shapes(selected_postcode_split.value)
-    return (geo_postcode_shapes,)
+    return geo_postcode_shapes, gpd
 
 
 @app.cell
@@ -200,15 +203,64 @@ def _(dataset, pl, results, selected_postcode_split):
 
 
 @app.cell
-def _(pl):
-    postcodes = pl.read_parquet("data/external/ukpostcodeandlad.parquet")
-    postcodes
+def _(mo):
+    mo.md("""## Analysis by Boroughs""")
     return
 
 
 @app.cell
-def _():
+def _(metrics, mo):
+    selected_muni_metric = mo.ui.dropdown(
+        metrics.names(), value=metrics.names()[0], label="Plot mean"
+    )
+
+    mo.hstack([selected_muni_metric, mo.md("by municipality")], justify="start")
+    return (selected_muni_metric,)
+
+
+@app.cell
+def _(
+    geo_municipality_shapes,
+    geo_plot_mean_stat_by_municipality,
+    mean_stats_by_municipality,
+    selected_muni_metric,
+):
+    geo_plot_mean_stat_by_municipality(
+        mean_stats_by_municipality,
+        geo_municipality_shapes,
+        selected_muni_metric.value,
+    )
     return
+
+
+@app.cell
+def _(dataset, pl, results):
+    _hh_person_df = dataset.hh_person_df.select("hh_id", "loc_home_loc_id")
+
+    _location_df = dataset.location_df
+
+    mean_stats_by_municipality = (
+        results.join(_hh_person_df, on="hh_id")
+        .join(
+            _location_df, left_on="loc_home_loc_id", right_on="loc_id", how="left"
+        )
+        .drop("hh_id", "loc_home_loc_id")
+        .group_by(["municipality_id", "municipality_name"])
+        .agg(pl.len().alias("n_samples"), pl.all().mean())
+        .filter(pl.col("n_samples") > 20)
+    )
+
+    mean_stats_by_municipality
+    return (mean_stats_by_municipality,)
+
+
+@app.cell
+def _(gpd):
+    geo_municipality_shapes = gpd.read_file(
+        "data/external/uk-local-authorities/LAD_MAY_2024_UK_BFE.shp",
+        columns=["LAD24CD", "geometry"],
+    )
+    return (geo_municipality_shapes,)
 
 
 if __name__ == "__main__":

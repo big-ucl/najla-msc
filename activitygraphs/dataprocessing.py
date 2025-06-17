@@ -224,6 +224,12 @@ TRIP_SCHEMA = pl.Schema({
     "loc_destination_lon": pl.Float64,
 })
 
+LOCATION_SCHEMA = pl.Schema({
+    "loc_id": pl.String,
+    "municipality_id": pl.String,
+    "municipality_name": pl.String,
+})
+
 
 def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
     df_items = set(df.schema.items())
@@ -243,14 +249,17 @@ class ActivityDataset:
     name: str
     hh_person_df: pl.DataFrame
     trip_df: pl.DataFrame
+    location_df: pl.DataFrame
 
     _HHP_FILENAME = "hh_person_df.parquet"
     _TRIP_FILENAME = "trip_df.parquet"
+    _LOCATION_FILNAME = "location_df.parquet"
 
-    def __init__(self, name: str, hh_person_df: pl.DataFrame, trip_df: pl.DataFrame):
+    def __init__(self, name: str, hh_person_df: pl.DataFrame, trip_df: pl.DataFrame, location_df: pl.DataFrame):
         self.name = name
         self.hh_person_df = check_schema(hh_person_df, HH_PERSON_SCHEMA)
         self.trip_df = check_schema(trip_df, TRIP_SCHEMA)
+        self.location_df = check_schema(location_df, LOCATION_SCHEMA)
 
     def save(self, path: Path | str, dir_name: str = None) -> Path:
         path = path if isinstance(path, Path) else Path(path)
@@ -261,9 +270,11 @@ class ActivityDataset:
 
         hh_path = dataset_dir / self._add_file_prefix(self.name, self._HHP_FILENAME)
         trip_path = dataset_dir / self._add_file_prefix(self.name, self._TRIP_FILENAME)
+        location_path = dataset_dir / self._add_file_prefix(self.name, self._LOCATION_FILNAME)
 
         self.hh_person_df.write_parquet(hh_path)
         self.trip_df.write_parquet(trip_path)
+        self.location_df.write_parquet(location_path)
 
         return dataset_dir
 
@@ -275,11 +286,13 @@ class ActivityDataset:
 
         hh_path = dataset_dir / cls._add_file_prefix(name, cls._HHP_FILENAME)
         trip_path = dataset_dir / cls._add_file_prefix(name, cls._TRIP_FILENAME)
+        location_path = dataset_dir / cls._add_file_prefix(name, cls._LOCATION_FILNAME)
 
         hh_person_df = check_schema(pl.read_parquet(hh_path), HH_PERSON_SCHEMA)
         trip_df = check_schema(pl.read_parquet(trip_path), TRIP_SCHEMA)
+        location_df = check_schema(pl.read_parquet(location_path), LOCATION_SCHEMA)
 
-        return ActivityDataset(name, hh_person_df, trip_df)
+        return ActivityDataset(name, hh_person_df, trip_df, location_df)
 
     @classmethod
     def exists_on_disk(cls, path: Path | str, dir_name: str, name: str = None) -> bool:
@@ -289,8 +302,9 @@ class ActivityDataset:
 
         hh_path = dataset_dir / cls._add_file_prefix(name, cls._HHP_FILENAME)
         trip_path = dataset_dir / cls._add_file_prefix(name, cls._TRIP_FILENAME)
+        location_path = dataset_dir / cls._add_file_prefix(name, cls._LOCATION_FILNAME)
 
-        return dataset_dir.exists() and hh_path.exists() and trip_path.exists()
+        return dataset_dir.exists() and hh_path.exists() and trip_path.exists() and location_path.exists()
 
     @classmethod
     def _add_file_prefix(cls, name: str, filename: str):

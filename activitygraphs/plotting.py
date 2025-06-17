@@ -14,8 +14,8 @@ PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
 
 alt.data_transformers.enable("vegafusion")
 
-matplotlib.style.use("fivethirtyeight")
-alt.theme.enable("fivethirtyeight")
+matplotlib.style.use("dark_background")
+alt.theme.enable("dark")
 
 
 def line_styles_by_key(G: nx.MultiDiGraph, key: str = "person_id"):
@@ -187,7 +187,7 @@ def plot_metric_histograms(metrics: Metrics, results: pl.DataFrame, n_cols=2) ->
     return chart
 
 
-def geo_plot_mean_stat(
+def geo_plot_mean_stat_by_postcode(
     mean_stats_by_postcode: pl.DataFrame,
     geo_postcode_shapes: gpd.GeoDataFrame,
     postcode_split: str,
@@ -222,3 +222,22 @@ def geo_plot_mean_stat(
         ax.set_title(title)
 
         return fig
+
+
+def geo_plot_mean_stat_by_municipality(
+    mean_stats_by_municipality: pl.DataFrame,
+    geo_municipality_shapes: gpd.GeoDataFrame,
+    stat: str,
+):
+    mean_gdf = geo_municipality_shapes.merge(
+        mean_stats_by_municipality.to_pandas(), left_on="LAD24CD", right_on="municipality_id", how="right"
+    ).to_crs("EPSG:4326")
+
+    title = f"Average HH Graph {stat} by municipality"
+
+    return (
+        alt.Chart(mean_gdf, title=title)
+        .mark_geoshape()
+        .encode(color=stat, tooltip=["municipality_id", "municipality_name", stat, "n_samples"])
+        .properties(width=500, height=500)
+    )

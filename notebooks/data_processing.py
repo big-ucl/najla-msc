@@ -116,6 +116,12 @@ def _(dataset):
 
 
 @app.cell
+def _(dataset):
+    dataset.location_df.head()
+    return
+
+
+@app.cell
 def _(mo):
     mo.md("""# Graph Generation""")
     return
@@ -129,23 +135,6 @@ def _(dataset):
 
     print(f"Loaded {graph} with {graph.n_subgraphs} subgraphs")
     return (graph,)
-
-
-@app.cell
-def _(Path, cfg, graph, mo):
-    import pickle
-    from multi import parallel_to_nx
-
-    mo.stop(True)
-    Gs = parallel_to_nx(graph)
-
-    _G = None
-    with open(Path(cfg.paths.data_processed) / "networkx-graphs.pickle", "rb") as _f:
-        _G = pickle.load(_f)
-
-    with open(Path(cfg.paths.data_processed) / "networkx-graphs.pickle", "wb") as _f:
-        pickle.dump(Gs, _f)
-    return
 
 
 @app.cell

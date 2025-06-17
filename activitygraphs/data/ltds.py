@@ -78,6 +78,116 @@ LTDS_MODES = {
 
 SURVEY_START_YEAR = 2000
 
+LTDS_MUNICIPALITY_IDS = {
+    1: "E09000007",
+    2: "E09000001",
+    3: "E09000012",
+    4: "E09000013",
+    5: "E09000014",
+    6: "E09000019",
+    7: "E09000020",
+    8: "E09000022",
+    9: "E09000023",
+    10: "E09000025",
+    11: "E09000028",
+    12: "E09000030",
+    13: "E09000032",
+    14: "E09000033",
+    15: "E09000002",
+    16: "E09000003",
+    17: "E09000004",
+    18: "E09000005",
+    19: "E09000006",
+    20: "E09000008",
+    21: "E09000009",
+    22: "E09000010",
+    23: "E09000011",
+    24: "E09000015",
+    25: "E09000016",
+    26: "E09000017",
+    27: "E09000018",
+    28: "E09000021",
+    29: "E09000024",
+    30: "E09000026",
+    31: "E09000027",
+    32: "E09000029",
+    33: "E09000031",
+    34: "E07000107",
+    35: "E07000207",
+    36: "E07000072",
+    37: "E07000208",
+    38: "E07000098",
+    39: "E07000210",
+    40: "E07000211",
+    41: "E07000212",
+    42: "E07000111",
+    43: "E06000060",
+    44: "E07000213",
+    45: "E07000240",
+    46: "E07000215",
+    47: "E07000102",
+    48: "E06000034",
+    49: "E07000103",
+    50: "E07000217",
+    51: "Outside (close)",
+    52: "Outside (far)",
+}
+
+LTDS_MUNICIPALITY_NAMES = {
+    1: "Camden",
+    2: "City of London",
+    3: "Hackney",
+    4: "Hammersmith & Fulham",
+    5: "Haringey",
+    6: "Islington",
+    7: "Kensington and Chelsea",
+    8: "Lambeth",
+    9: "Lewisham",
+    10: "Newham",
+    11: "Southwark",
+    12: "Tower Hamlets",
+    13: "Wandsworth",
+    14: "Westminster",
+    15: "Barking and Dagenham",
+    16: "Barnet",
+    17: "Bexley",
+    18: "Brent",
+    19: "Bromley",
+    20: "Croydon",
+    21: "Ealing",
+    22: "Enfield",
+    23: "Greenwich",
+    24: "Harrow",
+    25: "Havering",
+    26: "Hillingdon",
+    27: "Hounslow",
+    28: "Kingston upon Thames",
+    29: "Merton",
+    30: "Redbridge",
+    31: "Richmond upon Thames",
+    32: "Sutton",
+    33: "Waltham Forest",
+    34: "Dartford",
+    35: "Elmbridge",
+    36: "Epping Forest",
+    37: "Epsom and Ewell",
+    38: "Hertsmere",
+    39: "Mole Valley",
+    40: "Reigate and Banstead",
+    41: "Runnymede",
+    42: "Sevenoaks",
+    43: "South Bucks",
+    44: "Spelthorne",
+    45: "St Albans",
+    46: "Tandridge",
+    47: "Three Rivers",
+    48: "Thurrock",
+    49: "Watford",
+    50: "Woking",
+    51: "Outside Greater London (close)",
+    52: "Outside Greater London (far)",
+}
+
 
 def _read_raw_data(data_cfg: DataConfig, project_root=None) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     project_root = project_root if project_root is not None else Path(".")
@@ -153,7 +263,7 @@ def add_lat_lon_columns(
     return df_lat_lon.drop([east, north]) if remove_cols else df_lat_lon
 
 
-def create_hh_person_df(raw_person_df: pl.DataFrame, raw_household_df: pl.DataFrame) -> pl.DataFrame:
+def _create_hh_person_df(raw_person_df: pl.DataFrame, raw_household_df: pl.DataFrame) -> pl.DataFrame:
     person_df = raw_person_df.select(
         hh_id="phid",
         person_id="ppid",
@@ -179,7 +289,7 @@ def create_hh_person_df(raw_person_df: pl.DataFrame, raw_household_df: pl.DataFr
     return dp.check_schema(hh_person_df, dp.HH_PERSON_SCHEMA)
 
 
-def create_trip_df(raw_trip_df: pl.DataFrame, filter_null: bool = True) -> pl.DataFrame:
+def _create_trip_df(raw_trip_df: pl.DataFrame, filter_null: bool = True) -> pl.DataFrame:
     trip_df = raw_trip_df.select(
         hh_id="thid",
         person_id="tpid",
@@ -228,10 +338,43 @@ def create_trip_df(raw_trip_df: pl.DataFrame, filter_null: bool = True) -> pl.Da
     return dp.check_schema(trip_df, dp.TRIP_SCHEMA)
 
 
+def _create_location_df(
+    raw_person_df: pl.DataFrame, raw_household_df: pl.DataFrame, raw_trip_df: pl.DataFrame
+) -> pl.DataFrame:
+    person_locs = raw_person_df.select(
+        combine_postcode_col("pwspcout", "pwspcin").alias("loc_id"), pl.col("pwsaboro").alias("ltds_muni_id")
+    ).unique("loc_id")
+
+    hh_locs = raw_household_df.select(
+        combine_postcode_col("hhpcout", "hhpcin").alias("loc_id"), pl.col("hhaboro").alias("ltds_muni_id")
+    ).unique("loc_id")
+
+    trip_locs = pl.concat([
+        raw_trip_df.select(
+            combine_postcode_col("topcout", "topcin").alias("loc_id"), pl.col("toaboro").alias("ltds_muni_id")
+        ),
+        raw_trip_df.select(
+            combine_postcode_col("tdpcout", "tdpcin").alias("loc_id"), pl.col("tdaboro").alias("ltds_muni_id")
+        ),
+    ]).unique()
+
+    return (
+        pl.concat([hh_locs, person_locs, trip_locs])
+        .unique()
+        .filter(is_ltds_entry_valid("loc_id") & is_ltds_entry_valid("ltds_muni_id", dtype="int"))
+        .with_columns(
+            pl.col("ltds_muni_id").cast(pl.Utf8).replace(LTDS_MUNICIPALITY_IDS).alias("municipality_id"),
+            pl.col("ltds_muni_id").cast(pl.Utf8).replace(LTDS_MUNICIPALITY_NAMES).alias("municipality_name"),
+        )
+        .drop("ltds_muni_id")
+    )
+
+
 def read_and_process_ltds(cfg: DataConfig) -> dp.ActivityDataset:
     raw_household_df, raw_person_df, raw_trip_df = _read_raw_data(cfg)
 
-    hh_person_df = create_hh_person_df(raw_person_df, raw_household_df)
-    trip_df = create_trip_df(raw_trip_df)
+    hh_person_df = _create_hh_person_df(raw_person_df, raw_household_df)
+    trip_df = _create_trip_df(raw_trip_df)
+    location_df = _create_location_df(raw_person_df, raw_household_df, raw_trip_df)
 
-    return dp.ActivityDataset(cfg.name, hh_person_df, trip_df)
+    return dp.ActivityDataset(cfg.name, hh_person_df, trip_df, location_df)
