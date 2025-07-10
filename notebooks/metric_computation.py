@@ -1,7 +1,17 @@
 import marimo
 
-__generated_with = "0.13.15"
+__generated_with = "0.14.9"
 app = marimo.App(width="medium")
+
+with app.setup:
+    # Initialization code that runs before all other cells
+
+    import numpy as np
+    import random
+
+    # Set random seeds
+    np.random.seed(42)
+    random.seed(42)
 
 
 @app.cell
@@ -19,20 +29,13 @@ def _(mo):
 def _():
     import marimo as mo
     import polars as pl
-    import numpy as np
-    import random
-
-    from config import load_config
-    return load_config, mo, np, pl, random
+    return mo, pl
 
 
 @app.cell
-def _(load_config, mo, np, random):
-    # Set random seeds
-    np.random.seed(42)
-    random.seed(42)
+def _(mo):
+    from config import load_config
 
-    # Load project config
     cfg = load_config(mo.notebook_dir().parent)
     return (cfg,)
 
@@ -103,9 +106,7 @@ def _(Path, cfg, metrics, results):
 
 @app.cell
 def _(metrics, mo):
-    selected_metric = mo.ui.dropdown(
-        metrics.names(), value=metrics.names()[0], label="Plot mean"
-    )
+    selected_metric = mo.ui.dropdown(metrics.names(), value=metrics.names()[0], label="Plot mean")
 
     selected_postcode_split = mo.ui.dropdown(
         ["area", "district", "sector"],
@@ -173,22 +174,14 @@ def _(dataset, pl, results, selected_postcode_split):
     def split_postcode_col(by: str, col_name="loc_home_loc_id"):
         match by:
             case "area":
-                return (
-                    pl.col(col_name)
-                    .str.extract(r"([A-Z]{1,2})\d+", 1)
-                    .alias("area")
-                )
+                return pl.col(col_name).str.extract(r"([A-Z]{1,2})\d+", 1).alias("area")
             case "district":
-                return (
-                    pl.col(col_name).str.split(" ").list.first().alias("district")
-                )
+                return pl.col(col_name).str.split(" ").list.first().alias("district")
             case "sector":
                 return pl.col(col_name).str.head(-2).alias("sector")
 
 
-    _hh_person_df = dataset.hh_person_df.select(
-        "hh_id", split_postcode_col(selected_postcode_split.value)
-    )
+    _hh_person_df = dataset.hh_person_df.select("hh_id", split_postcode_col(selected_postcode_split.value))
 
     mean_stats_by_postcode = (
         results.join(_hh_person_df, on="hh_id")
@@ -210,9 +203,7 @@ def _(mo):
 
 @app.cell
 def _(metrics, mo):
-    selected_muni_metric = mo.ui.dropdown(
-        metrics.names(), value=metrics.names()[0], label="Plot mean"
-    )
+    selected_muni_metric = mo.ui.dropdown(metrics.names(), value=metrics.names()[0], label="Plot mean")
 
     mo.hstack([selected_muni_metric, mo.md("by municipality")], justify="start")
     return (selected_muni_metric,)
@@ -241,9 +232,7 @@ def _(dataset, pl, results):
 
     mean_stats_by_municipality = (
         results.join(_hh_person_df, on="hh_id")
-        .join(
-            _location_df, left_on="loc_home_loc_id", right_on="loc_id", how="left"
-        )
+        .join(_location_df, left_on="loc_home_loc_id", right_on="loc_id", how="left")
         .drop("hh_id", "loc_home_loc_id")
         .group_by(["municipality_id", "municipality_name"])
         .agg(pl.len().alias("n_samples"), pl.all().mean())

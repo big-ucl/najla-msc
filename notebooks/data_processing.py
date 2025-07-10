@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.13.15"
+__generated_with = "0.14.9"
 app = marimo.App(width="medium")
 
 
@@ -88,7 +88,7 @@ def _(cfg, mo, reprocess_button):
     _dataset_name = cfg.data.name
     _dataset_path = cfg.data.paths.act_dataset
 
-    if (ActivityDataset.exists_on_disk(_dataset_path, _dataset_name) and not reprocess_button.value):
+    if ActivityDataset.exists_on_disk(_dataset_path, _dataset_name) and not reprocess_button.value:
         dataset = ActivityDataset.load(_dataset_path, _dataset_name)
         print(f"Loaded `{dataset.name}` dataset from disk.")
     else:
@@ -105,13 +105,13 @@ def _(cfg, mo, reprocess_button):
 
 @app.cell
 def _(dataset):
-    dataset.hh_person_df.head()
+    dataset.hh_person_df.sample(10)
     return
 
 
 @app.cell
 def _(dataset):
-    dataset.trip_df.head()
+    dataset.trip_df
     return
 
 
@@ -153,7 +153,7 @@ def _(graph, new_graph_button):
     line_styles = line_styles_by_key(G, key="person_id")
     node_colours = node_colours_by_purpose(G)
     node_labels = node_short_labels_by_purpose(G)
-    return G, draw_hh_graph, hh_graph, line_styles, node_colours, node_labels
+    return G, draw_hh_graph, hh_graph, node_colours, node_labels
 
 
 @app.cell
@@ -161,6 +161,12 @@ def _(mo):
     interesting_hh_id = "12109151"
     new_graph_switch = mo.ui.switch(label="Use sampled graph")
     return interesting_hh_id, new_graph_switch
+
+
+@app.cell
+def _(graph):
+    graph.n_subgraphs
+    return
 
 
 @app.cell
@@ -172,7 +178,12 @@ def _(mo):
 @app.cell
 def _(dataset, interesting_hh_id, mo, new_graph_switch):
     def _draw_new_random_hh_id(value: str) -> str:
-        return dataset.hh_person_df.select("hh_id").unique().sample(1)[0, "hh_id"]
+        while True:
+            hh_id = dataset.hh_person_df.select("hh_id").unique().sample(1)[0, "hh_id"]
+
+            if hh_id in dataset.trip_df["hh_id"]:
+                return hh_id
+
 
     new_graph_button = mo.ui.button(
         label="Sample new graph from dataset ",
@@ -186,18 +197,10 @@ def _(dataset, interesting_hh_id, mo, new_graph_switch):
 
 
 @app.cell
-def _(
-    G,
-    draw_hh_graph,
-    line_styles,
-    new_graph_button,
-    node_colours,
-    node_labels,
-):
+def _(G, draw_hh_graph, new_graph_button, node_colours, node_labels):
     fig, ax = draw_hh_graph(
         G,
         new_graph_button.value,
-        line_styles=line_styles,
         node_colours=node_colours,
         node_labels=node_labels,
         use_coords=True,
@@ -209,9 +212,7 @@ def _(
 
 @app.cell
 def _(mo, new_graph_button):
-    generate_map_toggle = mo.ui.run_button(
-        label=f"Show household {new_graph_button.value} on map"
-    )
+    generate_map_toggle = mo.ui.run_button(label=f"Show household {new_graph_button.value} on map")
     generate_map_toggle
     return (generate_map_toggle,)
 
@@ -227,6 +228,7 @@ def _(ax, cly, generate_map_toggle, gpd, hh_graph, mo):
         ax = geo.plot(ax=ax)
         cly.add_basemap(ax, crs=geo.crs.to_string(), attribution=False)
         return ax
+
 
     mo.stop(not generate_map_toggle.value)
 

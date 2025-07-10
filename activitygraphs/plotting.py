@@ -1,3 +1,4 @@
+import base64
 import itertools
 
 import altair as alt
@@ -7,15 +8,17 @@ import matplotlib.style
 import networkx as nx
 import polars as pl
 
+from graphs import ActivityGraph
 from dataprocessing import Purpose
 from metrics import Metrics
+from io import BytesIO
 
 PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
 
 alt.data_transformers.enable("vegafusion")
 
 matplotlib.style.use("dark_background")
-alt.theme.enable("dark")
+alt.theme.enable("default")
 
 
 def line_styles_by_key(G: nx.MultiDiGraph, key: str = "person_id"):
@@ -142,7 +145,7 @@ def _ax_centered_text(text: str, ax: plt.Axes):
 def draw_hh_graph(
     G: nx.MultiDiGraph,
     hh_id=None,
-    line_styles=None,
+    line_style_key="person_id",
     node_colours=None,
     node_labels=None,
     use_coords=False,
@@ -155,6 +158,10 @@ def draw_hh_graph(
 
     ax.set_title(title, loc="left", color="black")
     ax.axis("off")
+
+    line_styles = line_styles_by_key(G, key=line_style_key)
+    node_colours = node_colours_by_purpose(G) if node_colours is None else node_colours
+    node_labels = node_short_labels_by_purpose(G) if node_labels is None else node_labels
 
     if len(G.nodes) == 0:
         _ax_centered_text("No activities.", ax)
@@ -184,7 +191,7 @@ def plot_metric_histograms(metrics: Metrics, results: pl.DataFrame, n_cols=2) ->
             row |= _plot_metric_historgram(metric_col, results)
         chart &= row
 
-    return chart
+    return chart.resolve_scale("independent")
 
 
 def geo_plot_mean_stat_by_postcode(
@@ -241,3 +248,81 @@ def geo_plot_mean_stat_by_municipality(
         .encode(color=stat, tooltip=["municipality_id", "municipality_name", stat, "n_samples"])
         .properties(width=500, height=500)
     )
+
+
+def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
+    import plotly.graph_objects as go
+    from dash import Dash, dcc, html, Input, Output, no_update, callback
+
+    _fig = go.Figure(
+        go.Scatter3d(
+            x=results["x"],
+            y=results["y"],
+            z=results["z"],
+            mode="markers",
+            marker=dict(
+                colorscale="viridis",
+                color=results["c"],
+                line={"color": "#444"},
+                reversescale=True,
+                sizeref=45,
+                sizemode="diameter",
+                opacity=0.8,
+            ),
+        ),
+        layout=dict(
+            width=1500,
+            height=1000,
+        ),
+    )
+
+    _fig.update_traces(hoverinfo="none", hovertemplate=None)
+
+    app = Dash()
+
+    app.layout = html.Div([
+        dcc.Graph(id="graph-basic-2", figure=_fig, clear_on_unhover=True),
+        dcc.Tooltip(id="graph-tooltip"),
+    ])
+
+    @callback(
+        Output("graph-tooltip", "show"),
+        Output("graph-tooltip", "bbox"),
+        Output("graph-tooltip", "children"),
+        Input("graph-basic-2", "hoverData"),
+    )
+    def display_hover(hoverData):
+        if hoverData is None:
+            return False, no_update, no_update
+
+        # demo only shows the first point, but other points may also be available
+        pt = hoverData["points"][0]
+        bbox = pt["bbox"]
+        num = pt["pointNumber"]
+
+        df_row = results.row(num, named=True)
+        hh_id = df_row["hh_id"]
+
+        buf = BytesIO()
+        fig, _ = draw_hh_graph(graph.to_nx(hh_id), hh_id)
+        fig.savefig(buf, format="png")
+        plt.close()
+        buf.seek(0)
+
+        image_string = base64.b64encode(buf.getvalue()).decode()
+        image_string = f"data:image/png;base64,{image_string}"
+
+        children = [
+            html.Div(
+                [
+                    html.H2(f"HH Graph #{hh_id}", style={"color": "darkblue", "overflow-wrap": "break-word"}),
+                    # html.P(f"Cluster: {c}"),
+                    html.Img(src=image_string, style={"width": "100%"}),
+                ],
+                style={"width": "400px", "white-space": "normal"},
+            )
+        ]
+
+        return True, bbox, children
+
+    return app
