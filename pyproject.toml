@@ -26,6 +26,7 @@ dependencies = [
     "scipy>=1.15.3",
     "sqlglot>=26.29.0",
     "torch>=2.7.1",
+    "torch-geometric>=2.6.1",
     "torchvision>=0.22.1",
     "tqdm>=4.67.1",
 ]
