@@ -211,7 +211,7 @@ def _(
 ):
     rng = np.random.default_rng(42)
 
-    n_samples = 10
+    n_samples = 1000
     exclude_chosen_from_shopping = True
 
     home_choice_idx = rng.integers(0, len(home_nodes), size=n_samples)
@@ -360,6 +360,7 @@ def _(person_choices_df, pl, schedules):
         .drop("numpy_seq")
         .join(person_choices_df, on=["person_id", "type"])
         .select("person_id", "sequence_num", "type", "loc_id")
+        .sort(by=["person_id", "sequence_num"])
     )
 
     schedule_df
@@ -385,7 +386,8 @@ def _(distances, nodes, pl, schedule_df):
     )
 
     trip_df = (
-        schedule_df.with_columns(_shifted("loc_id"), _shifted("type"), _shifted("person_id"))
+        schedule_df.sort(by=["person_id", "sequence_num"])
+        .with_columns(_shifted("loc_id"), _shifted("type"), _shifted("person_id"))
         .filter(pl.col("person_id") == pl.col("to_person_id"))
         .drop("to_person_id")
         .rename({"type": "from_type", "loc_id": "from_loc_id"})
@@ -476,12 +478,73 @@ def _(mo):
 
 
 @app.cell
-def _(G_full, draw_network):
-    from torch_geometric.data import Dataset
+def _():
+    from torch_geometric.data import Dataset, InMemoryDataset, Data
     from torch_geometric.utils import from_networkx, to_networkx
+    return Data, InMemoryDataset, from_networkx, to_networkx
 
+
+@app.cell
+def _(G_full, draw_network, from_networkx, to_networkx):
     data = from_networkx(G_full, group_edge_attrs="distance")
     draw_network(to_networkx(data))
+    return (data,)
+
+
+@app.cell
+def _(pl, trip_df):
+    import polars.selectors as cs
+
+    _features = (
+        trip_df.group_by("person_id")
+        .agg(pl.col("from_loc_id").unique(maintain_order=True))
+        .explode("from_loc_id")
+        .with_columns(pl.int_range(pl.len()).over("person_id").alias("sequence_num"))
+        .to_dummies("from_loc_id")
+        .with_columns(cs.starts_with("from_loc_id").cum_sum().over("person_id", order_by="sequence_num"))
+    )
+
+    _targets = _features.with_columns(pl.col("sequence_num") - 1)
+    dataset_df = _features.join(_targets, on=["person_id", "sequence_num"], suffix="_target").sort(
+        by=["person_id", "sequence_num"]
+    )
+
+    X = dataset_df.select(pl.col("sequence_num"), cs.starts_with("from_loc_id") & ~cs.ends_with("_target")).to_torch()
+    y = dataset_df.select(cs.ends_with("_target")).to_torch()
+    return X, y
+
+
+@app.cell
+def _(Data, InMemoryDataset, X, data, y):
+    class BasicLocationsDataset(InMemoryDataset):
+        def __init__(self, data, X, y):
+            super().__init__()
+            self.data = data
+            self.X = X
+            self.y = y
+
+        def len(self):
+            return len(self.X)
+
+        def get(self, idx):
+            return Data(x=self.X[idx], edge_index=self.data.edge_index, edge_attr=self.data.edge_attr, y=self.y[idx])
+
+
+    dataset = BasicLocationsDataset(data, X, y)
+    dataset
+    return (dataset,)
+
+
+@app.cell
+def _(dataset):
+    from torch_geometric.loader import DataLoader
+
+    loader = DataLoader(dataset, batch_size=32)
+    return
+
+
+@app.cell
+def _():
     return
 
 
