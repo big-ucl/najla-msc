@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.14.13"
+__generated_with = "0.14.16"
 app = marimo.App(width="medium")
 
 
@@ -18,7 +18,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(
         """
@@ -40,7 +40,7 @@ def _():
     return np, nx, pl, plt
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(
         r"""
@@ -119,7 +119,7 @@ def _(G, nx, plt):
     return (draw_network,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""Compute distance matrix and create fully connected version of graph above.""")
     return
@@ -165,7 +165,7 @@ def _(G, distance_matrix, draw_network, nodes, nx):
     return (G_full,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(
         r"""
@@ -241,7 +241,7 @@ def _(
     )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(
         r"""
@@ -254,7 +254,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""Generated schedules:""")
     return
@@ -295,7 +295,7 @@ def _(n_samples, np, rng):
     return (schedules,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""Choices by person:""")
     return
@@ -367,7 +367,7 @@ def _(person_choices_df, pl, schedules):
     return (schedule_df,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""Trip dataframe corresponding to activity schedules with distance measures.""")
     return
@@ -404,7 +404,7 @@ def _(mo, n_samples):
     return (selected_person,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(G, draw_trip, mo, selected_person, trip_df):
     mo.vstack(
         [
@@ -446,7 +446,7 @@ def _(nx, pl, plt):
                 ]
             )
             .group_by("loc_id")
-            .agg(pl.col("type").map_elements(_activities_to_colors, return_dtype=pl.String))
+            .agg(pl.col("type").map_batches(_activities_to_colors, return_dtype=pl.String).first())
             .join(pl.DataFrame({"loc_id": list(G.nodes())}), on="loc_id", how="right")
             .with_columns(pl.col("type").fill_null("tab:gray"))
         )["type"].to_list()
@@ -471,7 +471,7 @@ def _(nx, pl, plt):
     return (draw_trip,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""## PyG conversion""")
     return
@@ -489,6 +489,12 @@ def _(G_full, draw_network, from_networkx, to_networkx):
     data = from_networkx(G_full, group_edge_attrs="distance")
     draw_network(to_networkx(data))
     return (data,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""Create a dataset of node features and targets based on if the nodes appear in the group""")
+    return
 
 
 @app.cell
@@ -511,7 +517,7 @@ def _(pl, trip_df):
 
     X = dataset_df.select(pl.col("sequence_num"), cs.starts_with("from_loc_id") & ~cs.ends_with("_target")).to_torch()
     y = dataset_df.select(cs.ends_with("_target")).to_torch()
-    return X, y
+    return X, dataset_df, y
 
 
 @app.cell
@@ -519,15 +525,24 @@ def _(Data, InMemoryDataset, X, data, y):
     class BasicLocationsDataset(InMemoryDataset):
         def __init__(self, data, X, y):
             super().__init__()
+            self.edge_index = data.edge_index
+            self.edge_attr = data.edge_attr
             self.data = data
-            self.X = X
-            self.y = y
+            self.graph_x = X[:, 0]
+            self.X = X[:, 1:].unsqueeze(2).float()
+            self.y = y.unsqueeze(2).float()
 
         def len(self):
             return len(self.X)
 
         def get(self, idx):
-            return Data(x=self.X[idx], edge_index=self.data.edge_index, edge_attr=self.data.edge_attr, y=self.y[idx])
+            return Data(
+                x=self.X[idx],
+                edge_index=self.edge_index,
+                edge_attr=self.edge_attr,
+                y=self.y[idx],
+                graph_x=self.graph_x[idx],
+            )
 
 
     dataset = BasicLocationsDataset(data, X, y)
@@ -535,16 +550,209 @@ def _(Data, InMemoryDataset, X, data, y):
     return (dataset,)
 
 
-@app.cell
-def _(dataset):
-    from torch_geometric.loader import DataLoader
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""Split into a training and test set""")
+    return
 
-    loader = DataLoader(dataset, batch_size=32)
+
+@app.cell
+def _(dataset, dataset_df):
+    from sklearn.model_selection import GroupShuffleSplit
+
+    groups = dataset_df["person_id"]
+    train_idx, test_idx = next(GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42).split(dataset, groups=groups))
+
+    train_set = dataset[train_idx]
+    test_set = dataset[test_idx]
+
+    train_groups = groups[train_idx]
+    test_groups = groups[test_idx]
+
+    print(f"Training samples: {len(train_set)}")
+    print(f"Test samples: {len(test_set)}")
+    return test_set, train_groups, train_set
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""## Model definition""")
     return
 
 
 @app.cell
 def _():
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    import torch.nn.functional as F
+    import torch_geometric.nn as gnn
+
+
+    # Define the model architecture
+    class SimpleGCN(nn.Module):
+        def __init__(self, in_channels, hidden_channels, out_channels):
+            super().__init__()
+            self.conv1 = gnn.GCNConv(in_channels, hidden_channels)
+            self.conv2 = gnn.GCNConv(hidden_channels, out_channels)
+
+        def forward(self, batch):
+            x = batch.x
+            edge_index = batch.edge_index
+            edge_attr = batch.edge_attr.squeeze()
+
+            x = self.conv1(x, edge_index, edge_attr)
+            x = F.relu(x)
+            x = self.conv2(x, edge_index, edge_attr)
+
+            return x
+    return F, SimpleGCN, nn, torch
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""## Model training""")
+    return
+
+
+@app.cell
+def _(dataset):
+    print(f"Number of graphs: {len(dataset)}")
+    print(f"Number of features: {dataset.num_features}")
+    return
+
+
+@app.cell
+def _(F, SimpleGCN, dataset, torch):
+    from sklearn.model_selection import GroupKFold
+    from torch_geometric.loader import DataLoader
+
+    k_folds = 2
+    batch_size = 32
+
+    gkf = GroupKFold(n_splits=k_folds, shuffle=True, random_state=42)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = SimpleGCN(in_channels=dataset.num_features, hidden_channels=32, out_channels=dataset.num_features).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    criterion = F.binary_cross_entropy_with_logits
+    return DataLoader, batch_size, criterion, device, gkf, model, optimizer
+
+
+@app.cell
+def _(DataLoader, batch_size, gkf, train_groups, train_set):
+    from torch.utils.data import SubsetRandomSampler
+
+    _train_idx, _val_idx = next(gkf.split(train_set, groups=train_groups))
+
+    train_loader = DataLoader(
+        dataset=train_set,
+        batch_size=batch_size,
+        sampler=SubsetRandomSampler(_train_idx),
+    )
+
+    val_loader = DataLoader(
+        dataset=train_set,
+        batch_size=batch_size,
+        sampler=SubsetRandomSampler(_val_idx),
+    )
+    return train_loader, val_loader
+
+
+@app.cell
+def _(
+    DataLoader,
+    criterion,
+    device,
+    mo,
+    model,
+    nn,
+    optimizer,
+    pl,
+    torch,
+    train_loader,
+    val_loader,
+):
+    def train_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module):
+        model.train()
+        total_loss = 0
+
+        for batch in loader:
+            batch = batch.to(device)
+            optimizer.zero_grad()
+
+            out = model(batch)
+            loss = criterion(out, batch.y)
+            loss.backward()
+
+            total_loss += loss.item()
+            optimizer.step()
+
+        return total_loss / len(loader)
+
+
+    def evaluate_model(model: nn.Module, loader: DataLoader, criterion: torch.nn.Module):
+        model.eval()
+        total_loss = 0
+
+        for batch in loader:
+            batch = batch.to(device)
+
+            with torch.no_grad():
+                out = model(batch)
+                loss = criterion(out, batch.y)
+
+            total_loss += loss
+
+        return total_loss / len(loader)
+
+
+    n_epochs = 100
+    _train_losses = []
+    _val_losses = []
+
+    for _epoch in range(n_epochs):
+        _train_loss = train_epoch(model, train_loader, optimizer, criterion)
+        _val_loss = evaluate_model(model, val_loader, criterion)
+
+        _train_losses.append(_train_loss)
+        _val_losses.append(_val_loss)
+
+        if _epoch % 10 == 0:
+            print(f"Epoch {_epoch + 1:3}, Training loss: {_train_loss:.4f} | Validation loss: {_val_loss:.4f}")
+
+    losses = pl.DataFrame({"epoch": range(1, n_epochs + 1), "train": _train_losses, "val": _val_losses})
+
+    with mo.redirect_stdout():
+        print(
+            f"Final losses after {n_epochs} epochs: Training={losses['train'][-1]:.4f} | Validation={losses['val'][-1]:.4f}"
+        )
+    return evaluate_model, losses, n_epochs
+
+
+@app.cell
+def _(DataLoader, batch_size, criterion, evaluate_model, mo, model, test_set):
+    _test_loader = DataLoader(dataset=test_set, batch_size=batch_size)
+    test_loss = evaluate_model(model, _test_loader, criterion)
+
+    with mo.redirect_stdout():
+        print(f"Test loss: {test_loss:.4f}")
+    return (test_loss,)
+
+
+@app.cell
+def _(losses, n_epochs, plt, test_loss):
+    plt.figure(figsize=(10, 5))
+    plt.grid()
+    plt.plot(range(1, n_epochs + 1), losses["train"], label="Train")
+    plt.plot(range(1, n_epochs + 1), losses["val"], label="Validation")
+    plt.plot([1, n_epochs], [test_loss, test_loss], label="Test", linestyle="dashed", linewidth=1)
+    plt.title("Training, validation, and test Losses")
+    plt.xlabel("Epoch")
+    plt.xlim([1, n_epochs])
+    plt.ylabel("BCE Loss")
+    plt.legend()
+    plt.show()
     return
 
 
