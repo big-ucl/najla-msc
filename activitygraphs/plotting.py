@@ -4,7 +4,6 @@ import itertools
 import altair as alt
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import matplotlib.style
 import networkx as nx
 import polars as pl
 
@@ -12,13 +11,11 @@ from graphs import ActivityGraph
 from dataprocessing import Purpose
 from metrics import Metrics
 from io import BytesIO
+from synthetic import SyntheticGraph, SyntheticDataset
 
 PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
 
 alt.data_transformers.enable("vegafusion")
-
-matplotlib.style.use("dark_background")
-alt.theme.enable("default")
 
 
 def line_styles_by_key(G: nx.MultiDiGraph, key: str = "person_id"):
@@ -326,3 +323,87 @@ def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
         return True, bbox, children
 
     return app
+
+
+""" ============================================================================ """
+
+
+def _node_colour(node_attrs: dict) -> str:
+    if "is_shopping" not in node_attrs or "is_workplace" not in node_attrs:
+        return "tab:gray"
+
+    if node_attrs["is_shopping"] and node_attrs["is_workplace"]:
+        return "orangered"
+    if node_attrs["is_shopping"]:
+        return "orange"
+    if node_attrs["is_workplace"]:
+        return "tomato"
+
+    return "tab:blue"
+
+
+def draw_synthetic_network(graph: SyntheticGraph, full=False):
+    G = graph.G_full if full else graph.G
+    fig, ax = plt.subplots()
+
+    pos = nx.spring_layout(G, seed=42, weight="distance")
+    edge_labels = nx.get_edge_attributes(G, "distance")
+
+    colors = [_node_colour(attrs) for _, attrs in G.nodes(data=True)]
+
+    nx.draw_networkx(G, pos, node_color=colors, ax=ax)
+    nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax)
+
+    return fig, ax
+
+
+def _activities_to_colors(types: list[str]):
+    if "H" in types:
+        return "tab:blue"
+    if "W" in types and ("S1" in types or "S2" in types):
+        return "orangered"
+    if "S1" in types or "S2" in types:
+        return "orange"
+    if "W" in types:
+        return "tomato"
+
+    raise NotImplementedError("Impossible")
+
+
+def draw_synthetic_trip(dataset: SyntheticDataset, person_id: int, full=False):
+    G = dataset.graph.G_full if full else dataset.graph.G
+    fig, ax = plt.subplots()
+
+    pos = nx.spring_layout(G, seed=42, weight="distance")
+    edge_labels = nx.get_edge_attributes(G, "distance")
+
+    trips = dataset.trip_df.filter(pl.col("person_id") == person_id)
+    edgelist = trips.select("from_loc_id", "to_loc_id").rows()
+    node_colours = (
+        pl.concat([
+            trips.select("from_loc_id", "from_type").rename({"from_loc_id": "loc_id", "from_type": "type"}),
+            trips.select("to_loc_id", "to_type").rename({"to_loc_id": "loc_id", "to_type": "type"}),
+        ])
+        .group_by("loc_id")
+        .agg(pl.col("type").map_batches(_activities_to_colors, return_dtype=pl.String).first())
+        .join(pl.DataFrame({"loc_id": list(G.nodes())}), on="loc_id", how="right")
+        .with_columns(pl.col("type").fill_null("tab:gray"))
+    )["type"].to_list()
+
+    nx.draw_networkx_nodes(G, pos, ax=ax, node_color=node_colours)
+    nx.draw_networkx_labels(G, pos, ax=ax)
+    nx.draw_networkx_edges(G, pos, ax=ax)
+    nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax)
+    nx.draw_networkx_edges(
+        G,
+        pos,
+        edgelist=edgelist,
+        arrows=True,
+        arrowstyle="-|>",
+        style="--",
+        connectionstyle="arc3,rad=0.2",
+        edge_color="red",
+        ax=ax,
+    )
+
+    return fig, ax
