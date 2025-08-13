@@ -163,8 +163,8 @@ def _(generator):
 
 @app.cell
 def _(generator):
-    synthetic_dataset = generator.build()
-    return (synthetic_dataset,)
+    schedules = generator.build()
+    return (schedules,)
 
 
 @app.cell(hide_code=True)
@@ -174,8 +174,8 @@ def _(mo):
 
 
 @app.cell
-def _(synthetic_dataset):
-    synthetic_dataset.trip_df
+def _(schedules):
+    schedules.trip_df
     return
 
 
@@ -186,14 +186,14 @@ def _(mo, n_samples):
 
 
 @app.cell(hide_code=True)
-def _(mo, selected_person, synthetic_dataset):
+def _(mo, schedules, selected_person):
     from plotting import draw_synthetic_trip
 
     mo.vstack(
         [
             mo.md("Generated schedules: "),
             mo.hstack(
-                [draw_synthetic_trip(synthetic_dataset, selected_person.value), selected_person],
+                [draw_synthetic_trip(schedules, selected_person.value), selected_person],
                 align="start",
                 justify="start",
             ),
@@ -208,19 +208,6 @@ def _(mo):
     return
 
 
-@app.cell
-def _():
-    from torch_geometric.data import Dataset, InMemoryDataset, Data
-    from torch_geometric.utils import from_networkx, to_networkx
-    return Data, InMemoryDataset, from_networkx
-
-
-@app.cell
-def _(from_networkx, synthetic_dataset):
-    data = from_networkx(synthetic_dataset.graph.G_full, group_edge_attrs="distance")
-    return (data,)
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""Create a dataset of node features and targets based on if the nodes appear in the group""")
@@ -228,54 +215,10 @@ def _(mo):
 
 
 @app.cell
-def _(pl, synthetic_dataset):
-    import polars.selectors as cs
+def _(schedules):
+    from datasets import convert_to_pyg_dataset
 
-    _features = (
-        synthetic_dataset.trip_df.group_by("person_id")
-        .agg(pl.col("from_loc_id").unique(maintain_order=True))
-        .explode("from_loc_id")
-        .with_columns(pl.int_range(pl.len()).over("person_id").alias("sequence_num"))
-        .to_dummies("from_loc_id")
-        .with_columns(cs.starts_with("from_loc_id").cum_sum().over("person_id", order_by="sequence_num"))
-    )
-
-    _targets = _features.with_columns(pl.col("sequence_num") - 1)
-    dataset_df = _features.join(_targets, on=["person_id", "sequence_num"], suffix="_target").sort(
-        by=["person_id", "sequence_num"]
-    )
-
-    X = dataset_df.select(pl.col("sequence_num"), cs.starts_with("from_loc_id") & ~cs.ends_with("_target")).to_torch()
-    y = dataset_df.select(cs.ends_with("_target")).to_torch()
-    return X, dataset_df, y
-
-
-@app.cell
-def _(Data, InMemoryDataset, X, data, y):
-    class BasicLocationsDataset(InMemoryDataset):
-        def __init__(self, data, X, y):
-            super().__init__()
-            self.edge_index = data.edge_index
-            self.edge_attr = data.edge_attr
-            self.data = data
-            self.graph_x = X[:, 0]
-            self.X = X[:, 1:].unsqueeze(2).float()
-            self.y = y.unsqueeze(2).float()
-
-        def len(self):
-            return len(self.X)
-
-        def get(self, idx):
-            return Data(
-                x=self.X[idx],
-                edge_index=self.edge_index,
-                edge_attr=self.edge_attr,
-                y=self.y[idx],
-                graph_x=self.graph_x[idx],
-            )
-
-
-    dataset = BasicLocationsDataset(data, X, y)
+    dataset = convert_to_pyg_dataset(schedules)
     dataset
     return (dataset,)
 
@@ -287,21 +230,15 @@ def _(mo):
 
 
 @app.cell
-def _(dataset, dataset_df):
-    from sklearn.model_selection import GroupShuffleSplit
+def _(dataset, mo):
+    from datasets import train_test_split
 
-    groups = dataset_df["person_id"]
-    train_idx, test_idx = next(GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42).split(dataset, groups=groups))
+    train_set, test_set = train_test_split(dataset, test_size=0.15, random_state=42)
 
-    train_set = dataset[train_idx]
-    test_set = dataset[test_idx]
-
-    train_groups = groups[train_idx]
-    test_groups = groups[test_idx]
-
-    print(f"Training samples: {len(train_set)}")
-    print(f"Test samples: {len(test_set)}")
-    return test_set, train_groups, train_set
+    with mo.redirect_stdout():
+        print(f"Training samples: {len(train_set)}")
+        print(f"Test samples: {len(test_set)}")
+    return test_set, train_set
 
 
 @app.cell(hide_code=True)
@@ -370,10 +307,10 @@ def _(F, SimpleGCN, dataset, torch):
 
 
 @app.cell
-def _(DataLoader, batch_size, gkf, train_groups, train_set):
+def _(DataLoader, batch_size, gkf, train_set):
     from torch.utils.data import SubsetRandomSampler
 
-    _train_idx, _val_idx = next(gkf.split(train_set, groups=train_groups))
+    _train_idx, _val_idx = next(gkf.split(train_set, groups=train_set.indices()))
 
     train_loader = DataLoader(
         dataset=train_set,
@@ -437,7 +374,7 @@ def _(
         return total_loss / len(loader)
 
 
-    n_epochs = 100
+    n_epochs = 2
     _train_losses = []
     _val_losses = []
 
@@ -483,6 +420,16 @@ def _(losses, n_epochs, plt, test_loss):
     plt.ylabel("BCE Loss")
     plt.legend()
     plt.show()
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
     return
 
 

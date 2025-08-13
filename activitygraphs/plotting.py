@@ -11,7 +11,7 @@ from graphs import ActivityGraph
 from dataprocessing import Purpose
 from metrics import Metrics
 from io import BytesIO
-from synthetic import SyntheticGraph, SyntheticDataset
+from synthetic import SyntheticGraph, SyntheticSchedules
 
 PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
 
@@ -370,14 +370,14 @@ def _activities_to_colors(types: list[str]):
     raise NotImplementedError("Impossible")
 
 
-def draw_synthetic_trip(dataset: SyntheticDataset, person_id: int, full=False):
-    G = dataset.graph.G_full if full else dataset.graph.G
+def draw_synthetic_trip(schedules: SyntheticSchedules, person_id: int, full=False):
+    G = schedules.graph.G_full if full else schedules.graph.G
     fig, ax = plt.subplots()
 
     pos = nx.spring_layout(G, seed=42, weight="distance")
     edge_labels = nx.get_edge_attributes(G, "distance")
 
-    trips = dataset.trip_df.filter(pl.col("person_id") == person_id)
+    trips = schedules.trip_df.filter(pl.col("person_id") == person_id)
     edgelist = trips.select("from_loc_id", "to_loc_id").rows()
     node_colours = (
         pl.concat([

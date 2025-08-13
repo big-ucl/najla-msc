@@ -43,7 +43,7 @@ def _select_closest_from_choice(
 class SyntheticGraph:
     """Represents a transport network, with physical locations as nodes and links between them as edges"""
 
-    _WEIGHT = "distance"
+    WEIGHT = "distance"
 
     def __init__(
         self,
@@ -69,7 +69,7 @@ class SyntheticGraph:
             edges = {edge: 1 for edge in edges}
 
         self._G = nx.Graph()
-        self._G.add_weighted_edges_from(((u, v, w) for ((u, v), w) in edges.items()), weight=self._WEIGHT)
+        self._G.add_weighted_edges_from(((u, v, w) for ((u, v), w) in edges.items()), weight=self.WEIGHT)
 
         self.edges = edges
         self.nodes = np.array(list(self.G.nodes()))
@@ -145,7 +145,7 @@ class SyntheticGraph:
         )
 
 
-class SyntheticDataset:
+class SyntheticSchedules:
     """A class that represents a synthetic dataset of a population of agents and their schedules."""
 
     def __init__(
@@ -319,5 +319,5 @@ class SyntheticGenerator:
             .sort(by=["person_id", "sequence_num"])
         )
 
-    def build(self) -> SyntheticDataset:
-        return SyntheticDataset(self.n_samples, self._graph, self.person_choices_df, self.schedule_df)
+    def build(self) -> SyntheticSchedules:
+        return SyntheticSchedules(self.n_samples, self._graph, self.person_choices_df, self.schedule_df)
