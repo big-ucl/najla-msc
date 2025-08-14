@@ -7,7 +7,8 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    return (mo,)
+    import plotting
+    return mo, plotting
 
 
 @app.cell
@@ -37,7 +38,7 @@ def _():
     import numpy as np
     import polars as pl
     import matplotlib.pyplot as plt
-    return np, pl, plt
+    return (np,)
 
 
 @app.cell(hide_code=True)
@@ -77,11 +78,9 @@ def _():
 
 
 @app.cell
-def _(synth_graph):
-    from plotting import draw_synthetic_network
-
-    draw_synthetic_network(synth_graph)
-    return (draw_synthetic_network,)
+def _(plotting, synth_graph):
+    plotting.draw_synthetic_network(synth_graph)
+    return
 
 
 @app.cell(hide_code=True)
@@ -97,8 +96,8 @@ def _(synth_graph):
 
 
 @app.cell
-def _(draw_synthetic_network, synth_graph):
-    draw_synthetic_network(synth_graph, full=True)
+def _(plotting, synth_graph):
+    plotting.draw_synthetic_network(synth_graph, full=True)
     return
 
 
@@ -186,14 +185,12 @@ def _(mo, n_samples):
 
 
 @app.cell(hide_code=True)
-def _(mo, schedules, selected_person):
-    from plotting import draw_synthetic_trip
-
+def _(mo, plotting, schedules, selected_person):
     mo.vstack(
         [
             mo.md("Generated schedules: "),
             mo.hstack(
-                [draw_synthetic_trip(schedules, selected_person.value), selected_person],
+                [plotting.draw_synthetic_trip(schedules, selected_person.value), selected_person],
                 align="start",
                 justify="start",
             ),
@@ -223,6 +220,12 @@ def _(schedules):
     return (dataset,)
 
 
+@app.cell
+def _(dataset):
+    dataset[0]
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""Split into a training and test set""")
@@ -243,188 +246,141 @@ def _(dataset, mo):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""## Model definition""")
+    mo.md(r"""## Model definition and training""")
+    return
+
+
+@app.cell
+def _(dataset, test_set, train_set):
+    from models import SimpleGCN
+    from experiment import Experiment, run_experiment
+
+    gcn = SimpleGCN(in_channels=dataset.num_features, hidden_channels=32, out_channels=dataset.num_features)
+
+    experiment = Experiment(
+        train_set=train_set,
+        test_set=test_set,
+        n_epochs=2,
+        val_size=0.15,
+        batch_size=32,
+        random_state=42,
+    )
+
+    gcn
+    return experiment, gcn, run_experiment
+
+
+@app.cell
+def _():
+    from models import EqualProbablity
+
+    equal = EqualProbablity()
+    equal
+    return (equal,)
+
+
+@app.cell
+def _(experiment, gcn, mo, plotting, run_experiment):
+    mo.stop(True)
+
+    results = run_experiment(experiment, gcn, name="SimpleGCN")
+
+    with mo.redirect_stdout():
+        _train, _val, _test = results.final_losses()
+
+        print(
+            f"Final losses after {results.n_epochs} epochs: "
+            f"Training={_train:.4f} | Validation={_val:.4f} | Test={_test:.4f}"
+        )
+
+    plotting.plot_experiment_results(results)
     return
 
 
 @app.cell
 def _():
+    return
+
+
+@app.cell
+def _(equal, experiment):
+    from experiment import evaluate_model
+
     import torch
-    import torch.nn as nn
-    import torch.optim as optim
     import torch.nn.functional as F
-    import torch_geometric.nn as gnn
-
-
-    # Define the model architecture
-    class SimpleGCN(nn.Module):
-        def __init__(self, in_channels, hidden_channels, out_channels):
-            super().__init__()
-            self.conv1 = gnn.GCNConv(in_channels, hidden_channels)
-            self.conv2 = gnn.GCNConv(hidden_channels, out_channels)
-
-        def forward(self, batch):
-            x = batch.x
-            edge_index = batch.edge_index
-            edge_attr = batch.edge_attr.squeeze()
-
-            x = self.conv1(x, edge_index, edge_attr)
-            x = F.relu(x)
-            x = self.conv2(x, edge_index, edge_attr)
-
-            return x
-    return F, SimpleGCN, nn, torch
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""## Model training""")
-    return
-
-
-@app.cell
-def _(dataset):
-    print(f"Number of graphs: {len(dataset)}")
-    print(f"Number of features: {dataset.num_features}")
-    return
-
-
-@app.cell
-def _(F, SimpleGCN, dataset, torch):
-    from sklearn.model_selection import GroupKFold
     from torch_geometric.loader import DataLoader
 
-    k_folds = 2
-    batch_size = 32
+    device = torch.device("cpu")
 
-    gkf = GroupKFold(n_splits=k_folds, shuffle=True, random_state=42)
+    test_loader = DataLoader(dataset=experiment.test_set, batch_size=experiment.batch_size)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SimpleGCN(in_channels=dataset.num_features, hidden_channels=32, out_channels=dataset.num_features).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    criterion = F.binary_cross_entropy_with_logits
-    return DataLoader, batch_size, criterion, device, gkf, model, optimizer
+    equal_results = evaluate_model(equal, device, test_loader, F.binary_cross_entropy_with_logits)
+    return (test_loader,)
 
 
 @app.cell
-def _(DataLoader, batch_size, gkf, train_set):
-    from torch.utils.data import SubsetRandomSampler
+def _(test_loader):
+    test = next(iter(test_loader))
+    x = test.x.reshape(32, -1)
+    y = test.y.reshape(32, -1)
 
-    _train_idx, _val_idx = next(gkf.split(train_set, groups=train_set.indices()))
-
-    train_loader = DataLoader(
-        dataset=train_set,
-        batch_size=batch_size,
-        sampler=SubsetRandomSampler(_train_idx),
-    )
-
-    val_loader = DataLoader(
-        dataset=train_set,
-        batch_size=batch_size,
-        sampler=SubsetRandomSampler(_val_idx),
-    )
-    return train_loader, val_loader
+    x[0]
+    return (test,)
 
 
 @app.cell
-def _(
-    DataLoader,
-    criterion,
-    device,
-    mo,
-    model,
-    nn,
-    optimizer,
-    pl,
-    torch,
-    train_loader,
-    val_loader,
-):
-    def train_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module):
-        model.train()
-        total_loss = 0
+def _(synth_graph):
+    import synthetic
 
-        for batch in loader:
-            batch = batch.to(device)
-            optimizer.zero_grad()
-
-            out = model(batch)
-            loss = criterion(out, batch.y)
-            loss.backward()
-
-            total_loss += loss.item()
-            optimizer.step()
-
-        return total_loss / len(loader)
-
-
-    def evaluate_model(model: nn.Module, loader: DataLoader, criterion: torch.nn.Module):
-        model.eval()
-        total_loss = 0
-
-        for batch in loader:
-            batch = batch.to(device)
-
-            with torch.no_grad():
-                out = model(batch)
-                loss = criterion(out, batch.y)
-
-            total_loss += loss
-
-        return total_loss / len(loader)
-
-
-    n_epochs = 2
-    _train_losses = []
-    _val_losses = []
-
-    for _epoch in range(n_epochs):
-        _train_loss = train_epoch(model, train_loader, optimizer, criterion)
-        _val_loss = evaluate_model(model, val_loader, criterion)
-
-        _train_losses.append(_train_loss)
-        _val_losses.append(_val_loss)
-
-        if _epoch % 10 == 0:
-            print(f"Epoch {_epoch + 1:3}, Training loss: {_train_loss:.4f} | Validation loss: {_val_loss:.4f}")
-
-    losses = pl.DataFrame({"epoch": range(1, n_epochs + 1), "train": _train_losses, "val": _val_losses})
-
-    with mo.redirect_stdout():
-        print(
-            f"Final losses after {n_epochs} epochs: Training={losses['train'][-1]:.4f} | Validation={losses['val'][-1]:.4f}"
-        )
-    return evaluate_model, losses, n_epochs
+    all_schedules = synthetic.compute_all_possible_schedules(synth_graph)
+    all_schedules
+    return (all_schedules,)
 
 
 @app.cell
-def _(DataLoader, batch_size, criterion, evaluate_model, mo, model, test_set):
-    _test_loader = DataLoader(dataset=test_set, batch_size=batch_size)
-    test_loss = evaluate_model(model, _test_loader, criterion)
+def _(all_schedules, test):
+    from models import BestGuess
 
-    with mo.redirect_stdout():
-        print(f"Test loss: {test_loss:.4f}")
-    return (test_loss,)
+    best = BestGuess(all_schedules)
+    pred = best(test)
+
+    pred.view(len(test), -1)
+    return (pred,)
 
 
 @app.cell
-def _(losses, n_epochs, plt, test_loss):
-    plt.figure(figsize=(10, 5))
-    plt.grid()
-    plt.plot(range(1, n_epochs + 1), losses["train"], label="Train")
-    plt.plot(range(1, n_epochs + 1), losses["val"], label="Validation")
-    plt.plot([1, n_epochs], [test_loss, test_loss], label="Test", linestyle="dashed", linewidth=1)
-    plt.title("Training, validation, and test Losses")
-    plt.xlabel("Epoch")
-    plt.xlim([1, n_epochs])
-    plt.ylabel("BCE Loss")
-    plt.legend()
-    plt.show()
+def _(plotting, pred, synth_graph, test):
+    idx = 0
+
+    _x, _y = test.x.view((len(test), -1)), pred.view((len(test), -1))
+
+    plotting.draw_prediction(synth_graph, _x[idx].tolist(), _y[idx].tolist())
     return
 
 
 @app.cell
-def _():
+def _(mo, test):
+    selected_pred = mo.ui.number(start=0, stop=len(test) - 1, label="Prediction")
+    return (selected_pred,)
+
+
+@app.cell
+def _(mo, plotting, pred, selected_pred, synth_graph, test):
+    _idx = selected_pred.value
+    _x = test.x.view((len(test), -1))[_idx].tolist()
+    _y = pred.view((len(test), -1))[_idx].tolist()
+
+
+    mo.vstack(
+        [
+            mo.md("Best prediction: "),
+            mo.hstack(
+                [plotting.draw_prediction(synth_graph, _x, _y), selected_pred],
+                align="start",
+                justify="start",
+            ),
+        ]
+    )
     return
 
 

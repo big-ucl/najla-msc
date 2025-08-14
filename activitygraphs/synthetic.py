@@ -1,9 +1,10 @@
+from functools import cached_property
+from typing import Optional
+
 import networkx as nx
 import numpy as np
 import polars as pl
-
-from functools import cached_property
-from typing import Optional
+import polars.selectors as cs
 
 
 def _set_binary_graph_attribute(G: nx.Graph, included_nodes: list[str], attr_name: str):
@@ -174,6 +175,24 @@ class SyntheticSchedules:
 class SyntheticGenerator:
     """A class for generating synthetic populations and schedules on a SyntheticGraph"""
 
+    AVAILABLE_SCHEDULES = np.array([
+        ["W", "-", "-"],
+        ["S1", "-", "-"],
+        ["S2", "-", "-"],
+        ["W", "S1", "-"],
+        ["W", "S2", "-"],
+        ["S1", "W", "-"],
+        ["S1", "S2", "-"],
+        ["S2", "W", "-"],
+        ["S2", "S1", "-"],
+        # ["W", "S1", "S2"],
+        ["W", "S2", "S1"],
+        ["S1", "W", "S2"],
+        ["S1", "S2", "W"],
+        ["S2", "W", "S1"],
+        # ["S2", "S1", "W"],
+    ])
+
     def __init__(self, graph: SyntheticGraph, rng: np.random.Generator = None):
         """_summary_
 
@@ -283,23 +302,7 @@ class SyntheticGenerator:
         """
         n_samples = self.n_samples
 
-        available_schedules = np.array([
-            ["W", "-", "-"],
-            ["S1", "-", "-"],
-            ["S2", "-", "-"],
-            ["W", "S1", "-"],
-            ["W", "S2", "-"],
-            ["S1", "W", "-"],
-            ["S1", "S2", "-"],
-            ["S2", "W", "-"],
-            ["S2", "S1", "-"],
-            # ["W", "S1", "S2"],
-            ["W", "S2", "S1"],
-            ["S1", "W", "S2"],
-            ["S1", "S2", "W"],
-            ["S2", "W", "S1"],
-            # ["S2", "S1", "W"],
-        ])
+        available_schedules = self.AVAILABLE_SCHEDULES
 
         chosen_schedules = self._rng.integers(low=0, high=len(available_schedules), size=n_samples)
         schedules = available_schedules[chosen_schedules]
@@ -321,3 +324,68 @@ class SyntheticGenerator:
 
     def build(self) -> SyntheticSchedules:
         return SyntheticSchedules(self.n_samples, self._graph, self.person_choices_df, self.schedule_df)
+
+
+def _choose_shopping(graph: SyntheticGraph, choice_idx):
+    return _select_closest_from_choice(
+        nodes=graph.nodes,
+        distances=graph.distance_matrix,
+        choices_idx=choice_idx,
+        valid=graph.shopping_nodes,
+        exclude_chosen=True,
+    ).item()
+
+
+def _form_schedule(schedule: list[str], home: str, s1: str, work: str, s2: str):
+    def substitute(act: str):
+        return work if act == "W" else s1 if act == "S1" else s2 if act == "S2" else "-"
+
+    sched = [substitute(act) for act in schedule if act != "-"]
+    sched = [home] + sched + [home]
+    sched += ["-"] * (len(schedule) + 2 - len(sched))
+
+    return sched
+
+
+def compute_all_possible_schedules(graph: SyntheticGraph) -> pl.DataFrame:
+    available_schedules = SyntheticGenerator.AVAILABLE_SCHEDULES
+
+    scheds = []
+
+    for home_choice_idx, home_choice in enumerate(graph.home_nodes):
+        home_choice_idx = np.array([home_choice_idx])
+        s1_choice = _choose_shopping(graph, home_choice_idx)
+
+        for work_choice_idx, work_choice in enumerate(graph.workplace_nodes):
+            work_choice_idx = np.array([work_choice_idx])
+            s2_choice = _choose_shopping(graph, work_choice_idx)
+
+            for schedule in available_schedules:
+                scheds.append(_form_schedule(schedule, home_choice, s1_choice, work_choice, s2_choice))
+
+    schedule_df = (
+        pl.DataFrame(scheds, schema=["1", "2", "3", "4", "5"], orient="row")
+        .with_row_index("person_id")
+        .unpivot(index="person_id", variable_name="numpy_seq", value_name="loc_id")
+        .sort(by=["person_id", "numpy_seq"])
+        .filter(pl.col("loc_id") != "-")
+        .with_columns(
+            pl.int_range(pl.len()).over("person_id", order_by="numpy_seq").alias("sequence_num"),
+            pl.lit("-").alias("type"),
+        )
+        .drop("numpy_seq")
+    )
+
+    s = SyntheticSchedules(0, graph, None, schedule_df)
+    features = (
+        s.trip_df.group_by("person_id")
+        .agg(pl.col("from_loc_id").unique(maintain_order=True))
+        .explode("from_loc_id")
+        .with_columns(pl.int_range(pl.len()).over("person_id").alias("sequence_num"))
+        .to_dummies("from_loc_id")
+        .with_columns(cs.starts_with("from_loc_id").cum_sum().over("person_id", order_by="sequence_num"))
+    )
+    targets = features.with_columns(pl.col("sequence_num") - 1).rename(lambda col: col.replace("from_", "to_"))
+    dataset_df = features.join(targets, on=["person_id", "sequence_num"]).sort(by=["person_id", "sequence_num"])
+
+    return dataset_df

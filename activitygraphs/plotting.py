@@ -1,16 +1,18 @@
 import base64
 import itertools
+from io import BytesIO
 
 import altair as alt
+import experiment
 import geopandas as gpd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
 import polars as pl
-
-from graphs import ActivityGraph
 from dataprocessing import Purpose
+from graphs import ActivityGraph
+from matplotlib.axes import Axes
 from metrics import Metrics
-from io import BytesIO
 from synthetic import SyntheticGraph, SyntheticSchedules
 
 PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
@@ -249,7 +251,7 @@ def geo_plot_mean_stat_by_municipality(
 
 def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
     import plotly.graph_objects as go
-    from dash import Dash, dcc, html, Input, Output, no_update, callback
+    from dash import Dash, Input, Output, callback, dcc, html, no_update
 
     _fig = go.Figure(
         go.Scatter3d(
@@ -328,21 +330,20 @@ def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
 """ ============================================================================ """
 
 
-def _node_colour(node_attrs: dict) -> str:
-    if "is_shopping" not in node_attrs or "is_workplace" not in node_attrs:
-        return "tab:gray"
-
-    if node_attrs["is_shopping"] and node_attrs["is_workplace"]:
-        return "orangered"
-    if node_attrs["is_shopping"]:
-        return "orange"
-    if node_attrs["is_workplace"]:
-        return "tomato"
-
-    return "tab:blue"
-
-
 def draw_synthetic_network(graph: SyntheticGraph, full=False):
+    def _node_colour(node_attrs: dict) -> str:
+        if "is_shopping" not in node_attrs or "is_workplace" not in node_attrs:
+            return "tab:gray"
+
+        if node_attrs["is_shopping"] and node_attrs["is_workplace"]:
+            return "orangered"
+        if node_attrs["is_shopping"]:
+            return "orange"
+        if node_attrs["is_workplace"]:
+            return "tomato"
+
+        return "tab:blue"
+
     G = graph.G_full if full else graph.G
     fig, ax = plt.subplots()
 
@@ -405,5 +406,45 @@ def draw_synthetic_trip(schedules: SyntheticSchedules, person_id: int, full=Fals
         edge_color="red",
         ax=ax,
     )
+
+    return fig, ax
+
+
+def plot_experiment_results(results: experiment.Results, ax: Axes = None):
+    ax = ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
+
+    epochs = list(range(1, results.n_epochs + 1))
+    _, _, test_loss = results.final_losses()
+
+    ax.grid()
+    ax.plot(epochs, results.train_losses(), label="Train")
+    ax.plot(epochs, results.val_losses(), label="Validation")
+    ax.plot([1, results.n_epochs], [test_loss, test_loss], label="Test", linestyle="dashed", linewidth=1)
+    ax.set_title(f"{results.name} losses")
+    ax.set_xlabel("Epoch")
+    ax.set_xlim([1, results.n_epochs])
+    ax.set_ylabel("BCE Loss")
+    ax.legend()
+
+    return ax
+
+
+def draw_prediction(graph: SyntheticGraph, x: list, y_prob: list, full=False):
+    def _node_colour(x, y):
+        if x:
+            return "tab:blue"
+
+        return mpl.colormaps["grey_r"](y)
+
+    G = graph.G_full if full else graph.G
+    fig, ax = plt.subplots()
+
+    pos = nx.spring_layout(G, seed=42, weight="distance")
+    edge_labels = nx.get_edge_attributes(G, "distance")
+
+    colors = [_node_colour(_x, _y) for _x, _y in zip(x, y_prob)]
+
+    nx.draw_networkx(G, pos, node_color=colors, ax=ax, edgecolors="gray")
+    nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax)
 
     return fig, ax
