@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn
 
+import synthetic
+
 
 class SimpleGCN(nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
@@ -67,3 +69,8 @@ class BestGuess(Benchmark):
         probs = conditioned.sum() / len(conditioned)
 
         return probs.to_torch()
+
+    @classmethod
+    def from_graph(cls, graph: synthetic.SyntheticGraph) -> "BestGuess":
+        all_schedules = synthetic.compute_all_possible_schedules(graph)
+        return cls(all_schedules)

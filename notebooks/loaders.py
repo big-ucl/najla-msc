@@ -260,7 +260,7 @@ def _(dataset, test_set, train_set):
     experiment = Experiment(
         train_set=train_set,
         test_set=test_set,
-        n_epochs=2,
+        n_epochs=50,
         val_size=0.15,
         batch_size=32,
         random_state=42,
@@ -271,19 +271,20 @@ def _(dataset, test_set, train_set):
 
 
 @app.cell
-def _():
-    from models import EqualProbablity
+def _(experiment, synth_graph):
+    from models import EqualProbablity, BestGuess
+    from experiment import compute_benchmark
 
-    equal = EqualProbablity()
-    equal
-    return (equal,)
+    best_results = compute_benchmark(experiment, BestGuess.from_graph(synth_graph))
+    equal_results = compute_benchmark(experiment, EqualProbablity())
+    return best_results, equal_results
 
 
 @app.cell
 def _(experiment, gcn, mo, plotting, run_experiment):
-    mo.stop(True)
+    # mo.stop(True)
 
-    results = run_experiment(experiment, gcn, name="SimpleGCN")
+    results = run_experiment(experiment, gcn)
 
     with mo.redirect_stdout():
         _train, _val, _test = results.final_losses()
@@ -293,99 +294,19 @@ def _(experiment, gcn, mo, plotting, run_experiment):
             f"Training={_train:.4f} | Validation={_val:.4f} | Test={_test:.4f}"
         )
 
-    plotting.plot_experiment_results(results)
+    plotting.plot_training_progress(results)
+    return (results,)
+
+
+@app.cell
+def _(best_results, equal_results, plotting, results):
+    plotting.plot_model_comparisons(results, best_results, equal_results, how="bar")
     return
 
 
 @app.cell
-def _():
-    return
-
-
-@app.cell
-def _(equal, experiment):
-    from experiment import evaluate_model
-
-    import torch
-    import torch.nn.functional as F
-    from torch_geometric.loader import DataLoader
-
-    device = torch.device("cpu")
-
-    test_loader = DataLoader(dataset=experiment.test_set, batch_size=experiment.batch_size)
-
-    equal_results = evaluate_model(equal, device, test_loader, F.binary_cross_entropy_with_logits)
-    return (test_loader,)
-
-
-@app.cell
-def _(test_loader):
-    test = next(iter(test_loader))
-    x = test.x.reshape(32, -1)
-    y = test.y.reshape(32, -1)
-
-    x[0]
-    return (test,)
-
-
-@app.cell
-def _(synth_graph):
-    import synthetic
-
-    all_schedules = synthetic.compute_all_possible_schedules(synth_graph)
-    all_schedules
-    return (all_schedules,)
-
-
-@app.cell
-def _(all_schedules, test):
-    from models import BestGuess
-
-    best = BestGuess(all_schedules)
-    pred = best(test)
-
-    pred.view(len(test), -1)
-    return (pred,)
-
-
-@app.cell
-def _(plotting, pred, synth_graph, test):
-    idx = 0
-
-    _x, _y = test.x.view((len(test), -1)), pred.view((len(test), -1))
-
-    plotting.draw_prediction(synth_graph, _x[idx].tolist(), _y[idx].tolist())
-    return
-
-
-@app.cell
-def _(mo, test):
-    selected_pred = mo.ui.number(start=0, stop=len(test) - 1, label="Prediction")
-    return (selected_pred,)
-
-
-@app.cell
-def _(mo, plotting, pred, selected_pred, synth_graph, test):
-    _idx = selected_pred.value
-    _x = test.x.view((len(test), -1))[_idx].tolist()
-    _y = pred.view((len(test), -1))[_idx].tolist()
-
-
-    mo.vstack(
-        [
-            mo.md("Best prediction: "),
-            mo.hstack(
-                [plotting.draw_prediction(synth_graph, _x, _y), selected_pred],
-                align="start",
-                justify="start",
-            ),
-        ]
-    )
-    return
-
-
-@app.cell
-def _():
+def _(best_results, equal_results, plotting, results):
+    plotting.plot_model_comparisons(results, best_results, equal_results, how="line")
     return
 
 

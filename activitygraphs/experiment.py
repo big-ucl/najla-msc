@@ -8,6 +8,8 @@ from datasets import train_test_split
 from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
 
+import models
+
 
 @dataclass(frozen=True)
 class Experiment:
@@ -25,8 +27,16 @@ class Results:
         self.losses = losses
         self.n_epochs = losses["epoch"].max()
 
+    def has_training_history(self):
+        return "train" in self.losses["type"] and "val" in self.losses["type"]
+
     def _losses(self, loss_type: str):
-        return self.losses.filter(pl.col("type") == loss_type)
+        losses = self.losses.filter(pl.col("type") == loss_type)
+
+        if len(losses) == 0:
+            raise ValueError(f"No loss of type {loss_type}")
+
+        return losses
 
     def _latest_loss(self, loss_type: str) -> float:
         return self._losses(loss_type).filter(pl.col("epoch") == pl.col("epoch").max())["loss"][0]
@@ -40,12 +50,14 @@ class Results:
     def test_losses(self):
         return self._losses("test")["loss"]
 
+    def test_loss(self):
+        return self._latest_loss("test")
+
     def final_losses(self) -> tuple[float, float, float]:
-        return self._latest_loss("train"), self._latest_loss("val"), self._latest_loss("test")
+        return self._latest_loss("train"), self._latest_loss("val"), self.test_loss()
 
     def __repr__(self):
-        train, val, test = self.final_losses()
-        return f"Results({self.name} | {train=:.4f} , {val=:.4f}, {test=:.4f})"
+        return f"Results({self.name} | Test loss={self.test_loss():.4f})"
 
 
 def run_experiment(
@@ -58,6 +70,7 @@ def run_experiment(
     exp = experiment
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
+    name = model.__class__.__name__ if name is None else name
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = F.binary_cross_entropy_with_logits
 
@@ -136,3 +149,14 @@ def evaluate_model(model: nn.Module, device: torch.device, loader: DataLoader, c
         total_loss += loss
 
     return total_loss / len(loader)
+
+
+def compute_benchmark(experiment: Experiment, benchmark_model: models.Benchmark, name: str = None) -> Results:
+    name = benchmark_model.__class__.__name__ if name is None else name
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    benchmark_model = benchmark_model.to(device)
+
+    test_loader = DataLoader(dataset=experiment.test_set, batch_size=experiment.batch_size)
+    loss = evaluate_model(benchmark_model, device, test_loader, F.binary_cross_entropy_with_logits)
+
+    return Results(name, pl.DataFrame({"name": name, "epoch": 0, "loss": loss, "type": "test"}))

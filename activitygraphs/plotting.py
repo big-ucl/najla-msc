@@ -410,7 +410,7 @@ def draw_synthetic_trip(schedules: SyntheticSchedules, person_id: int, full=Fals
     return fig, ax
 
 
-def plot_experiment_results(results: experiment.Results, ax: Axes = None):
+def plot_training_progress(results: experiment.Results, ax: Axes = None):
     ax = ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
 
     epochs = list(range(1, results.n_epochs + 1))
@@ -448,3 +448,61 @@ def draw_prediction(graph: SyntheticGraph, x: list, y_prob: list, full=False):
     nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax)
 
     return fig, ax
+
+
+def plot_model_comparisons(*results: experiment.Results, ax: Axes = None, how="bar"):
+    ax = ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
+
+    if how == "bar":
+        return _plot_model_comparisons_bar(results, ax)
+    elif how == "line":
+        return _plot_model_comparisons_line(results, ax)
+
+    raise KeyError(f"Unknown plot '{how}'. Valid entries are 'bar' or 'line'")
+
+
+def _plot_model_comparisons_bar(results: tuple[experiment.Results], ax: Axes = None):
+    xs = [r.name for r in results]
+    heights = [r.test_loss() for r in results]
+    labels = [f"{h:.4f}" for h in heights]
+
+    colors = ["tab:orange" if r.has_training_history() else "tab:blue" for r in results]
+
+    ax.set_axisbelow(True)
+    b = ax.bar(xs, heights, color=colors)
+    ax.bar_label(b, labels)
+    ax.grid()
+    ax.set_title("Model comparison (Test BCE loss)")
+    ax.set_xlabel("Model")
+    ax.set_ylabel("BCE Loss")
+
+    return ax
+
+
+def _plot_model_comparisons_line(results: tuple[experiment.Results], ax: Axes = None):
+    max_epochs = max(res.n_epochs for res in results)
+    trained_results = [res for res in results if res.has_training_history()]
+    benchmark_results = [res for res in results if not res.has_training_history()]
+
+    ax.grid()
+
+    for trained_res in trained_results:
+        test = trained_res.test_loss()
+
+        epochs = list(range(1, trained_res.n_epochs + 1))
+        line = ax.plot(epochs, trained_res.val_losses(), label=trained_res.name)
+        ax.plot([1, trained_res.n_epochs], [test, test], linestyle="dashed", linewidth=1, color=line[0].get_color())
+
+    for benchmark_res in benchmark_results:
+        test = benchmark_res.test_loss()
+        ax.plot([1, max_epochs], [test, test], label=benchmark_res.name, linestyle="dashed", linewidth=1)
+
+    # TODO ax.plot(epochs, results.val_losses(), label="Validation")
+
+    ax.set_title("Model losses")
+    ax.set_xlabel("Epoch")
+    ax.set_xlim([1, max_epochs])
+    ax.set_ylabel("BCE Loss")
+    ax.legend()
+
+    return ax
