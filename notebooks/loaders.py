@@ -8,6 +8,7 @@ app = marimo.App(width="medium")
 def _():
     import marimo as mo
     import plotting
+
     return mo, plotting
 
 
@@ -16,6 +17,7 @@ def _():
     import math
     import torch
     import torch.nn.functional as F
+
     return F, math, torch
 
 
@@ -46,6 +48,7 @@ def _():
     import numpy as np
     import polars as pl
     import matplotlib.pyplot as plt
+
     return np, plt
 
 
@@ -136,7 +139,6 @@ def _(np, synth_graph):
     n_samples = 1000
     exclude_chosen_from_shopping = True
 
-
     generator.generate_population(n_samples, exclude_chosen_from_shopping)
     generator.person_choices_df
     return generator, n_samples
@@ -194,16 +196,14 @@ def _(mo, n_samples):
 
 @app.cell(hide_code=True)
 def _(mo, plotting, schedules, selected_person):
-    mo.vstack(
-        [
-            mo.md("Generated schedules: "),
-            mo.hstack(
-                [plotting.draw_synthetic_trip(schedules, selected_person.value), selected_person],
-                align="start",
-                justify="start",
-            ),
-        ]
-    )
+    mo.vstack([
+        mo.md("Generated schedules: "),
+        mo.hstack(
+            [plotting.draw_synthetic_trip(schedules, selected_person.value), selected_person],
+            align="start",
+            justify="start",
+        ),
+    ])
     return
 
 
@@ -375,13 +375,11 @@ def _(
 ):
     sample = experiment.test_set[get_prediction_idx()]
 
-    mo.vstack(
-        [
-            mo.md("Comparison of predictions between models and benchmarks: "),
-            mo.hstack([prev_btn, mo.md(f"Sample #{get_prediction_idx()}/{n_test_samples - 1}"), next_btn], align="center"),
-            plot_models(sample, [gcn], [best_model, equal_model]),
-        ]
-    )
+    mo.vstack([
+        mo.md("Comparison of predictions between models and benchmarks: "),
+        mo.hstack([prev_btn, mo.md(f"Sample #{get_prediction_idx()}/{n_test_samples - 1}"), next_btn], align="center"),
+        plot_models(sample, [gcn], [best_model, equal_model]),
+    ])
     return
 
 
@@ -402,7 +400,6 @@ def _(experiment, mo):
         next_button = mo.ui.button(on_click=_increase, label="Next")
 
         return prev_button, next_button, get_prediction
-
 
     n_test_samples = len(experiment.test_set)
     prev_btn, next_btn, get_prediction_idx = create_prev_next_buttons(n_test_samples)
@@ -447,6 +444,7 @@ def _(F, math, plotting, plt, synth_graph, torch):
         fig.suptitle("Comparison of predictions")
 
         return fig
+
     return (plot_models,)
 
 
