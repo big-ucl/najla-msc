@@ -423,34 +423,38 @@ def plot_training_progress(results: experiment.Results, ax: Axes = None):
     ax.set_title(f"{results.name} losses")
     ax.set_xlabel("Epoch")
     ax.set_xlim([1, results.n_epochs])
-    ax.set_ylabel("BCE Loss")
+    ax.set_ylabel("CE Loss")
     ax.legend()
 
     return ax
 
 
-def draw_prediction(graph: SyntheticGraph, x: list, y_prob: list, full=False):
+def draw_prediction(graph: SyntheticGraph, x: list, y_prob: list, full=False, labels=True, ax: Axes = None):
     def _node_colour(x, y):
         if x:
             return "tab:blue"
 
         return mpl.colormaps["grey_r"](y)
 
-    G = graph.G_full if full else graph.G
-    fig, ax = plt.subplots()
+    ax = ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
 
+    G = graph.G_full if full else graph.G
     pos = nx.spring_layout(G, seed=42, weight="distance")
     edge_labels = nx.get_edge_attributes(G, "distance")
-
     colors = [_node_colour(_x, _y) for _x, _y in zip(x, y_prob)]
 
-    nx.draw_networkx(G, pos, node_color=colors, ax=ax, edgecolors="gray")
+    nx.draw_networkx(G, pos, node_color=colors, ax=ax, edgecolors="gray", font_color="DimGray")
     nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax)
 
-    return fig, ax
+    if labels:
+        label_pos = {n: (x, y + 0.15) for n, (x, y) in pos.items()}
+        lab = {n: f"{y:.2f}" for n, y in zip(G.nodes(), y_prob)}
+        nx.draw_networkx_labels(G, label_pos, lab, font_color="red", font_size=10, ax=ax)
+
+    return ax
 
 
-def plot_model_comparisons(*results: experiment.Results, ax: Axes = None, how="bar"):
+def plot_model_comparisons(*results: experiment.Results, how="bar", ax: Axes = None):
     ax = ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
 
     if how == "bar":
@@ -472,9 +476,9 @@ def _plot_model_comparisons_bar(results: tuple[experiment.Results], ax: Axes = N
     b = ax.bar(xs, heights, color=colors)
     ax.bar_label(b, labels)
     ax.grid()
-    ax.set_title("Model comparison (Test BCE loss)")
+    ax.set_title("Model comparison (Test CE loss)")
     ax.set_xlabel("Model")
-    ax.set_ylabel("BCE Loss")
+    ax.set_ylabel("CE Loss")
 
     return ax
 

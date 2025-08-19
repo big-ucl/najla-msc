@@ -4,11 +4,9 @@ import networkx as nx
 import polars as pl
 import polars.selectors as cs
 import torch
-import torch_geometric as pyg
+from sklearn.model_selection import GroupShuffleSplit
 from torch_geometric.data import Data, Dataset, InMemoryDataset
 from torch_geometric.utils import from_networkx
-
-from sklearn.model_selection import GroupShuffleSplit
 
 
 class Graph(Protocol):
@@ -33,7 +31,7 @@ class BasicLocationsDataset(InMemoryDataset):
     def __init__(
         self,
         person_ids: pl.Series,
-        data: pyg.data.Data,
+        data: Data,
         X: torch.Tensor,
         y: torch.Tensor,
     ):
@@ -51,12 +49,16 @@ class BasicLocationsDataset(InMemoryDataset):
         self.data = data
 
         self._person_ids = person_ids
-        self._graph_x = X[:, 0]
+        self._graph_x = X[:, 0].unsqueeze(1).float()
         self._X = X[:, 1:].unsqueeze(2).float()
-        self._y = y.unsqueeze(2).float()
+        self._y = (y.unsqueeze(2).float() - self._X).squeeze().argmax(dim=1)
 
     def len(self):
         return len(self._X)
+
+    @property
+    def num_classes(self) -> int:
+        return self._data.num_nodes
 
     def person_ids(self):
         return self._person_ids[self.indices()]

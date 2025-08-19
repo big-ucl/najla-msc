@@ -20,6 +20,10 @@ class Experiment:
     batch_size: int
     random_state: int
 
+    @property
+    def n_nodes(self) -> int:
+        return self.train_set.num_classes
+
 
 class Results:
     def __init__(self, name: str, losses: pl.DataFrame):
@@ -60,6 +64,19 @@ class Results:
         return f"Results({self.name} | Test loss={self.test_loss():.4f})"
 
 
+def create_loss(experiment: Experiment, with_logits=False, epsilon=0.0001) -> nn.Module:
+    def loss(out: torch.Tensor, y: torch.Tensor):
+        n_classes = experiment.test_set.num_classes
+
+        out = out.reshape((-1, n_classes))
+        if with_logits:
+            return F.cross_entropy(out, y)
+        else:
+            return F.nll_loss(torch.log(out + epsilon), y)
+
+    return loss
+
+
 def run_experiment(
     experiment: Experiment,
     model: nn.Module,
@@ -72,7 +89,7 @@ def run_experiment(
     model = model.to(device)
     name = model.__class__.__name__ if name is None else name
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = F.binary_cross_entropy_with_logits
+    criterion = create_loss(experiment, with_logits=True)
 
     train_set, val_set = train_test_split(exp.train_set, test_size=exp.val_size, random_state=exp.random_state)
 
@@ -157,6 +174,6 @@ def compute_benchmark(experiment: Experiment, benchmark_model: models.Benchmark,
     benchmark_model = benchmark_model.to(device)
 
     test_loader = DataLoader(dataset=experiment.test_set, batch_size=experiment.batch_size)
-    loss = evaluate_model(benchmark_model, device, test_loader, F.binary_cross_entropy_with_logits)
+    loss = evaluate_model(benchmark_model, device, test_loader, create_loss(experiment))
 
     return Results(name, pl.DataFrame({"name": name, "epoch": 0, "loss": loss, "type": "test"}))
