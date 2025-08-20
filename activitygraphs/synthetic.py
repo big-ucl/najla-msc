@@ -44,7 +44,7 @@ def _select_closest_from_choice(
 class SyntheticGraph:
     """Represents a transport network, with physical locations as nodes and links between them as edges"""
 
-    WEIGHT = "distance"
+    WEIGHT_NAME = "distance"
 
     def __init__(
         self,
@@ -70,7 +70,7 @@ class SyntheticGraph:
             edges = {edge: 1 for edge in edges}
 
         self._G = nx.Graph()
-        self._G.add_weighted_edges_from(((u, v, w) for ((u, v), w) in edges.items()), weight=self.WEIGHT)
+        self._G.add_weighted_edges_from(((u, v, w) for ((u, v), w) in edges.items()), weight=self.WEIGHT_NAME)
 
         self.edges = edges
         self.nodes = np.array(list(self.G.nodes()))
@@ -348,6 +348,15 @@ def _form_schedule(schedule: list[str], home: str, s1: str, work: str, s2: str):
 
 
 def compute_all_possible_schedules(graph: SyntheticGraph) -> pl.DataFrame:
+    """From a SyntheticGraph & associated SyntheticGenerator, compute all possible schedules / trips that
+    can form on the graph
+
+    Args:
+        graph (SyntheticGraph)
+
+    Returns:
+        pl.DataFrame: the schedules
+    """
     available_schedules = SyntheticGenerator.AVAILABLE_SCHEDULES
 
     scheds = []

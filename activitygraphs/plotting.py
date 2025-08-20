@@ -330,7 +330,22 @@ def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
 """ ============================================================================ """
 
 
-def draw_synthetic_network(graph: SyntheticGraph, full=False):
+def _default_axes(ax: Axes = None) -> Axes:
+    return ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
+
+
+def draw_synthetic_network(graph: SyntheticGraph, full=False, ax: Axes = None):
+    """Draws a SyntheticGraph with shopping and work nodes highlighted
+
+    Args:
+        graph (SyntheticGraph): the graph to draw
+        full (bool, optional): draw the fully-connected version of the graph. Defaults to False.
+        ax (Axes, optional): the Axes on which to draw. Creates a new Axes if None. Defaults to None.
+
+    Returns:
+        Axes: the drawn axes
+    """
+
     def _node_colour(node_attrs: dict) -> str:
         if "is_shopping" not in node_attrs or "is_workplace" not in node_attrs:
             return "tab:gray"
@@ -345,38 +360,50 @@ def draw_synthetic_network(graph: SyntheticGraph, full=False):
         return "tab:blue"
 
     G = graph.G_full if full else graph.G
-    fig, ax = plt.subplots()
+    ax = _default_axes(ax)
 
-    pos = nx.spring_layout(G, seed=42, weight="distance")
-    edge_labels = nx.get_edge_attributes(G, "distance")
+    pos = nx.spring_layout(G, seed=42, weight=graph.WEIGHT_NAME)
+    edge_labels = nx.get_edge_attributes(G, graph.WEIGHT_NAME)
 
     colors = [_node_colour(attrs) for _, attrs in G.nodes(data=True)]
 
     nx.draw_networkx(G, pos, node_color=colors, ax=ax)
     nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax)
 
-    return fig, ax
+    return ax
 
 
-def _activities_to_colors(types: list[str]):
-    if "H" in types:
-        return "tab:blue"
-    if "W" in types and ("S1" in types or "S2" in types):
-        return "orangered"
-    if "S1" in types or "S2" in types:
-        return "orange"
-    if "W" in types:
-        return "tomato"
+def draw_synthetic_trip(schedules: SyntheticSchedules, person_id: int, full=False, ax: Axes = None):
+    """Draws the SyntheticGraph in schedules with a person's schedule and trips overlain.
 
-    raise NotImplementedError("Impossible")
+    Args:
+        schedules (SyntheticSchedules): The schedules from which to draw from
+        person_id (int): the ID of the person whose schedule you want to draw
+        full (bool, optional): draw the fully-connected version of the graph. Defaults to False.
+        ax (Axes, optional): the Axes on which to draw. Creates a new Axes if None. Defaults to None.
 
+    Returns:
+        Axes: the drawn axes
+    """
 
-def draw_synthetic_trip(schedules: SyntheticSchedules, person_id: int, full=False):
-    G = schedules.graph.G_full if full else schedules.graph.G
-    fig, ax = plt.subplots()
+    def _activities_to_colors(types: list[str]):
+        if "H" in types:
+            return "tab:blue"
+        if "W" in types and ("S1" in types or "S2" in types):
+            return "orangered"
+        if "S1" in types or "S2" in types:
+            return "orange"
+        if "W" in types:
+            return "tomato"
 
-    pos = nx.spring_layout(G, seed=42, weight="distance")
-    edge_labels = nx.get_edge_attributes(G, "distance")
+        raise NotImplementedError("Impossible")
+
+    graph = schedules.graph
+    G = graph.G_full if full else graph.G
+    ax = _default_axes(ax)
+
+    pos = nx.spring_layout(G, seed=42, weight=graph.WEIGHT_NAME)
+    edge_labels = nx.get_edge_attributes(G, graph.WEIGHT_NAME)
 
     trips = schedules.trip_df.filter(pl.col("person_id") == person_id)
     edgelist = trips.select("from_loc_id", "to_loc_id").rows()
@@ -407,11 +434,20 @@ def draw_synthetic_trip(schedules: SyntheticSchedules, person_id: int, full=Fals
         ax=ax,
     )
 
-    return fig, ax
+    return ax
 
 
 def plot_training_progress(results: experiment.Results, ax: Axes = None):
-    ax = ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
+    """Plots the training, validation and test losses w.r.t the epochs.
+
+    Args:
+        results (experiment.Results): the results to be plotted
+        ax (Axes, optional): the Axes on which to draw. Creates a new Axes if None. Defaults to None.
+
+    Returns:
+        Axes: the drawn axes
+    """
+    ax = _default_axes(ax)
 
     epochs = list(range(1, results.n_epochs + 1))
     _, _, test_loss = results.final_losses()
@@ -430,17 +466,31 @@ def plot_training_progress(results: experiment.Results, ax: Axes = None):
 
 
 def draw_prediction(graph: SyntheticGraph, x: list, y_prob: list, full=False, labels=True, ax: Axes = None):
+    """Draws the predictions of a ML model over the graph.
+
+    Args:
+        graph (SyntheticGraph): _description_
+        x (list): the input node indicators (each node truthy if already selected, of length N)
+        y_prob (list): the probabilities for each node (of length N)
+        full (bool, optional): draw the fully-connected version of the graph. Defaults to False.
+        labels (bool, optional): add the prediction values as node labels. Defaults to True.
+        ax (Axes, optional): the Axes on which to draw. Creates a new Axes if None. Defaults to None.
+
+    Returns:
+        Axes: the drawn axes
+    """
+
     def _node_colour(x, y):
         if x:
             return "tab:blue"
 
         return mpl.colormaps["grey_r"](y)
 
-    ax = ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
+    ax = _default_axes(ax)
 
     G = graph.G_full if full else graph.G
-    pos = nx.spring_layout(G, seed=42, weight="distance")
-    edge_labels = nx.get_edge_attributes(G, "distance")
+    pos = nx.spring_layout(G, seed=42, weight=graph.WEIGHT_NAME)
+    edge_labels = nx.get_edge_attributes(G, graph.WEIGHT_NAME)
     colors = [_node_colour(_x, _y) for _x, _y in zip(x, y_prob)]
 
     nx.draw_networkx(G, pos, node_color=colors, ax=ax, edgecolors="gray", font_color="DimGray")
@@ -455,7 +505,16 @@ def draw_prediction(graph: SyntheticGraph, x: list, y_prob: list, full=False, la
 
 
 def plot_model_comparisons(*results: experiment.Results, how="bar", ax: Axes = None):
-    ax = ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
+    """Plots a comparison between results from different models as a bar chart or as a line chart with training history.
+
+    Args:
+        how (str, optional): "bar" or "line". Defaults to "bar".
+        ax (Axes, optional): the Axes on which to draw. Creates a new Axes if None. Defaults to None.
+
+    Returns:
+        Axes: the drawn axes
+    """
+    ax = _default_axes(ax)
 
     if how == "bar":
         return _plot_model_comparisons_bar(results, ax)
@@ -494,14 +553,19 @@ def _plot_model_comparisons_line(results: tuple[experiment.Results], ax: Axes = 
         test = trained_res.test_loss()
 
         epochs = list(range(1, trained_res.n_epochs + 1))
-        line = ax.plot(epochs, trained_res.val_losses(), label=trained_res.name)
-        ax.plot([1, trained_res.n_epochs], [test, test], linestyle="dashed", linewidth=1, color=line[0].get_color())
+        line = ax.plot(epochs, trained_res.val_losses(), label=f"{trained_res.name} (val)")
+        ax.plot(
+            [1, trained_res.n_epochs],
+            [test, test],
+            linestyle="dashed",
+            linewidth=1,
+            color=line[0].get_color(),
+            label=trained_res.name,
+        )
 
     for benchmark_res in benchmark_results:
         test = benchmark_res.test_loss()
         ax.plot([1, max_epochs], [test, test], label=benchmark_res.name, linestyle="dashed", linewidth=1)
-
-    # TODO ax.plot(epochs, results.val_losses(), label="Validation")
 
     ax.set_title("Model losses")
     ax.set_xlabel("Epoch")

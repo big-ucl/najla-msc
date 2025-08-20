@@ -10,7 +10,9 @@ from torch_geometric.utils import from_networkx
 
 
 class Graph(Protocol):
-    WEIGHT: str
+    """A protocol to represent an input graph such as a SyntheticGraph"""
+
+    WEIGHT_NAME: str
 
     @property
     def G_full(self) -> nx.Graph:
@@ -18,6 +20,8 @@ class Graph(Protocol):
 
 
 class Schedules(Protocol):
+    """A protocol to represent a schedules object (e.g. SyntheticSchedules)"""
+
     n_samples: int
     graph: Graph
     person_choices_df: pl.DataFrame
@@ -35,13 +39,17 @@ class BasicLocationsDataset(InMemoryDataset):
         X: torch.Tensor,
         y: torch.Tensor,
     ):
-        """_summary_
-
+        """
         Args:
-            person_ids (pl.Series): _description_
-            data (pyg.data.Data): _description_
-            X (torch.Tensor): _description_
-            y (torch.Tensor): _description_
+            person_ids (pl.Series):
+                A series of length `S` of all person_ids in the dataset
+            data (pyg.data.Data):
+                The underlying graph without the schedules
+            X (torch.Tensor):
+                The node features of shape (S, N + 1), where `N` is the number of nodes. The first column must be the
+                sequence number
+            y (torch.Tensor):
+                The node targets (binary indicators) of shape (S, N)
         """
         super().__init__()
         self.edge_index = data.edge_index
@@ -76,7 +84,7 @@ class BasicLocationsDataset(InMemoryDataset):
 def convert_to_pyg_dataset(schedules: Schedules) -> Dataset:
     """Converts a population schedule object into a PyG Dataset"""
 
-    pyg_graph = from_networkx(schedules.graph.G_full, group_edge_attrs=schedules.graph.WEIGHT)
+    pyg_graph = from_networkx(schedules.graph.G_full, group_edge_attrs=schedules.graph.WEIGHT_NAME)
 
     features = (
         schedules.trip_df.group_by("person_id")
@@ -100,8 +108,18 @@ def convert_to_pyg_dataset(schedules: Schedules) -> Dataset:
 
 
 def train_test_split(
-    dataset: BasicLocationsDataset, test_size=0.15, random_state=None
+    dataset: BasicLocationsDataset, test_size=0.15, random_state: int = None
 ) -> tuple[BasicLocationsDataset, BasicLocationsDataset]:
+    """Performs a train-test split using the `person_id`s so that no person is split across the train and test set.
+
+    Args:
+        dataset (BasicLocationsDataset): the dataset to perform the split on
+        test_size (float, optional): the proportion of samples in the test set. Defaults to 0.15.
+        random_state (int, optional): random state for the RNG. Defaults to None.
+
+    Returns:
+        tuple[BasicLocationsDataset, BasicLocationsDataset]: A tuple of (train_set, test_set)
+    """
     groups = dataset.person_ids()
     train_idx, test_idx = next(
         GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state).split(dataset, groups=groups)

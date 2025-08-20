@@ -5,6 +5,7 @@ from typing import Self
 import numpy as np
 import polars as pl
 from pyproj import Transformer
+from utils import check_schema
 
 
 def convert_excel_to_parquet(data_path: Path, *files: list[Path]) -> list[Path]:
@@ -229,20 +230,6 @@ LOCATION_SCHEMA = pl.Schema({
     "municipality_id": pl.String,
     "municipality_name": pl.String,
 })
-
-
-def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
-    df_items = set(df.schema.items())
-    schema_items = set(schema.items())
-
-    difference = df_items ^ schema_items
-
-    if difference:
-        raise ValueError(
-            f"Schemas do not match:\nExpected: {schema}\nGot:      {df.schema}\nDifferent elements: {difference}"
-        )
-
-    return df
 
 
 class ActivityDataset:

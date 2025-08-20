@@ -7,12 +7,15 @@ import torch.nn.functional as F
 from datasets import train_test_split
 from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
+from utils import check_schema
 
-import models
+from models import Benchmark
 
 
 @dataclass(frozen=True)
 class Experiment:
+    """Represents an experiement on which to train & test ML models."""
+
     train_set: Dataset
     test_set: Dataset
     n_epochs: int
@@ -22,13 +25,28 @@ class Experiment:
 
     @property
     def n_nodes(self) -> int:
+        """Returns the number of nodes in the graph"""
         return self.train_set.num_classes
 
 
 class Results:
+    """Represents the results of training / testing an ML model on an `Experiment`."""
+
+    LOSSES_SCHEMA = pl.Schema({
+        "epoch": pl.Int64,
+        "loss": pl.Float64,
+        "type": pl.String,
+        "name": pl.String,
+    })
+
     def __init__(self, name: str, losses: pl.DataFrame):
+        """
+        Args:
+            name (str): The name given to the results, typically the model name
+            losses (pl.DataFrame): A DataFrame containing the train / val / test losses per epoch
+        """
         self.name = name
-        self.losses = losses
+        self.losses = check_schema(losses, self.LOSSES_SCHEMA)
         self.n_epochs = losses["epoch"].max()
 
     def has_training_history(self):
@@ -64,10 +82,8 @@ class Results:
         return f"Results({self.name} | Test loss={self.test_loss():.4f})"
 
 
-def create_loss(experiment: Experiment, with_logits=False, epsilon=0.0001) -> nn.Module:
+def create_loss(n_classes: int, with_logits=False, epsilon=0.0001) -> nn.Module:
     def loss(out: torch.Tensor, y: torch.Tensor):
-        n_classes = experiment.test_set.num_classes
-
         out = out.reshape((-1, n_classes))
         if with_logits:
             return F.cross_entropy(out, y)
@@ -83,16 +99,27 @@ def run_experiment(
     lr=0.01,
     name: str = None,
     verbose=True,
-) -> pl.DataFrame:
+) -> Results:
+    """Trains a Model on the Experiment train set and evaluates the model on the test set.
+
+    Args:
+        experiment (Experiment): The experiment to train/test the model on
+        model (nn.Module): The model to be trained
+        lr (float, optional): The Adam learning rate. Defaults to 0.01.
+        name (str, optional): The name given to the run. Defaults to the model name if left `None`.
+        verbose (bool, optional): Print intermediate training results in the console. Defaults to True.
+
+    Returns:
+        Results: the results from the training & testing
+    """
     exp = experiment
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     name = model.__class__.__name__ if name is None else name
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = create_loss(experiment, with_logits=True)
+    criterion = create_loss(n_classes=experiment.n_nodes, with_logits=True)
 
     train_set, val_set = train_test_split(exp.train_set, test_size=exp.val_size, random_state=exp.random_state)
-
     train_loader = DataLoader(dataset=train_set, batch_size=exp.batch_size)
     val_loader = DataLoader(dataset=val_set, batch_size=exp.batch_size)
 
@@ -117,8 +144,8 @@ def run_experiment(
     test_loader = DataLoader(dataset=exp.test_set, batch_size=exp.batch_size)
     test_loss = evaluate_model(model, device, test_loader, criterion)
 
+    # Build results DataFrame
     epochs = list(range(1, exp.n_epochs + 1))
-
     losses = pl.concat([
         pl.DataFrame({"epoch": epochs, "loss": train_losses}).with_columns(pl.lit("train").alias("type")),
         pl.DataFrame({"epoch": epochs, "loss": val_losses}).with_columns(pl.lit("val").alias("type")),
@@ -128,13 +155,46 @@ def run_experiment(
     return Results(name, losses)
 
 
+def compute_benchmark(experiment: Experiment, benchmark_model: Benchmark, name: str = None) -> Results:
+    """Evaluates a benchmark model on the experiment test set using CE loss
+
+    Args:
+        experiment (Experiment): the experiment to evaluate over
+        benchmark_model (models.Benchmark): the benchmark model to be evaluated
+        name (str, optional): The name given to the run. Defaults to the model name if left `None`.
+
+    Returns:
+        Results: the results from the testing
+    """
+    name = benchmark_model.__class__.__name__ if name is None else name
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    benchmark_model = benchmark_model.to(device)
+
+    loader = DataLoader(dataset=experiment.test_set, batch_size=experiment.batch_size)
+    loss = evaluate_model(benchmark_model, device, loader, create_loss(n_classes=experiment.n_nodes, with_logits=False))
+
+    return Results(name, pl.DataFrame({"name": name, "epoch": 0, "loss": loss, "type": "test"}))
+
+
 def train_epoch(
     model: nn.Module,
     device: torch.device,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     criterion: torch.nn.Module,
-):
+) -> float:
+    """Runs a single epoch of training over a model.
+
+    Args:
+        model (nn.Module): The model to be trained
+        device (torch.device): The device on which to run computations
+        loader (DataLoader): The DataLoader containing the training data
+        optimizer (torch.optim.Optimizer): the optimizer
+        criterion (torch.nn.Module): The loss function
+
+    Returns:
+        float: the average training loss (normalized, per sample)
+    """
     model.train()
     total_loss = 0
 
@@ -152,7 +212,18 @@ def train_epoch(
     return total_loss / len(loader)
 
 
-def evaluate_model(model: nn.Module, device: torch.device, loader: DataLoader, criterion: torch.nn.Module):
+def evaluate_model(model: nn.Module, device: torch.device, loader: DataLoader, criterion: torch.nn.Module) -> float:
+    """Evaluate a model over the test data given a loss function.
+
+    Args:
+        model (nn.Module): The model to be trained
+        device (torch.device): The device on which to run computations
+        loader (DataLoader): The DataLoader containing the test data
+        criterion (torch.nn.Module): The loss function
+
+    Returns:
+        float: the average test loss (normalized, per sample)
+    """
     model.eval()
     total_loss = 0
 
@@ -166,14 +237,3 @@ def evaluate_model(model: nn.Module, device: torch.device, loader: DataLoader, c
         total_loss += loss
 
     return total_loss / len(loader)
-
-
-def compute_benchmark(experiment: Experiment, benchmark_model: models.Benchmark, name: str = None) -> Results:
-    name = benchmark_model.__class__.__name__ if name is None else name
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    benchmark_model = benchmark_model.to(device)
-
-    test_loader = DataLoader(dataset=experiment.test_set, batch_size=experiment.batch_size)
-    loss = evaluate_model(benchmark_model, device, test_loader, create_loss(experiment))
-
-    return Results(name, pl.DataFrame({"name": name, "epoch": 0, "loss": loss, "type": "test"}))
