@@ -1,9 +1,9 @@
 import base64
 import itertools
 from io import BytesIO
+from typing import Protocol
 
 import altair as alt
-import experiment
 import geopandas as gpd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -13,7 +13,6 @@ from exploration.dataprocessing import Purpose
 from exploration.graphs import ActivityGraph
 from exploration.metrics import Metrics
 from matplotlib.axes import Axes
-from synthetic import SyntheticGraph, SyntheticSchedules
 
 PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
 
@@ -334,11 +333,25 @@ def _default_axes(ax: Axes = None) -> Axes:
     return ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
 
 
-def draw_synthetic_network(graph: SyntheticGraph, full=False, ax: Axes = None):
+class Graph(Protocol):
+    """Protocol class emulating SyntheticGraph, as argument to `draw_synthetic_network`"""
+
+    WEIGHT_NAME: str
+
+    @property
+    def G(self) -> nx.Graph:
+        pass
+
+    @property
+    def G_full(self) -> nx.Graph:
+        pass
+
+
+def draw_synthetic_network(graph: Graph, full=False, ax: Axes = None):
     """Draws a SyntheticGraph with shopping and work nodes highlighted
 
     Args:
-        graph (SyntheticGraph): the graph to draw
+        graph (Graph): the graph to draw
         full (bool, optional): draw the fully-connected version of the graph. Defaults to False.
         ax (Axes, optional): the Axes on which to draw. Creates a new Axes if None. Defaults to None.
 
@@ -373,11 +386,18 @@ def draw_synthetic_network(graph: SyntheticGraph, full=False, ax: Axes = None):
     return ax
 
 
-def draw_synthetic_trip(schedules: SyntheticSchedules, person_id: int, full=False, ax: Axes = None):
+class Schedules(Protocol):
+    """Protocol class emulating SyntheticGraph, as argument to `draw_synthetic_trip`"""
+
+    graph: Graph
+    trip_df: pl.DataFrame
+
+
+def draw_synthetic_trip(schedules: Schedules, person_id: int, full=False, ax: Axes = None):
     """Draws the SyntheticGraph in schedules with a person's schedule and trips overlain.
 
     Args:
-        schedules (SyntheticSchedules): The schedules from which to draw from
+        schedules (Schedules): The schedules from which to draw from
         person_id (int): the ID of the person whose schedule you want to draw
         full (bool, optional): draw the fully-connected version of the graph. Defaults to False.
         ax (Axes, optional): the Axes on which to draw. Creates a new Axes if None. Defaults to None.
@@ -437,7 +457,29 @@ def draw_synthetic_trip(schedules: SyntheticSchedules, person_id: int, full=Fals
     return ax
 
 
-def plot_training_progress(results: experiment.Results, ax: Axes = None):
+class Results(Protocol):
+    """Protocol class emulating experiment.Results, as argument to `plot_training_progress`"""
+
+    n_epochs: int
+    name: str
+
+    def final_losses(self) -> pl.DataFrame:
+        pass
+
+    def train_losses(self) -> pl.DataFrame:
+        pass
+
+    def val_losses(self) -> pl.DataFrame:
+        pass
+
+    def test_loss(self) -> float:
+        pass
+
+    def has_training_history(self) -> bool:
+        pass
+
+
+def plot_training_progress(results: Results, ax: Axes = None):
     """Plots the training, validation and test losses w.r.t the epochs.
 
     Args:
@@ -465,11 +507,11 @@ def plot_training_progress(results: experiment.Results, ax: Axes = None):
     return ax
 
 
-def draw_prediction(graph: SyntheticGraph, x: list, y_prob: list, full=False, labels=True, ax: Axes = None):
+def draw_prediction(graph: Graph, x: list, y_prob: list, full=False, labels=True, ax: Axes = None):
     """Draws the predictions of a ML model over the graph.
 
     Args:
-        graph (SyntheticGraph): _description_
+        graph (Graph): the graph on which to draw the predictions
         x (list): the input node indicators (each node truthy if already selected, of length N)
         y_prob (list): the probabilities for each node (of length N)
         full (bool, optional): draw the fully-connected version of the graph. Defaults to False.
@@ -504,7 +546,7 @@ def draw_prediction(graph: SyntheticGraph, x: list, y_prob: list, full=False, la
     return ax
 
 
-def plot_model_comparisons(*results: experiment.Results, how="bar", ax: Axes = None):
+def plot_model_comparisons(*results: Results, how="bar", ax: Axes = None):
     """Plots a comparison between results from different models as a bar chart or as a line chart with training history.
 
     Args:
@@ -524,7 +566,7 @@ def plot_model_comparisons(*results: experiment.Results, how="bar", ax: Axes = N
     raise KeyError(f"Unknown plot '{how}'. Valid entries are 'bar' or 'line'")
 
 
-def _plot_model_comparisons_bar(results: tuple[experiment.Results], ax: Axes = None):
+def _plot_model_comparisons_bar(results: tuple[Results], ax: Axes = None):
     xs = [r.name for r in results]
     heights = [r.test_loss() for r in results]
     labels = [f"{h:.4f}" for h in heights]
@@ -542,7 +584,7 @@ def _plot_model_comparisons_bar(results: tuple[experiment.Results], ax: Axes = N
     return ax
 
 
-def _plot_model_comparisons_line(results: tuple[experiment.Results], ax: Axes = None):
+def _plot_model_comparisons_line(results: tuple[Results], ax: Axes = None):
     max_epochs = max(res.n_epochs for res in results)
     trained_results = [res for res in results if res.has_training_history()]
     benchmark_results = [res for res in results if not res.has_training_history()]
