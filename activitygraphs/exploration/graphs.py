@@ -1,4 +1,4 @@
-import dataprocessing as dp
+import exploration.dataprocessing as dp
 import networkx as nx
 import polars as pl
 
@@ -41,9 +41,7 @@ class ActivityGraph:
 
     @classmethod
     def from_dataset(cls, dataset: dp.ActivityDataset, parent: Self | None = None):
-        nodes, edges = _generate_node_and_edgelist(
-            dataset.hh_person_df, dataset.trip_df
-        )
+        nodes, edges = _generate_node_and_edgelist(dataset.hh_person_df, dataset.trip_df)
 
         return cls(nodes, edges, name=dataset.name)
 
@@ -65,12 +63,7 @@ class ActivityGraph:
     def partition_by_hh_id(self, n_chunks: int) -> list[Self]:
         chunk_length = len(self.hh_ids()) // n_chunks
 
-        chunks_by_hh = (
-            self.hh_ids()
-            .to_frame()
-            .with_row_index("chunk")
-            .with_columns(pl.col("chunk") // chunk_length)
-        )
+        chunks_by_hh = self.hh_ids().to_frame().with_row_index("chunk").with_columns(pl.col("chunk") // chunk_length)
 
         node_dfs = _partition_df(self.node_df, chunks_by_hh, "hh_id")
         edge_dfs = _partition_df(self.edge_df, chunks_by_hh, "hh_id")
@@ -104,21 +97,15 @@ class ActivityGraph:
         return f"ActivityGraph(dataset={self.name})"
 
 
-def _partition_df(
-    df: pl.DataFrame, chunks_by_id: pl.DataFrame, id_col: str, chunk_col: str = "chunk"
-):
+def _partition_df(df: pl.DataFrame, chunks_by_id: pl.DataFrame, id_col: str, chunk_col: str = "chunk"):
     partitions = df.with_columns(
-        pl.col(id_col)
-        .replace(old=chunks_by_id[id_col], new=chunks_by_id[chunk_col])
-        .alias(chunk_col)
+        pl.col(id_col).replace(old=chunks_by_id[id_col], new=chunks_by_id[chunk_col]).alias(chunk_col)
     ).partition_by(chunk_col, as_dict=True)
 
     return {chunk: part.drop(chunk_col) for (chunk,), part in partitions.items()}
 
 
-def _generate_node_attribute_df(
-    hh_person_df: pl.DataFrame, trip_df: pl.DataFrame
-) -> pl.DataFrame:
+def _generate_node_attribute_df(hh_person_df: pl.DataFrame, trip_df: pl.DataFrame) -> pl.DataFrame:
     origin_trip_nodes = trip_df.select(
         hh_id="hh_id",
         loc_id="loc_origin_loc_id",
@@ -186,9 +173,7 @@ def _generate_node_attribute_df(
     return dp.check_schema(node_attributes_df, NODELIST_SCHEMA)
 
 
-def _generate_node_and_edgelist(
-    hh_person_df: pl.DataFrame, trip_df: pl.DataFrame
-) -> tuple[pl.DataFrame, pl.DataFrame]:
+def _generate_node_and_edgelist(hh_person_df: pl.DataFrame, trip_df: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     node_attribute_df = _generate_node_attribute_df(hh_person_df, trip_df)
 
     node_attribute_df = node_attribute_df.sort("hh_id", "loc_id")
@@ -197,9 +182,7 @@ def _generate_node_and_edgelist(
     return node_attribute_df, trip_df
 
 
-def _generate_hh_graph(
-    nodelist_df: pl.DataFrame, edgelist_df: pl.DataFrame
-) -> nx.MultiDiGraph:
+def _generate_hh_graph(nodelist_df: pl.DataFrame, edgelist_df: pl.DataFrame) -> nx.MultiDiGraph:
     edgelist_df = edgelist_df.with_columns(
         pl.col("mode").map_elements(dp.Mode, return_dtype=pl.Object),
     )

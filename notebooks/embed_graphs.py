@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.14.9"
+__generated_with = "0.14.17"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -38,8 +38,8 @@ def _(mo):
 
 @app.cell
 def _(cfg):
-    from dataprocessing import ActivityDataset
-    from graphs import ActivityGraph
+    from exploration.dataprocessing import ActivityDataset
+    from exploration.graphs import ActivityGraph
 
     dataset = ActivityDataset.load(cfg.data.paths.act_dataset, cfg.data.name)
     graph = ActivityGraph.from_dataset(dataset)

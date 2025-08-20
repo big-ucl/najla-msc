@@ -1,7 +1,7 @@
 import multiprocessing as mp
 import os
 
-import graphs as g
+import exploration.graphs as g
 import networkx as nx
 
 

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.14.9"
+__generated_with = "0.14.17"
 app = marimo.App(width="medium")
 
 
@@ -56,7 +56,7 @@ def _(mo):
 
 @app.cell
 def _(Path, cfg, mo, run_button):
-    from dataprocessing import convert_excel_to_parquet
+    from exploration.dataprocessing import convert_excel_to_parquet
 
     mo.stop(not run_button.value, mo.md("Click button above to run conversion"))
 
@@ -80,9 +80,9 @@ def _(mo):
 
 @app.cell
 def _(cfg, mo, reprocess_button):
-    import dataprocessing as dp
+    import exploration.dataprocessing as dp
 
-    from dataprocessing import ActivityDataset
+    from exploration.dataprocessing import ActivityDataset
     from data.ltds import read_and_process_ltds
 
     _dataset_name = cfg.data.name
@@ -129,7 +129,7 @@ def _(mo):
 
 @app.cell
 def _(dataset):
-    from graphs import ActivityGraph
+    from exploration.graphs import ActivityGraph
 
     graph = ActivityGraph.from_dataset(dataset)
 

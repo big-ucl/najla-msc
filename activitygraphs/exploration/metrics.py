@@ -1,15 +1,13 @@
+import itertools
+import warnings
 from abc import ABC, abstractmethod
 from enum import Enum
-import itertools
 from typing import Iterator
 
-import polars as pl
 import networkx as nx
-import warnings
-
+import polars as pl
+from exploration.graphs import ActivityGraph
 from tqdm.auto import tqdm
-
-from graphs import ActivityGraph
 
 # Enums
 

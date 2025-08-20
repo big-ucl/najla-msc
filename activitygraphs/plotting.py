@@ -9,10 +9,10 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
 import polars as pl
-from dataprocessing import Purpose
-from graphs import ActivityGraph
+from exploration.dataprocessing import Purpose
+from exploration.graphs import ActivityGraph
+from exploration.metrics import Metrics
 from matplotlib.axes import Axes
-from metrics import Metrics
 from synthetic import SyntheticGraph, SyntheticSchedules
 
 PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]

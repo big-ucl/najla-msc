@@ -6,6 +6,13 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+    import os
+    print(os.getcwd())
+    return
+
+
+@app.cell
+def _():
     import marimo as mo
     import plotting
     return mo, plotting

@@ -1,8 +1,8 @@
 import hydra
 import polars as pl
 from config import Config
-from dataprocessing import ActivityDataset
-from graphs import ActivityGraph
+from exploration.dataprocessing import ActivityDataset
+from exploration.graphs import ActivityGraph
 from hydra.core.config_store import ConfigStore
 from plotting import build_dash_graph_scatter
 
