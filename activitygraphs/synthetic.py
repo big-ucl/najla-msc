@@ -326,27 +326,6 @@ class SyntheticGenerator:
         return SyntheticSchedules(self.n_samples, self._graph, self.person_choices_df, self.schedule_df)
 
 
-def _choose_shopping(graph: SyntheticGraph, choice_idx):
-    return _select_closest_from_choice(
-        nodes=graph.nodes,
-        distances=graph.distance_matrix,
-        choices_idx=choice_idx,
-        valid=graph.shopping_nodes,
-        exclude_chosen=True,
-    ).item()
-
-
-def _form_schedule(schedule: list[str], home: str, s1: str, work: str, s2: str):
-    def substitute(act: str):
-        return work if act == "W" else s1 if act == "S1" else s2 if act == "S2" else "-"
-
-    sched = [substitute(act) for act in schedule if act != "-"]
-    sched = [home] + sched + [home]
-    sched += ["-"] * (len(schedule) + 2 - len(sched))
-
-    return sched
-
-
 def compute_all_possible_schedules(graph: SyntheticGraph) -> pl.DataFrame:
     """From a SyntheticGraph & associated SyntheticGenerator, compute all possible schedules / trips that
     can form on the graph
@@ -359,18 +338,51 @@ def compute_all_possible_schedules(graph: SyntheticGraph) -> pl.DataFrame:
     """
     available_schedules = SyntheticGenerator.AVAILABLE_SCHEDULES
 
-    scheds = []
+    home_choice_idx = np.repeat(range(len(graph.home_nodes)), len(graph.workplace_nodes))
+    work_choice_idx = np.tile(range(len(graph.workplace_nodes)), len(graph.home_nodes))
 
-    for home_choice_idx, home_choice in enumerate(graph.home_nodes):
-        home_choice_idx = np.array([home_choice_idx])
-        s1_choice = _choose_shopping(graph, home_choice_idx)
+    home_choice = graph.home_nodes[home_choice_idx]
+    work_choice = graph.workplace_nodes[work_choice_idx]
 
-        for work_choice_idx, work_choice in enumerate(graph.workplace_nodes):
-            work_choice_idx = np.array([work_choice_idx])
-            s2_choice = _choose_shopping(graph, work_choice_idx)
+    closest_home_shopping = _select_closest_from_choice(
+        graph.nodes,
+        graph.distance_matrix,
+        choices_idx=home_choice_idx,
+        valid=graph.shopping_nodes,
+        exclude_chosen=True,
+    )
+    closest_work_shopping = _select_closest_from_choice(
+        graph.nodes,
+        graph.distance_matrix,
+        choices_idx=work_choice_idx,
+        valid=graph.shopping_nodes,
+        exclude_chosen=True,
+    )
 
-            for schedule in available_schedules:
-                scheds.append(_form_schedule(schedule, home_choice, s1_choice, work_choice, s2_choice))
+    person_choices = np.stack([
+        home_choice,
+        work_choice,
+        closest_home_shopping,
+        closest_work_shopping,
+    ]).T
+
+    choices_repeated = np.repeat(person_choices, len(available_schedules), axis=0)
+    home_choice_repeated = choices_repeated[:, 0].reshape(-1, 1)
+    scheds = np.tile(available_schedules.T, len(person_choices)).T
+
+    for i, activity in enumerate(["H", "W", "S1", "S2"]):
+        chosen_locs_repeated = choices_repeated[:, i].reshape(-1, 1)
+        scheds = np.where(scheds == activity, chosen_locs_repeated, scheds)
+
+    scheds = np.concat([home_choice_repeated, scheds, home_choice_repeated], axis=1)
+
+    # Move all "-" to the left of the array, see https://stackoverflow.com/a/43011036
+    valid_mask = scheds != "-"
+    flipped_mask = valid_mask.sum(axis=1, keepdims=1) > np.arange(scheds.shape[1] - 1, -1, -1)
+    flipped_mask = flipped_mask[:, ::-1]
+
+    scheds[flipped_mask] = scheds[valid_mask]
+    scheds[~flipped_mask] = "-"
 
     schedule_df = (
         pl.DataFrame(scheds, schema=["1", "2", "3", "4", "5"], orient="row")
