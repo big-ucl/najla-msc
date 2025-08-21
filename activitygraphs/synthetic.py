@@ -257,7 +257,7 @@ class SyntheticGenerator:
         home_choice = np.array(self._graph.home_nodes)[home_choice_idx]
 
         work_choice_idx = self._rng.integers(0, len(self._graph.workplace_nodes), size=n_samples)
-        work_choice = self._rng.choice(self._graph.workplace_nodes, size=n_samples)
+        work_choice = np.array(self._graph.workplace_nodes)[work_choice_idx]
 
         closest_home_shopping = _select_closest_from_choice(
             self._graph.nodes,
