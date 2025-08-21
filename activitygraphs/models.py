@@ -32,6 +32,24 @@ class SimpleGCN(nn.Module):
         return x
 
 
+class MLP(nn.Module):
+    def __init__(self, n_nodes: int, n_graph_x: int, hidden_channels: int, num_layers: int):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.mlp = gnn.MLP(
+            in_channels=n_nodes + n_graph_x,
+            hidden_channels=hidden_channels,
+            out_channels=n_nodes,
+            num_layers=num_layers,
+        )
+
+    def forward(self, batch):
+        X = batch.x.reshape((-1, self.n_nodes))
+        X = torch.cat([batch.graph_x.unsqueeze(1), X], dim=1)
+
+        return self.mlp(X).reshape((-1, 1))
+
+
 class Benchmark(nn.Module):
     """Baseline for models that require no training and are used for evaluation"""
 

@@ -66,14 +66,14 @@ def _():
     from synthetic import SyntheticGraph
 
     edges = {
-        ("A", "B"): 5,
-        ("B", "C"): 5,
+        ("A", "B"): 4,
+        ("B", "C"): 6,
         ("C", "A"): 5,
         ("C", "D"): 15,
         ("D", "E"): 3,
         ("E", "F"): 7,
         ("E", "G"): 2,
-        ("F", "G"): 2,
+        ("F", "G"): 1,
         ("F", "D"): 9,
     }
 
@@ -133,7 +133,7 @@ def _(np, synth_graph):
     rng = np.random.default_rng(42)
     generator = SyntheticGenerator(synth_graph, rng)
 
-    n_samples = 1000
+    n_samples = 10000
     exclude_chosen_from_shopping = True
 
     generator.generate_population(n_samples, exclude_chosen_from_shopping)
@@ -196,11 +196,8 @@ def _(mo, plotting, schedules, selected_person):
     mo.vstack(
         [
             mo.md("Generated schedules: "),
-            mo.hstack(
-                [plotting.draw_synthetic_trip(schedules, selected_person.value), selected_person],
-                align="start",
-                justify="start",
-            ),
+            selected_person,
+            plotting.draw_synthetic_trip(schedules, selected_person.value),
         ]
     )
     return
@@ -266,6 +263,15 @@ def _(dataset):
     return (gcn,)
 
 
+@app.cell
+def _(dataset):
+    from models import MLP
+
+    mlp = MLP(n_nodes=dataset.num_nodes, n_graph_x=1, hidden_channels=32, num_layers=2)
+    mlp
+    return (mlp,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""We also define an experiment object that holds data on our train and test sets.""")
@@ -279,7 +285,7 @@ def _(test_set, train_set):
     experiment = Experiment(
         train_set=train_set,
         test_set=test_set,
-        n_epochs=50,
+        n_epochs=20,
         val_size=0.15,
         batch_size=32,
         random_state=42,
@@ -331,40 +337,72 @@ def _(mo):
 
 
 @app.cell
-def _(experiment, gcn, mo, plotting, run_experiment):
-    results = run_experiment(experiment, gcn)
+def _(experiment, gcn, mo, run_experiment):
+    gcn_results = run_experiment(experiment, gcn)
 
     with mo.redirect_stdout():
-        _train, _val, _test = results.final_losses()
+        _train, _val, _test = gcn_results.final_losses()
 
         print(
-            f"Final losses after {results.n_epochs} epochs: "
+            f"SimpleGCN:"
+            f"Final losses after {gcn_results.n_epochs} epochs: "
             f"Training={_train:.4f} | Validation={_val:.4f} | Test={_test:.4f}"
         )
-
-    plotting.plot_training_progress(results)
-    return (results,)
+    return (gcn_results,)
 
 
 @app.cell
-def _(best_results, equal_results, plotting, results):
-    plotting.plot_model_comparisons(results, best_results, equal_results, how="bar")
+def _(gcn_results, plotting):
+    plotting.plot_training_progress(gcn_results)
     return
 
 
 @app.cell
-def _(best_results, equal_results, plotting, results):
-    plotting.plot_model_comparisons(results, best_results, equal_results, how="line")
+def _(experiment, mlp, mo, run_experiment):
+    mlp_results = run_experiment(experiment, mlp)
+
+    with mo.redirect_stdout():
+        _train, _val, _test = mlp_results.final_losses()
+
+        print(
+            f"MLP:"
+            f"Final losses after {mlp_results.n_epochs} epochs: "
+            f"Training={_train:.4f} | Validation={_val:.4f} | Test={_test:.4f}"
+        )
+    return (mlp_results,)
+
+
+@app.cell
+def _(mlp_results, plotting):
+    plotting.plot_training_progress(mlp_results)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""### Model comparisons""")
+    return
+
+
+@app.cell
+def _(best_results, equal_results, gcn_results, mlp_results, plotting):
+    plotting.plot_model_comparisons(gcn_results, mlp_results, best_results, equal_results, how="bar")
+    return
+
+
+@app.cell
+def _(best_results, equal_results, gcn_results, mlp_results, plotting):
+    plotting.plot_model_comparisons(gcn_results, mlp_results, best_results, equal_results, how="line")
     return
 
 
 @app.cell(hide_code=True)
 def _(
     best_model,
-    equal_model,
     experiment,
     gcn,
     get_prediction_idx,
+    mlp,
     mo,
     n_test_samples,
     next_btn,
@@ -377,7 +415,7 @@ def _(
         [
             mo.md("Comparison of predictions between models and benchmarks: "),
             mo.hstack([prev_btn, mo.md(f"Sample #{get_prediction_idx()}/{n_test_samples - 1}"), next_btn], align="center"),
-            plot_models(sample, [gcn], [best_model, equal_model]),
+            plot_models(sample, [gcn, mlp], [best_model]),
         ]
     )
     return
@@ -411,6 +449,7 @@ def _(experiment, mo):
 def _(F, math, plotting, plt, synth_graph, torch):
     def plot_models(sample, models, benchmarks):
         def _plot(sample, model, ax, is_benchmark):
+            model.eval()
             y_prob = model(sample).squeeze()
 
             if not is_benchmark:
@@ -424,8 +463,8 @@ def _(F, math, plotting, plt, synth_graph, torch):
             return plotting.draw_prediction(synth_graph, sample.x, y_prob, ax=ax)
 
         n_boxes = len(models) + len(benchmarks) + 1
-        n_rows = math.ceil(n_boxes / 3)
-        fig, axs = plt.subplots(figsize=(12, 4 * n_rows), ncols=3, nrows=n_rows, squeeze=False)
+        n_rows = math.ceil(n_boxes / 4)
+        fig, axs = plt.subplots(figsize=(12, 4 * n_rows), ncols=4, nrows=n_rows, squeeze=False)
 
         flat_axs = [ax for a in axs for ax in a]
 

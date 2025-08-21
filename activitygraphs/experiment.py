@@ -98,7 +98,7 @@ def run_experiment(
     model: nn.Module,
     lr=0.01,
     name: str = None,
-    verbose=True,
+    verbose: int | None = 5,
 ) -> Results:
     """Trains a Model on the Experiment train set and evaluates the model on the test set.
 
@@ -107,7 +107,7 @@ def run_experiment(
         model (nn.Module): The model to be trained
         lr (float, optional): The Adam learning rate. Defaults to 0.01.
         name (str, optional): The name given to the run. Defaults to the model name if left `None`.
-        verbose (bool, optional): Print intermediate training results in the console. Defaults to True.
+        verbose (int | None, optional): How often to print intermediate results, does not print if None. Defaults to 5.
 
     Returns:
         Results: the results from the training & testing
@@ -126,7 +126,7 @@ def run_experiment(
     train_losses = []
     val_losses = []
 
-    if verbose:
+    if verbose is not None:
         print(f"======= {name} (n_epochs={exp.n_epochs}) =======")
 
     # Training phase
@@ -137,7 +137,7 @@ def run_experiment(
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
-        if epoch % 10 == 0 and verbose:
+        if verbose is not None and epoch % verbose == 0:
             print(f"Epoch {epoch + 1:3}, Training loss: {train_loss:.4f} | Validation loss: {val_loss:.4f}")
 
     # Evaluate on the test set

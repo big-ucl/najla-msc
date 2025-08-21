@@ -78,7 +78,7 @@ class BasicLocationsDataset(InMemoryDataset):
             edge_attr=self.edge_attr,
             y=self._y[idx],
             graph_x=self._graph_x[idx],
-            person_id=self._person_ids[idx],
+            person_id=torch.Tensor([self._person_ids[idx]]),
         )
 
 
