@@ -7,7 +7,7 @@ import polars as pl
 import polars.selectors as cs
 
 
-def _set_binary_graph_attribute(G: nx.Graph, included_nodes: list[str], attr_name: str):
+def _set_binary_graph_attribute(G: nx.Graph, included_nodes: np.ndarray, attr_name: str):
     nx.set_node_attributes(G, {node: node in included_nodes for node in G.nodes}, attr_name)
 
 
@@ -49,9 +49,9 @@ class SyntheticGraph:
     def __init__(
         self,
         edges: dict[tuple[str, str], int] | list[tuple[str, str]],
-        workplace_nodes: list[str],
-        shopping_nodes: list[str],
-        home_nodes: Optional[list[str]] = None,
+        workplace_nodes: np.ndarray,
+        shopping_nodes: np.ndarray,
+        home_nodes: Optional[np.ndarray] = None,
     ):
         """
         Args:
@@ -89,17 +89,17 @@ class SyntheticGraph:
     def __repr__(self):
         return f"SyntheticGraph({len(self.nodes)} nodes, {len(self.edges)} edges)"
 
-    def with_home_nodes(self, home_nodes: list[str]) -> "SyntheticGraph":
+    def with_home_nodes(self, home_nodes: np.ndarray) -> "SyntheticGraph":
         """Returns a new SyntheticGraph with updated home nodes"""
-        return SyntheticGraph(self.edgelist, self.workplace_nodes, self.shopping_nodes, home_nodes)
+        return SyntheticGraph(self.edges, self.workplace_nodes, self.shopping_nodes, home_nodes)
 
-    def with_workplace_nodes(self, workplace_nodes: list[str]) -> "SyntheticGraph":
+    def with_workplace_nodes(self, workplace_nodes: np.ndarray) -> "SyntheticGraph":
         """Returns a new SyntheticGraph with updated workplace nodes"""
-        return SyntheticGraph(self.edgelist, workplace_nodes, self.shopping_nodes, self.home_nodes)
+        return SyntheticGraph(self.edges, workplace_nodes, self.shopping_nodes, self.home_nodes)
 
-    def with_shopping_nodes(self, shopping_nodes: list[str]) -> "SyntheticGraph":
+    def with_shopping_nodes(self, shopping_nodes: np.ndarray) -> "SyntheticGraph":
         """Returns a new SyntheticGraph with updated shopping nodes"""
-        return SyntheticGraph(self.edgelist, self.workplace_nodes, shopping_nodes, self.home_nodes)
+        return SyntheticGraph(self.edges, self.workplace_nodes, shopping_nodes, self.home_nodes)
 
     @cached_property
     def G(self) -> nx.Graph:
@@ -138,10 +138,10 @@ class SyntheticGraph:
 
     @cached_property
     def distance_matrix_df(self):
-        """Returns an polars DataFrame of the distances between nodes in the graph, in long form"""
+        """Returns a polars DataFrame of the distances between nodes in the graph, in long form"""
         return (
             pl.DataFrame(self.distance_matrix, schema=list(self.nodes))
-            .with_columns(from_loc_id=self.nodes)
+            .with_columns(from_loc_id=self.nodes.tolist())
             .unpivot(index="from_loc_id", variable_name="to_loc_id", value_name="distance")
         )
 
@@ -150,7 +150,7 @@ class SyntheticSchedules:
     """A class that represents a synthetic dataset of a population of agents and their schedules."""
 
     def __init__(
-        self, n_samples: int, graph: SyntheticGraph, person_choices_df: pl.DataFrame, schedule_df: pl.DataFrame
+        self, n_samples: int, graph: SyntheticGraph, person_choices_df: pl.DataFrame | None, schedule_df: pl.DataFrame
     ):
         self.n_samples = n_samples
         self.graph = graph
@@ -244,13 +244,12 @@ class SyntheticGenerator:
 
         return self._schedule_df
 
-    def generate_population(self, n_samples: int, exclude_chosen_from_shoppping: bool):
+    def generate_population(self, n_samples: int, exclude_chosen_from_shopping: bool):
         """Generates a population that lives on the graph, with a home, a workplace, and two shopping destinations.
 
         Args:
             n_samples (int): the number of samples (people) to generate.
-            exclude_chosen_from_shoppping (bool): if true, disallows shopping at home or work
-            rng (Optional[np.random.Generator], optional): the numpy random number generator, creates a new
+            exclude_chosen_from_shopping (bool): if true, disallows shopping at home or work
             `numpy.random.default_rng` if None. Defaults to None.
         """
         home_choice_idx = self._rng.integers(0, len(self._graph.home_nodes), size=n_samples)
@@ -264,14 +263,14 @@ class SyntheticGenerator:
             self._graph.distance_matrix,
             choices_idx=home_choice_idx,
             valid=self._graph.shopping_nodes,
-            exclude_chosen=exclude_chosen_from_shoppping,
+            exclude_chosen=exclude_chosen_from_shopping,
         )
         closest_work_shopping = _select_closest_from_choice(
             self._graph.nodes,
             self._graph.distance_matrix,
             choices_idx=work_choice_idx,
             valid=self._graph.shopping_nodes,
-            exclude_chosen=exclude_chosen_from_shoppping,
+            exclude_chosen=exclude_chosen_from_shopping,
         )
 
         self._n_samples = n_samples
@@ -326,17 +325,17 @@ class SyntheticGenerator:
         return SyntheticSchedules(self.n_samples, self._graph, self.person_choices_df, self.schedule_df)
 
 
-def compute_all_possible_schedules(graph: SyntheticGraph) -> pl.DataFrame:
+def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: np.ndarray) -> pl.DataFrame:
     """From a SyntheticGraph & associated SyntheticGenerator, compute all possible schedules / trips that
     can form on the graph
 
     Args:
         graph (SyntheticGraph)
+        available_schedules (np.ndarray)
 
     Returns:
         pl.DataFrame: the schedules
     """
-    available_schedules = SyntheticGenerator.AVAILABLE_SCHEDULES
 
     home_choice_idx = np.repeat(range(len(graph.home_nodes)), len(graph.workplace_nodes))
     work_choice_idx = np.tile(range(len(graph.workplace_nodes)), len(graph.home_nodes))
@@ -377,7 +376,7 @@ def compute_all_possible_schedules(graph: SyntheticGraph) -> pl.DataFrame:
     scheds = np.concat([home_choice_repeated, scheds, home_choice_repeated], axis=1)
 
     # Move all "-" to the left of the array, see https://stackoverflow.com/a/43011036
-    valid_mask = scheds != "-"
+    valid_mask = (scheds != "-")
     flipped_mask = valid_mask.sum(axis=1, keepdims=1) > np.arange(scheds.shape[1] - 1, -1, -1)
     flipped_mask = flipped_mask[:, ::-1]
 

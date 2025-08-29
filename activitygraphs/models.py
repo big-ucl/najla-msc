@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn
 
+from activitygraphs.synthetic import SyntheticGenerator
+
 
 class SimpleGCN(nn.Module):
     """A simple two-layer GCN model with edge weights from the PyG tutorial"""
@@ -56,7 +58,7 @@ class Benchmark(nn.Module):
     pass
 
 
-class EqualProbablity(Benchmark):
+class EqualProbability(Benchmark):
     """Model that outputs equal probability for all nodes not already selected"""
 
     def __init__(self, normalize: bool = True):
@@ -79,14 +81,14 @@ class EqualProbablity(Benchmark):
 
 
 class BestGuess(Benchmark):
-    """Model that computes conditional probablities over all valid schedules. Should provide the best possible loss."""
+    """Model that computes conditional probabilities over all valid schedules. Should provide the best possible loss."""
 
     def __init__(self, all_schedule_graphs: pl.DataFrame, strict: bool = True):
         """_summary_
 
         Args:
             all_schedule_graphs (pl.DataFrame):
-                A dataframe of all possible steps in a schedule, with a `person_id` index column, a `sequenece_num`
+                A dataframe of all possible steps in a schedule, with a `person_id` index column, a `sequence_num`
                 column, a `from_loc_id_N` indicator for each node `N`, and a `to_loc_id_N` indicator column for each
                 node `N`.
             strict (bool, optional): Raises an error if schedule does not exist. Defaults to True.
@@ -135,5 +137,5 @@ class BestGuess(Benchmark):
         Returns:
             BestGuess: a new BestGuess instance over the graph
         """
-        all_schedules = synthetic.compute_all_possible_schedules(graph)
+        all_schedules = synthetic.compute_all_possible_schedules(graph, SyntheticGenerator.AVAILABLE_SCHEDULES)
         return cls(all_schedules)

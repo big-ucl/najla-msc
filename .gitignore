@@ -7,8 +7,9 @@ wheels/
 *.egg-info
 outputs
 
-# Virtual environments
+# Virtual environments and IDEs
 .venv
+.idea
 
 # Marimo cache
 __marimo__

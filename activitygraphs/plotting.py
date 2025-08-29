@@ -176,7 +176,7 @@ def draw_hh_graph(
     return fig, ax
 
 
-def _plot_metric_historgram(metric_col: str, results: pl.DataFrame, bin_count=20) -> alt.Chart:
+def _plot_metric_histogram(metric_col: str, results: pl.DataFrame, bin_count=20) -> alt.Chart:
     return results.plot.bar(alt.X(metric_col).bin(maxbins=bin_count), alt.Y("count()"))
 
 
@@ -186,7 +186,7 @@ def plot_metric_histograms(metrics: Metrics, results: pl.DataFrame, n_cols=2) ->
     for batch in itertools.batched(metrics.names(), n_cols):
         row = alt.hconcat()
         for metric_col in batch:
-            row |= _plot_metric_historgram(metric_col, results)
+            row |= _plot_metric_histogram(metric_col, results)
         chart &= row
 
     return chart.resolve_scale("independent")
@@ -307,6 +307,7 @@ def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
         plt.close()
         buf.seek(0)
 
+        # noinspection PyTypeChecker
         image_string = base64.b64encode(buf.getvalue()).decode()
         image_string = f"data:image/png;base64,{image_string}"
 
@@ -406,7 +407,7 @@ def draw_synthetic_trip(schedules: Schedules, person_id: int, full=False, ax: Ax
         Axes: the drawn axes
     """
 
-    def _activities_to_colors(types: list[str]):
+    def _activities_to_colors(types: pl.Series):
         if "H" in types:
             return "tab:blue"
         if "W" in types and ("S1" in types or "S2" in types):
@@ -500,7 +501,7 @@ def plot_training_progress(results: Results, ax: Axes = None):
     ax.plot([1, results.n_epochs], [test_loss, test_loss], label="Test", linestyle="dashed", linewidth=1)
     ax.set_title(f"{results.name} losses")
     ax.set_xlabel("Epoch")
-    ax.set_xlim([1, results.n_epochs])
+    ax.set_xlim((1, results.n_epochs))
     ax.set_ylabel("CE Loss")
     ax.legend()
 
@@ -508,7 +509,7 @@ def plot_training_progress(results: Results, ax: Axes = None):
 
 
 def draw_prediction(graph: Graph, x: list, y_prob: list, full=False, labels=True, ax: Axes = None):
-    """Draws the predictions of a ML model over the graph.
+    """Draws the predictions of an ML model over the graph.
 
     Args:
         graph (Graph): the graph on which to draw the predictions
@@ -566,7 +567,7 @@ def plot_model_comparisons(*results: Results, how="bar", ax: Axes = None):
     raise KeyError(f"Unknown plot '{how}'. Valid entries are 'bar' or 'line'")
 
 
-def _plot_model_comparisons_bar(results: tuple[Results], ax: Axes = None):
+def _plot_model_comparisons_bar(results: tuple[Results, ...], ax: Axes = None):
     xs = [r.name for r in results]
     heights = [r.test_loss() for r in results]
     labels = [f"{h:.4f}" for h in heights]
@@ -584,7 +585,7 @@ def _plot_model_comparisons_bar(results: tuple[Results], ax: Axes = None):
     return ax
 
 
-def _plot_model_comparisons_line(results: tuple[Results], ax: Axes = None):
+def _plot_model_comparisons_line(results: tuple[Results, ...], ax: Axes = None):
     max_epochs = max(res.n_epochs for res in results)
     trained_results = [res for res in results if res.has_training_history()]
     benchmark_results = [res for res in results if not res.has_training_history()]
@@ -611,7 +612,7 @@ def _plot_model_comparisons_line(results: tuple[Results], ax: Axes = None):
 
     ax.set_title("Model losses")
     ax.set_xlabel("Epoch")
-    ax.set_xlim([1, max_epochs])
+    ax.set_xlim((1, max_epochs))
     ax.set_ylabel("BCE Loss")
     ax.legend()
 

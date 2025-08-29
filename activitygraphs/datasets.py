@@ -85,7 +85,7 @@ class BasicLocationsDataset(InMemoryDataset):
 def convert_to_pyg_dataset(schedules: Schedules) -> Dataset:
     """Converts a population schedule object into a PyG Dataset"""
 
-    pyg_graph = from_networkx(schedules.graph.G_full, group_edge_attrs=schedules.graph.WEIGHT_NAME)
+    pyg_graph = from_networkx(schedules.graph.G_full, group_edge_attrs=[schedules.graph.WEIGHT_NAME])
 
     features = (
         schedules.trip_df.group_by("person_id")

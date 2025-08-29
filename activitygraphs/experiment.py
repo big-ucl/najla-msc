@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import polars as pl
@@ -5,19 +6,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from datasets import train_test_split
-from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
 from utils import check_schema
 
 from models import Benchmark
+from datasets import BasicLocationsDataset
 
 
 @dataclass(frozen=True)
 class Experiment:
-    """Represents an experiement on which to train & test ML models."""
+    """Represents an experiment on which to train & test ML models."""
 
-    train_set: Dataset
-    test_set: Dataset
+    train_set: BasicLocationsDataset
+    test_set: BasicLocationsDataset
     n_epochs: int
     val_size: int
     batch_size: int
@@ -82,7 +83,8 @@ class Results:
         return f"Results({self.name} | Test loss={self.test_loss():.4f})"
 
 
-def create_loss(n_classes: int, with_logits=False, epsilon=0.0001) -> nn.Module:
+def create_loss(n_classes: int, with_logits=False, epsilon=0.0001) -> Callable[
+    [torch.Tensor, torch.Tensor], torch.Tensor]:
     def loss(out: torch.Tensor, y: torch.Tensor):
         out = out.reshape((-1, n_classes))
         if with_logits:
@@ -94,11 +96,11 @@ def create_loss(n_classes: int, with_logits=False, epsilon=0.0001) -> nn.Module:
 
 
 def run_experiment(
-    experiment: Experiment,
-    model: nn.Module,
-    lr=0.01,
-    name: str = None,
-    verbose: int | None = 5,
+        experiment: Experiment,
+        model: nn.Module,
+        lr=0.01,
+        name: str = None,
+        verbose: int | None = 5,
 ) -> Results:
     """Trains a Model on the Experiment train set and evaluates the model on the test set.
 
@@ -177,11 +179,11 @@ def compute_benchmark(experiment: Experiment, benchmark_model: Benchmark, name: 
 
 
 def train_epoch(
-    model: nn.Module,
-    device: torch.device,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    criterion: torch.nn.Module,
+        model: nn.Module,
+        device: torch.device,
+        loader: DataLoader,
+        optimizer: torch.optim.Optimizer,
+        criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
 ) -> float:
     """Runs a single epoch of training over a model.
 
@@ -212,7 +214,7 @@ def train_epoch(
     return total_loss / len(loader)
 
 
-def evaluate_model(model: nn.Module, device: torch.device, loader: DataLoader, criterion: torch.nn.Module) -> float:
+def evaluate_model(model: nn.Module, device: torch.device, loader: DataLoader, criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],) -> float:
     """Evaluate a model over the test data given a loss function.
 
     Args:
