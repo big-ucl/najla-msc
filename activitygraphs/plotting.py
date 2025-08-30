@@ -333,6 +333,11 @@ def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
 def _default_axes(ax: Axes = None) -> Axes:
     return ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
 
+def _default_positions(G: nx.Graph, weight_name: str) -> dict[str, tuple[float, float]]:
+    G = G.copy()
+    weights = [(u, v, 1 / d) for u, v, d in G.edges(data=weight_name)]
+    nx.set_node_attributes(G, name="weight", values=weights)
+    return nx.spring_layout(G, weight="weight", seed=42)
 
 class Graph(Protocol):
     """Protocol class emulating SyntheticGraph, as argument to `draw_synthetic_network`"""
@@ -376,7 +381,7 @@ def draw_synthetic_network(graph: Graph, full=False, ax: Axes = None):
     G = graph.G_full if full else graph.G
     ax = _default_axes(ax)
 
-    pos = nx.spring_layout(G, seed=42, weight=graph.WEIGHT_NAME)
+    pos = _default_positions(G, graph.WEIGHT_NAME)
     edge_labels = nx.get_edge_attributes(G, graph.WEIGHT_NAME)
 
     colors = [_node_colour(attrs) for _, attrs in G.nodes(data=True)]
@@ -423,7 +428,7 @@ def draw_synthetic_trip(schedules: Schedules, person_id: int, full=False, ax: Ax
     G = graph.G_full if full else graph.G
     ax = _default_axes(ax)
 
-    pos = nx.spring_layout(G, seed=42, weight=graph.WEIGHT_NAME)
+    pos = _default_positions(G, graph.WEIGHT_NAME)
     edge_labels = nx.get_edge_attributes(G, graph.WEIGHT_NAME)
 
     trips = schedules.trip_df.filter(pl.col("person_id") == person_id)
@@ -434,7 +439,7 @@ def draw_synthetic_trip(schedules: Schedules, person_id: int, full=False, ax: Ax
             trips.select("to_loc_id", "to_type").rename({"to_loc_id": "loc_id", "to_type": "type"}),
         ])
         .group_by("loc_id")
-        .agg(pl.col("type").map_batches(_activities_to_colors, return_dtype=pl.String).first())
+        .agg(pl.col("type").map_elements(_activities_to_colors, return_dtype=pl.String).first())
         .join(pl.DataFrame({"loc_id": list(G.nodes())}), on="loc_id", how="right")
         .with_columns(pl.col("type").fill_null("tab:gray"))
     )["type"].to_list()
@@ -532,7 +537,7 @@ def draw_prediction(graph: Graph, x: list, y_prob: list, full=False, labels=True
     ax = _default_axes(ax)
 
     G = graph.G_full if full else graph.G
-    pos = nx.spring_layout(G, seed=42, weight=graph.WEIGHT_NAME)
+    pos = _default_positions(G, graph.WEIGHT_NAME)
     edge_labels = nx.get_edge_attributes(G, graph.WEIGHT_NAME)
     colors = [_node_colour(_x, _y) for _x, _y in zip(x, y_prob)]
 

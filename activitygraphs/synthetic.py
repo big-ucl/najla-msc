@@ -16,7 +16,8 @@ def _shifted(name, prefix="to_"):
 
 
 def _select_closest_from_choice(
-    nodes: np.ndarray, distances: np.ndarray, choices_idx: np.ndarray, valid: np.ndarray, exclude_chosen: bool = False
+        nodes: np.ndarray, distances: np.ndarray, choices_idx: np.ndarray, valid: np.ndarray,
+        exclude_chosen: bool = False
 ):
     """Given a list of chosen nodes (1 per person in the sample), selects the closest node from the list of valid nodes
 
@@ -47,11 +48,11 @@ class SyntheticGraph:
     WEIGHT_NAME = "distance"
 
     def __init__(
-        self,
-        edges: dict[tuple[str, str], int] | list[tuple[str, str]],
-        workplace_nodes: np.ndarray,
-        shopping_nodes: np.ndarray,
-        home_nodes: Optional[np.ndarray] = None,
+            self,
+            edges: dict[tuple[str, str], int] | list[tuple[str, str]],
+            workplace_nodes: np.ndarray,
+            shopping_nodes: np.ndarray,
+            home_nodes: Optional[np.ndarray] = None,
     ):
         """
         Args:
@@ -141,7 +142,7 @@ class SyntheticGraph:
         """Returns a polars DataFrame of the distances between nodes in the graph, in long form"""
         return (
             pl.DataFrame(self.distance_matrix, schema=list(self.nodes))
-            .with_columns(from_loc_id=self.nodes.tolist())
+            .with_columns(from_loc_id=pl.Series(self.nodes))
             .unpivot(index="from_loc_id", variable_name="to_loc_id", value_name="distance")
         )
 
@@ -150,7 +151,8 @@ class SyntheticSchedules:
     """A class that represents a synthetic dataset of a population of agents and their schedules."""
 
     def __init__(
-        self, n_samples: int, graph: SyntheticGraph, person_choices_df: pl.DataFrame | None, schedule_df: pl.DataFrame
+            self, n_samples: int, graph: SyntheticGraph, person_choices_df: pl.DataFrame | None,
+            schedule_df: pl.DataFrame
     ):
         self.n_samples = n_samples
         self.graph = graph
@@ -193,24 +195,42 @@ class SyntheticGenerator:
         # ["S2", "S1", "W"],
     ])
 
-    def __init__(self, graph: SyntheticGraph, rng: np.random.Generator = None):
+    def __init__(self, graph: SyntheticGraph, rng: np.random.Generator = None, distance_scale: float = 3.0,
+                 income_mu: float = 0, income_sigma: float = 0.8):
         """_summary_
 
         Args:
             graph (SyntheticGraph): the graph on which to generate the data.
-            rng (np.random.Generator, optional): the numpy random number generator, creates a new
-            `numpy.random.default_rng` if None. Defaults to None.
+            rng (np.random.Generator, optional):
+                the numpy random number generator, creates a new
+                numpy.random.default_rng` if None. Defaults to None.
+            distance_scale (float, optional):
+                the scaling factor weighting distance from home/work in shopping
+                probability calculation. Defaults to 3.0.
         """
         self._graph = graph
         self._rng = rng if rng is not None else np.random.default_rng()
+        self._distance_scale = distance_scale
+        self._income_mu = income_mu
+        self._income_sigma = income_sigma
+        self._income_scale = 10
 
         self._n_samples = None
+        self._person_df = None
         self._person_choices_df = None
         self._schedule_df = None
 
     @property
+    def person_df(self):
+        """Returns a polars DataFrame of the population and its characteristics"""
+        if self._person_df is None:
+            raise LookupError("The population has not yet been generated yet Please call `generate_population`.")
+
+        return self._person_df
+
+    @property
     def person_choices_df(self):
-        """Returns a polars DataFrame of the population and chosen locations
+        """Returns a polars DataFrame of the chosen locations for each person in the population
 
         Raises:
             LookupError: If the population has not been generated yet
@@ -244,52 +264,94 @@ class SyntheticGenerator:
 
         return self._schedule_df
 
-    def generate_population(self, n_samples: int, exclude_chosen_from_shopping: bool):
+    def _choice_with_incomes(self, nodes: np.ndarray, incomes: np.ndarray, n_samples: int, inverse: bool = True):
+        """Given a list of target nodes, ranks them alphabetically and samples in that order with income as 'price
+        sensitivity'"""
+        prices = np.arange(len(nodes)) if inverse else np.arange(len(nodes) - 1, -1, -1)
+        logits = (-1 / incomes.reshape(-1, 1)) * prices
+        probabilities = np.exp(logits) / np.sum(np.exp(logits), axis=1, keepdims=True)
+
+        choices_idx = np.empty(n_samples, dtype=int)
+        choices = np.empty(n_samples, dtype=str)
+
+        for i, p in enumerate(probabilities):
+            choice_idx = self._rng.choice(range(len(nodes)), p=p)
+            choices_idx[i] = choice_idx
+            choices[i] = nodes[choice_idx]
+
+        return choices_idx, choices
+
+    def _choice_with_distance_probs(self, targets_idx: np.ndarray, valid: np.ndarray):
+        """Given a list of target nodes (1 per person in the sample), samples a valid node based on inverse distance.
+
+        Args:
+            targets_idx (np.ndarray):
+                indices of the target node from which to compute distance prob for each person in
+                the sample
+            valid (np.ndarray): list of nodes that can be selected
+
+        Returns:
+            np.ndarray: a list of the selected (closest) node for each chosen node
+        """
+        nodes = self._graph.nodes
+        targets, counts = np.unique(targets_idx, return_counts=True)
+
+        choices = np.empty(len(targets_idx), dtype=str)
+        for target, count in zip(targets, counts):
+            is_valid_node = np.ones(len(nodes), dtype=np.bool)
+            is_valid_node = is_valid_node & np.isin(nodes, valid)
+            is_valid_node[target] = False
+
+            distance = self._graph.distance_matrix[target]
+            distance[~is_valid_node] = 0.01  # To avoid zero division error
+
+            inverse_distance = np.where(is_valid_node, 1 / distance, -np.inf)
+            inverse_distance = inverse_distance * self._distance_scale
+
+            exp = np.exp(inverse_distance)
+            probabilities = exp / np.sum(exp, keepdims=True)
+
+            choice = self._rng.choice(nodes, p=probabilities, size=count)
+            choices[targets_idx == target] = choice
+
+        return choices
+
+    def generate_population(self, n_samples: int):
         """Generates a population that lives on the graph, with a home, a workplace, and two shopping destinations.
 
         Args:
             n_samples (int): the number of samples (people) to generate.
-            exclude_chosen_from_shopping (bool): if true, disallows shopping at home or work
-            `numpy.random.default_rng` if None. Defaults to None.
         """
-        home_choice_idx = self._rng.integers(0, len(self._graph.home_nodes), size=n_samples)
-        home_choice = np.array(self._graph.home_nodes)[home_choice_idx]
+        self._schedule_df = None
 
-        work_choice_idx = self._rng.integers(0, len(self._graph.workplace_nodes), size=n_samples)
-        work_choice = np.array(self._graph.workplace_nodes)[work_choice_idx]
-
-        closest_home_shopping = _select_closest_from_choice(
-            self._graph.nodes,
-            self._graph.distance_matrix,
-            choices_idx=home_choice_idx,
-            valid=self._graph.shopping_nodes,
-            exclude_chosen=exclude_chosen_from_shopping,
-        )
-        closest_work_shopping = _select_closest_from_choice(
-            self._graph.nodes,
-            self._graph.distance_matrix,
-            choices_idx=work_choice_idx,
-            valid=self._graph.shopping_nodes,
-            exclude_chosen=exclude_chosen_from_shopping,
-        )
+        incomes = self._rng.lognormal(self._income_mu, self._income_sigma, size=n_samples) * self._income_scale
+        homes_idx, homes = self._choice_with_incomes(self._graph.home_nodes, incomes, n_samples, inverse=True)
+        workplaces_idx, workplaces = self._choice_with_incomes(self._graph.workplace_nodes, incomes, n_samples)
+        home_shopping = self._choice_with_distance_probs(homes_idx, self._graph.shopping_nodes)
+        work_shopping = self._choice_with_distance_probs(workplaces_idx, self._graph.shopping_nodes)
 
         self._n_samples = n_samples
+
+        self._person_df = pl.DataFrame({
+            "income": incomes,
+        }).with_row_index("person_id")
+
         self._person_choices_df = pl.concat([
             pl.DataFrame({
                 "type": "H",
-                "loc_id": home_choice,
+                "loc_id": homes,
             }).with_row_index("person_id"),
             pl.DataFrame({
                 "type": "W",
-                "loc_id": work_choice,
+                "loc_id": workplaces,
             }).with_row_index("person_id"),
             pl.DataFrame({
                 "type": "S1",
-                "loc_id": closest_home_shopping,
+                "loc_id": home_shopping,
             }).with_row_index("person_id"),
             pl.DataFrame({
                 "type": "S2",
-                "loc_id": closest_work_shopping,
+                "loc_id": work_shopping,
             }).with_row_index("person_id"),
         ]).sort(by="person_id")
 

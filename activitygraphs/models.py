@@ -1,11 +1,11 @@
 import polars as pl
-import synthetic
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn
 
-from activitygraphs.synthetic import SyntheticGenerator
+import synthetic
+from synthetic import SyntheticGenerator
 
 
 class SimpleGCN(nn.Module):
@@ -100,16 +100,14 @@ class BestGuess(Benchmark):
     def forward(self, batch):
         graph_xs = batch.graph_x
         xs = batch.x.reshape((graph_xs.shape[0], -1))
-        y_targets = batch.y.reshape((graph_xs.shape[0], -1))
-        ps = batch.person_id.reshape((graph_xs.shape[0], -1))
 
         ys = torch.cat([
-            self._predict(graph_x.item(), x, y.item(), p.item())
-            for graph_x, x, y, p in zip(graph_xs, xs, y_targets, ps, strict=True)
+            self._predict(graph_x.item(), x)
+            for graph_x, x in zip(graph_xs, xs, strict=True)
         ])
         return ys.reshape(batch.x.shape)
 
-    def _predict(self, graph_x, x, y, p):
+    def _predict(self, graph_x, x):
         df = self.all_schedule_graphs
 
         x_cols = [pl.col(col) for col in df.columns if col.startswith("from_")]
@@ -121,9 +119,7 @@ class BestGuess(Benchmark):
         probs = conditioned.sum() / len(conditioned)
 
         if self.strict and len(conditioned) == 0:
-            raise ValueError(
-                f"Schedule does not exist for {p=} seq_num={graph_x}, {x=}, {y=}. Check equal path lengths."
-            )
+            return (torch.ones_like(x) / len(x)).unsqueeze(0)
 
         return probs.to_torch().float()
 

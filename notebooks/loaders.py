@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.14.17"
+__generated_with = "0.15.1"
 app = marimo.App(width="medium")
 
 
@@ -66,15 +66,18 @@ def _():
     from synthetic import SyntheticGraph
 
     edges = {
-        ("A", "B"): 4,
+        ("A", "B"): 3,
         ("B", "C"): 6,
         ("C", "A"): 5,
         ("C", "D"): 15,
         ("D", "E"): 3,
         ("E", "F"): 7,
         ("E", "G"): 2,
-        ("F", "G"): 1,
+        ("F", "G"): 4,
         ("F", "D"): 9,
+        ("F", "H"): 10,
+        ("H", "B"): 12,
+        ("H", "C"): 16,
     }
 
     workplace_nodes = ["A", "B", "C"]
@@ -134,9 +137,8 @@ def _(np, synth_graph):
     generator = SyntheticGenerator(synth_graph, rng)
 
     n_samples = 10000
-    exclude_chosen_from_shopping = True
 
-    generator.generate_population(n_samples, exclude_chosen_from_shopping)
+    generator.generate_population(n_samples)
     generator.person_choices_df
     return generator, n_samples
 
@@ -311,10 +313,16 @@ def _(mo):
 
 @app.cell
 def _(synth_graph):
-    from models import EqualProbablity, BestGuess
+    synth_graph.distance_matrix_df
+    return
+
+
+@app.cell
+def _(synth_graph):
+    from models import EqualProbability, BestGuess
     from experiment import compute_benchmark
 
-    equal_model = EqualProbablity()
+    equal_model = EqualProbability()
     best_model = BestGuess.from_graph(synth_graph)
     return best_model, compute_benchmark, equal_model
 

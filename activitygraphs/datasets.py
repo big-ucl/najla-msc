@@ -15,7 +15,7 @@ class Graph(Protocol):
     WEIGHT_NAME: str
 
     @property
-    def G_full(self) -> nx.Graph:
+    def G(self) -> nx.Graph:
         pass
 
 
@@ -33,11 +33,11 @@ class BasicLocationsDataset(InMemoryDataset):
     """Represents a PyG dataset that contains the training data for a graph ML model"""
 
     def __init__(
-        self,
-        person_ids: pl.Series,
-        data: Data,
-        X: torch.Tensor,
-        y: torch.Tensor,
+            self,
+            person_ids: pl.Series,
+            data: Data,
+            X: torch.Tensor,
+            y: torch.Tensor,
     ):
         """
         Args:
@@ -85,7 +85,7 @@ class BasicLocationsDataset(InMemoryDataset):
 def convert_to_pyg_dataset(schedules: Schedules) -> Dataset:
     """Converts a population schedule object into a PyG Dataset"""
 
-    pyg_graph = from_networkx(schedules.graph.G_full, group_edge_attrs=[schedules.graph.WEIGHT_NAME])
+    pyg_graph = from_networkx(schedules.graph.G, group_edge_attrs=[schedules.graph.WEIGHT_NAME])
 
     features = (
         schedules.trip_df.group_by("person_id")
@@ -109,7 +109,7 @@ def convert_to_pyg_dataset(schedules: Schedules) -> Dataset:
 
 
 def train_test_split(
-    dataset: BasicLocationsDataset, test_size=0.15, random_state: int = None
+        dataset: BasicLocationsDataset, test_size=0.15, random_state: int = None
 ) -> tuple[BasicLocationsDataset, BasicLocationsDataset]:
     """Performs a train-test split using the `person_id`s so that no person is split across the train and test set.
 
