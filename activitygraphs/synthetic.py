@@ -16,8 +16,11 @@ def _shifted(name, prefix="to_"):
 
 
 def _select_closest_from_choice(
-        nodes: np.ndarray, distances: np.ndarray, choices_idx: np.ndarray, valid: np.ndarray,
-        exclude_chosen: bool = False
+    nodes: np.ndarray,
+    distances: np.ndarray,
+    choices_idx: np.ndarray,
+    valid: np.ndarray,
+    exclude_chosen: bool = False,
 ):
     """Given a list of chosen nodes (1 per person in the sample), selects the closest node from the list of valid nodes
 
@@ -48,11 +51,12 @@ class SyntheticGraph:
     WEIGHT_NAME = "distance"
 
     def __init__(
-            self,
-            edges: dict[tuple[str, str], int] | list[tuple[str, str]],
-            workplace_nodes: np.ndarray,
-            shopping_nodes: np.ndarray,
-            home_nodes: Optional[np.ndarray] = None,
+        self,
+        edges: dict[tuple[str, str], int] | list[tuple[str, str]],
+        workplace_nodes: np.ndarray,
+        shopping_nodes: np.ndarray,
+        home_nodes: Optional[np.ndarray] = None,
+        home_prices: Optional[dict[str, float]] = None,
     ):
         """
         Args:
@@ -63,9 +67,11 @@ class SyntheticGraph:
                 List of nodes that are potential workplaces.
             shopping_nodes (list[str]):
                 List of nodes that are potential shopping destinations.
-            home_nodes (Optional[list[str]], optional):
+            home_nodes (list[str], optional):
                 List of nodes that are available home locations. If not specified, all nodes are considered
                 available. Defaults to None.
+            home_prices (dict[str, float], optional):
+                Prices of home nodes. If not specified, prices are 0 to N in alphabetical order. Defaults to None.
         """
         if isinstance(edges, list):
             edges = {edge: 1 for edge in edges}
@@ -79,13 +85,22 @@ class SyntheticGraph:
         if home_nodes is None:
             home_nodes = self.nodes
 
+        if home_prices is None:
+            home_prices = {u: p for u, p in zip(sorted(home_nodes), range(len(home_nodes)))}
+
+        if set(home_prices.keys()) != set(home_nodes):
+            raise ValueError(f"Home prices do not match home nodes. Got {home_prices.keys()}, expected {home_nodes}")
+
         self.home_nodes = np.array(home_nodes)
         self.workplace_nodes = np.array(workplace_nodes)
         self.shopping_nodes = np.array(shopping_nodes)
+        self.home_prices = np.array([home_prices[u] for u in self.home_nodes])
 
         _set_binary_graph_attribute(self._G, self.home_nodes, "is_home")
         _set_binary_graph_attribute(self._G, self.workplace_nodes, "is_workplace")
         _set_binary_graph_attribute(self._G, self.shopping_nodes, "is_shopping")
+
+        nx.set_node_attributes(self._G, home_prices, "home_price")
 
     def __repr__(self):
         return f"SyntheticGraph({len(self.nodes)} nodes, {len(self.edges)} edges)"
@@ -113,6 +128,7 @@ class SyntheticGraph:
 
         Any two nodes are connected with an edge whose distance is the shortest path distance between the two nodes.
         """
+        # TODO Change to full being the per-activity node-duplicated version
         G_full = nx.from_numpy_array(self.distance_matrix, edge_attr="distance", nodelist=self.nodes)
         nx.set_node_attributes(G_full, dict(self._G.nodes(data=True)))
         return G_full
@@ -151,11 +167,16 @@ class SyntheticSchedules:
     """A class that represents a synthetic dataset of a population of agents and their schedules."""
 
     def __init__(
-            self, n_samples: int, graph: SyntheticGraph, person_choices_df: pl.DataFrame | None,
-            schedule_df: pl.DataFrame
+        self,
+        n_samples: int,
+        graph: SyntheticGraph,
+        person_df: pl.DataFrame | None,
+        person_choices_df: pl.DataFrame | None,
+        schedule_df: pl.DataFrame,
     ):
         self.n_samples = n_samples
         self.graph = graph
+        self.person_df = person_df
         self.person_choices_df = person_choices_df
         self.schedule_df = schedule_df
 
@@ -177,26 +198,34 @@ class SyntheticSchedules:
 class SyntheticGenerator:
     """A class for generating synthetic populations and schedules on a SyntheticGraph"""
 
-    AVAILABLE_SCHEDULES = np.array([
-        ["W", "-", "-"],
-        ["S1", "-", "-"],
-        ["S2", "-", "-"],
-        ["W", "S1", "-"],
-        ["W", "S2", "-"],
-        ["S1", "W", "-"],
-        ["S1", "S2", "-"],
-        ["S2", "W", "-"],
-        ["S2", "S1", "-"],
-        # ["W", "S1", "S2"],
-        ["W", "S2", "S1"],
-        ["S1", "W", "S2"],
-        ["S1", "S2", "W"],
-        ["S2", "W", "S1"],
-        # ["S2", "S1", "W"],
-    ])
+    AVAILABLE_SCHEDULES = np.array(
+        [
+            ["W", "-", "-"],
+            ["S1", "-", "-"],
+            ["S2", "-", "-"],
+            ["W", "S1", "-"],
+            ["W", "S2", "-"],
+            ["S1", "W", "-"],
+            ["S1", "S2", "-"],
+            ["S2", "W", "-"],
+            ["S2", "S1", "-"],
+            # ["W", "S1", "S2"],
+            ["W", "S2", "S1"],
+            ["S1", "W", "S2"],
+            ["S1", "S2", "W"],
+            ["S2", "W", "S1"],
+            # ["S2", "S1", "W"],
+        ]
+    )
 
-    def __init__(self, graph: SyntheticGraph, rng: np.random.Generator = None, distance_scale: float = 3.0,
-                 income_mu: float = 0, income_sigma: float = 0.8):
+    def __init__(
+        self,
+        graph: SyntheticGraph,
+        rng: np.random.Generator = None,
+        distance_scale: float = 3.0,
+        income_mu: float = 0,
+        income_sigma: float = 0.8,
+    ):
         """_summary_
 
         Args:
@@ -264,10 +293,17 @@ class SyntheticGenerator:
 
         return self._schedule_df
 
-    def _choice_with_incomes(self, nodes: np.ndarray, incomes: np.ndarray, n_samples: int, inverse: bool = True):
+    def _choice_with_incomes(
+        self,
+        nodes: np.ndarray,
+        prices: np.ndarray,
+        incomes: np.ndarray,
+        n_samples: int,
+        inverse: bool = True,
+    ):
         """Given a list of target nodes, ranks them alphabetically and samples in that order with income as 'price
         sensitivity'"""
-        prices = np.arange(len(nodes)) if inverse else np.arange(len(nodes) - 1, -1, -1)
+        prices = prices[::-1] if inverse else prices
         logits = (-1 / incomes.reshape(-1, 1)) * prices
         probabilities = np.exp(logits) / np.sum(np.exp(logits), axis=1, keepdims=True)
 
@@ -325,35 +361,54 @@ class SyntheticGenerator:
         self._schedule_df = None
 
         incomes = self._rng.lognormal(self._income_mu, self._income_sigma, size=n_samples) * self._income_scale
-        homes_idx, homes = self._choice_with_incomes(self._graph.home_nodes, incomes, n_samples, inverse=True)
-        workplaces_idx, workplaces = self._choice_with_incomes(self._graph.workplace_nodes, incomes, n_samples)
+        work_prices = np.arange(len(self._graph.workplace_nodes))
+
+        homes_idx, homes = self._choice_with_incomes(
+            self._graph.home_nodes, self._graph.home_prices, incomes, n_samples
+        )
+        workplaces_idx, workplaces = self._choice_with_incomes(
+            self._graph.workplace_nodes, work_prices, incomes, n_samples
+        )
+
         home_shopping = self._choice_with_distance_probs(homes_idx, self._graph.shopping_nodes)
         work_shopping = self._choice_with_distance_probs(workplaces_idx, self._graph.shopping_nodes)
 
         self._n_samples = n_samples
 
-        self._person_df = pl.DataFrame({
-            "income": incomes,
-        }).with_row_index("person_id")
+        self._person_df = pl.DataFrame(
+            {
+                "income": incomes,
+            }
+        ).with_row_index("person_id")
 
-        self._person_choices_df = pl.concat([
-            pl.DataFrame({
-                "type": "H",
-                "loc_id": homes,
-            }).with_row_index("person_id"),
-            pl.DataFrame({
-                "type": "W",
-                "loc_id": workplaces,
-            }).with_row_index("person_id"),
-            pl.DataFrame({
-                "type": "S1",
-                "loc_id": home_shopping,
-            }).with_row_index("person_id"),
-            pl.DataFrame({
-                "type": "S2",
-                "loc_id": work_shopping,
-            }).with_row_index("person_id"),
-        ]).sort(by="person_id")
+        self._person_choices_df = pl.concat(
+            [
+                pl.DataFrame(
+                    {
+                        "type": "H",
+                        "loc_id": homes,
+                    }
+                ).with_row_index("person_id"),
+                pl.DataFrame(
+                    {
+                        "type": "W",
+                        "loc_id": workplaces,
+                    }
+                ).with_row_index("person_id"),
+                pl.DataFrame(
+                    {
+                        "type": "S1",
+                        "loc_id": home_shopping,
+                    }
+                ).with_row_index("person_id"),
+                pl.DataFrame(
+                    {
+                        "type": "S2",
+                        "loc_id": work_shopping,
+                    }
+                ).with_row_index("person_id"),
+            ]
+        ).sort(by="person_id")
 
     def generate_schedules(self):
         """Generates schedules for the population.
@@ -384,7 +439,13 @@ class SyntheticGenerator:
         )
 
     def build(self) -> SyntheticSchedules:
-        return SyntheticSchedules(self.n_samples, self._graph, self.person_choices_df, self.schedule_df)
+        return SyntheticSchedules(
+            self.n_samples,
+            self._graph,
+            self.person_df,
+            self.person_choices_df,
+            self.schedule_df,
+        )
 
 
 def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: np.ndarray) -> pl.DataFrame:
@@ -420,12 +481,14 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
         exclude_chosen=True,
     )
 
-    person_choices = np.stack([
-        home_choice,
-        work_choice,
-        closest_home_shopping,
-        closest_work_shopping,
-    ]).T
+    person_choices = np.stack(
+        [
+            home_choice,
+            work_choice,
+            closest_home_shopping,
+            closest_work_shopping,
+        ]
+    ).T
 
     choices_repeated = np.repeat(person_choices, len(available_schedules), axis=0)
     home_choice_repeated = choices_repeated[:, 0].reshape(-1, 1)
@@ -438,7 +501,7 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
     scheds = np.concat([home_choice_repeated, scheds, home_choice_repeated], axis=1)
 
     # Move all "-" to the left of the array, see https://stackoverflow.com/a/43011036
-    valid_mask = (scheds != "-")
+    valid_mask = scheds != "-"
     flipped_mask = valid_mask.sum(axis=1, keepdims=1) > np.arange(scheds.shape[1] - 1, -1, -1)
     flipped_mask = flipped_mask[:, ::-1]
 
@@ -458,7 +521,7 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
         .drop("numpy_seq")
     )
 
-    s = SyntheticSchedules(0, graph, None, schedule_df)
+    s = SyntheticSchedules(0, graph, None, None, schedule_df)
     features = (
         s.trip_df.group_by("person_id")
         .agg(pl.col("from_loc_id").unique(maintain_order=True))
