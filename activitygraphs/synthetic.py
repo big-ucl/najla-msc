@@ -50,6 +50,29 @@ class SyntheticGraph:
 
     WEIGHT_NAME = "distance"
 
+    @classmethod
+    def example(cls):
+        """Returns an example synthetic graph"""
+        edges = {
+            ("A", "B"): 3,
+            ("B", "C"): 6,
+            ("C", "A"): 5,
+            ("C", "D"): 15,
+            ("D", "E"): 3,
+            ("E", "F"): 7,
+            ("E", "G"): 2,
+            ("F", "G"): 4,
+            ("F", "D"): 9,
+            ("F", "H"): 10,
+            ("H", "B"): 12,
+            ("H", "C"): 16,
+        }
+
+        workplace_nodes = ["A", "B", "C"]
+        shopping_nodes = ["B", "C", "D", "E"]
+
+        return cls(edges, workplace_nodes, shopping_nodes)
+
     def __init__(
         self,
         edges: dict[tuple[str, str], int] | list[tuple[str, str]],
@@ -179,6 +202,7 @@ class SyntheticSchedules:
         self.person_df = person_df
         self.person_choices_df = person_choices_df
         self.schedule_df = schedule_df
+        self.visit_types = schedule_df["type"].unique().to_list()
 
         distances_df = graph.distance_matrix_df
 
@@ -236,6 +260,10 @@ class SyntheticGenerator:
             distance_scale (float, optional):
                 the scaling factor weighting distance from home/work in shopping
                 probability calculation. Defaults to 3.0.
+            income_mu (float, optional):
+                the mu parameter of the lognormal income distribution. Defaults to 0.
+            income_sigma (float, optional):
+                the sigma parameter of the lognormal income distribution. Defaults to 0.8.
         """
         self._graph = graph
         self._rng = rng if rng is not None else np.random.default_rng()

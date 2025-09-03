@@ -1,4 +1,5 @@
 import polars as pl
+import torch
 
 
 def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
@@ -25,3 +26,29 @@ def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
         )
 
     return df
+
+
+def check_shape(tensor: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
+    """
+    Checks that a Tensor has a given shape, ignores size of dimension if size is set to -1.
+
+    Args:
+        tensor (torch.Tensor): the tensor
+        shape (tuple[int, ...]): a tuple of dimension sizes
+
+    Raises:
+        ValueError: if the shape is invalid
+
+    Returns:
+        torch.Tensor: the checked tensor
+    """
+    if len(tensor.shape) != len(shape):
+        raise ValueError(f"Tensor has invalid number of dims, got shape {tensor.shape}, expected {shape}")
+
+    for i, (t, s) in enumerate(zip(tensor.shape, shape)):
+        if t != s and s != -1:
+            raise ValueError(
+                f"Tensor has invalid shape along dimension {i}, got shape {tensor.shape}, expected {shape}"
+            )
+
+    return tensor
