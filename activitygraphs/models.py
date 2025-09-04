@@ -1,11 +1,67 @@
 import polars as pl
+import synthetic
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn
-
-import synthetic
 from synthetic import SyntheticGenerator
+
+
+class GCNEncoder(nn.Module):
+    def __init__(self, in_node_channels, in_graph_channels, hidden_channels, num_layers, latent_channels, dropout=0.2):
+        super().__init__()
+
+        if num_layers <= 1:
+            raise ValueError(f"GCNEncoder needs at least 2 layers, got {num_layers=}")
+
+        in_channels = in_node_channels + in_graph_channels
+
+        self.gcn_shared = gnn.GCN(in_channels, hidden_channels, num_layers - 1, hidden_channels, dropout=dropout)
+        self.gcn_mu = gnn.GCNConv(hidden_channels, latent_channels)
+        self.gcn_log_var = gnn.GCNConv(hidden_channels, latent_channels)
+
+    def forward(self, data):
+        # Inject graph features into node features
+        graph_x = data.graph_x[data.batch].unsqueeze(1)
+        node_x = torch.cat([data.x, graph_x], dim=1)
+
+        edge_index = data.edge_index
+        edge_weight = data.edge_weight
+
+        x = self.gcn_shared(node_x, edge_index, edge_weight)
+        x = F.relu(x)
+
+        mu = self.gcn_mu(x, edge_index, edge_weight)
+        log_var = self.gcn_log_var(x, edge_index, edge_weight)
+
+        return mu, log_var
+
+
+class MLPDecoder(nn.Module):
+    def __init__(self, latent_channels, hidden_channels, num_layers, out_num_nodes, out_num_classes, dropout=0.2):
+        super().__init__()
+
+        self._out_num_nodes = out_num_nodes
+        self._out_num_classes = out_num_classes
+
+        out_channels = out_num_nodes * out_num_classes
+        layer_channels = (
+            [(latent_channels, hidden_channels)]
+            + [(hidden_channels, hidden_channels)] * (num_layers - 1)
+            + [(hidden_channels, out_channels)]
+        )
+
+        modules = nn.Sequential()
+        for i, (in_channels, out_channels) in enumerate(layer_channels):
+            modules.add_module(f"dense_{i}", nn.Linear(in_channels, out_channels))
+            modules.add_module(f"relu_{i}", nn.ReLU())
+            modules.add_module(f"dropout_{i}", nn.Dropout(dropout))
+
+        self.mlp = modules
+
+    def forward(self, data):
+        x = self.mlp(data)
+        return x.reshape(-1, self._out_num_nodes, self._out_num_classes)
 
 
 class SimpleGCN(nn.Module):
@@ -101,10 +157,7 @@ class BestGuess(Benchmark):
         graph_xs = batch.graph_x
         xs = batch.x.reshape((graph_xs.shape[0], -1))
 
-        ys = torch.cat([
-            self._predict(graph_x.item(), x)
-            for graph_x, x in zip(graph_xs, xs, strict=True)
-        ])
+        ys = torch.cat([self._predict(graph_x.item(), x) for graph_x, x in zip(graph_xs, xs, strict=True)])
         return ys.reshape(batch.x.shape)
 
     def _predict(self, graph_x, x):

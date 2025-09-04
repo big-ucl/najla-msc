@@ -92,6 +92,78 @@ def _(dataset):
 
     train_set, test_set = train_test_split(dataset, random_state=42)
     train_set, test_set
+    return (train_set,)
+
+
+@app.cell
+def _(train_set):
+    from torch_geometric.loader import DataLoader
+
+    train_load = DataLoader(train_set, batch_size=32)
+
+    batch = next(iter(train_load))
+    data = train_set[0]
+
+    batch, data
+    return (batch,)
+
+
+@app.cell
+def _(train_set):
+    from models import GCNEncoder
+
+    hidden_channels = 32
+    latent_channels = 16
+
+    gcn_encoder = GCNEncoder(
+        in_node_channels=train_set.num_features, 
+        in_graph_channels=train_set.num_graph_features, 
+        hidden_channels=hidden_channels,
+        num_layers=2,
+        latent_channels=latent_channels
+    )
+
+    gcn_encoder
+    return gcn_encoder, hidden_channels, latent_channels
+
+
+@app.cell
+def _(hidden_channels, latent_channels, train_set):
+    from models import MLPDecoder
+
+    label_decoder = MLPDecoder(
+        latent_channels=latent_channels,
+        hidden_channels=hidden_channels,
+        num_layers=3,
+        out_num_nodes=train_set[0].num_nodes,
+        out_num_classes=train_set.num_classes
+    )
+
+    label_decoder
+    return (label_decoder,)
+
+
+@app.cell
+def _(gcn_encoder, label_decoder):
+    from torch_geometric.nn import VGAE
+
+
+    vgae = VGAE(gcn_encoder, label_decoder)
+    vgae
+    return (vgae,)
+
+
+@app.cell
+def _(batch, vgae):
+    z = vgae.encode(batch)
+    y = vgae.decode(z)
+
+    y.shape
+    return
+
+
+@app.cell
+def _():
     return
 
 

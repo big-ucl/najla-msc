@@ -82,6 +82,10 @@ class BasicLocationsDataset(InMemoryDataset):
     def num_classes(self) -> int:
         return self._n_labels
 
+    @property
+    def num_graph_features(self) -> int:
+        return self._graph_x.shape[1]
+
     def person_ids(self) -> list:
         return self._person_ids[self.indices()].squeeze().tolist()
 
@@ -157,7 +161,9 @@ def convert_to_pyg_dataset(schedules: Schedules, label_reason_of_visit: bool = T
     home_node_labels = encoder(schedules, only_encode_labels=["H"])
     node_labels = encoder(schedules)
 
-    return BasicLocationsDataset(pyg_graph, person_ids, incomes, home_node_labels, node_labels)
+    return BasicLocationsDataset(
+        pyg_graph, person_ids.float(), incomes.float(), home_node_labels.float(), node_labels.float()
+    )
 
 
 class HasPersonIDs(Protocol):
