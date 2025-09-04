@@ -90,14 +90,17 @@ class BasicLocationsDataset(InMemoryDataset):
         return self._person_ids[self.indices()].squeeze().tolist()
 
     def get(self, idx):
-        x = torch.concat([self._x_features, self._x_labels[idx]], dim=1)
+        x_train = torch.concat([self._x_features, self._y_labels[idx]], dim=1)
+        x_infer = torch.concat([self._x_features, self._x_labels[idx]], dim=1)
 
         return Data(
-            x=x,
+            x=x_train,
+            x_infer=x_infer,
             edge_index=self._edge_index,
             edge_attr=self._edge_attr,
             y=self._y_labels[idx],
             graph_x=self._graph_x[idx],
+            x_features=self._x_features,
             x_labels=self._x_labels[idx],
             person_id=self._person_ids[idx],
         )

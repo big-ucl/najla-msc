@@ -59,7 +59,7 @@ def _(plotting, synth):
 def _(np, synth):
     from synthetic import SyntheticGenerator
 
-    n_samples = 1000
+    n_samples = 10000
 
     _rng = np.random.default_rng(seed=42)
     _generator = SyntheticGenerator(synth, _rng)
@@ -92,20 +92,13 @@ def _(dataset):
 
     train_set, test_set = train_test_split(dataset, random_state=42)
     train_set, test_set
-    return (train_set,)
+    return test_set, train_set
 
 
-@app.cell
-def _(train_set):
-    from torch_geometric.loader import DataLoader
-
-    train_load = DataLoader(train_set, batch_size=32)
-
-    batch = next(iter(train_load))
-    data = train_set[0]
-
-    batch, data
-    return (batch,)
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""## Defining the models""")
+    return
 
 
 @app.cell
@@ -135,8 +128,7 @@ def _(hidden_channels, latent_channels, train_set):
         latent_channels=latent_channels,
         hidden_channels=hidden_channels,
         num_layers=3,
-        out_num_nodes=train_set[0].num_nodes,
-        out_num_classes=train_set.num_classes
+        out_channels=train_set.num_classes,
     )
 
     label_decoder
@@ -145,20 +137,152 @@ def _(hidden_channels, latent_channels, train_set):
 
 @app.cell
 def _(gcn_encoder, label_decoder):
-    from torch_geometric.nn import VGAE
+    from models import NodeLabelVGAE
 
-
-    vgae = VGAE(gcn_encoder, label_decoder)
+    vgae = NodeLabelVGAE(gcn_encoder, label_decoder)
     vgae
     return (vgae,)
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""Test that the models output something""")
+    return
+
+
+@app.cell
+def _(train_set):
+    from torch_geometric.loader import DataLoader
+
+    _train_load = DataLoader(train_set, batch_size=32)
+
+    batch = next(iter(_train_load))
+    data = train_set[0]
+
+    batch, data
+    return DataLoader, batch
+
+
 @app.cell
 def _(batch, vgae):
-    z = vgae.encode(batch)
+    mu, log_std = vgae.forward(batch)
+    z = vgae.reparametrize(mu, log_std)
     y = vgae.decode(z)
 
     y.shape
+    return log_std, mu, y
+
+
+@app.cell
+def _(batch, y):
+    from losses import recon_loss
+
+    recon = recon_loss(y, batch.y)
+    recon
+    return (recon_loss,)
+
+
+@app.cell
+def _(log_std, mu):
+    from losses import kl_loss
+
+    kl = kl_loss(mu, log_std)
+    kl
+    return
+
+
+@app.cell
+def _(batch, log_std, mu, y):
+    from losses import elbo_loss
+
+    elbo = elbo_loss(mu, log_std, y, batch.y)
+    elbo
+    return (elbo_loss,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""## Train the model""")
+    return
+
+
+@app.cell
+def _():
+    import torch
+    return (torch,)
+
+
+@app.cell
+def _(DataLoader, test_set, torch, train_set, vgae):
+    lr = 0.01
+    n_epochs = 10
+    batch_size = 32
+
+    model = vgae
+    device = torch.device("cpu")
+    train_loader = DataLoader(train_set, batch_size=batch_size)
+    test_loader = DataLoader(test_set, batch_size=batch_size)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    return device, model, n_epochs, optimizer, test_loader, train_loader
+
+
+@app.cell
+def _(device, elbo_loss, model, n_epochs, optimizer, train_loader):
+    def train_epoch(model, device, train_loader, optimizer):
+        epoch_loss = 0
+        for batch in train_loader:
+            batch = batch.to(device)
+            optimizer.zero_grad()
+
+            mu, log_std = model.forward(batch)
+            z = model.reparametrize(mu, log_std)
+            y = model.decode(z)
+
+            loss = elbo_loss(mu, log_std, y, batch.y)
+            loss.backward()
+
+            epoch_loss += loss.item()
+            optimizer.step()
+
+        return epoch_loss / len(train_loader)
+
+    train_losses = []
+
+    for epoch in range(n_epochs):
+        model.train()
+
+        total_loss = train_epoch(model, device, train_loader, optimizer)
+        train_losses.append(total_loss)
+
+        print(f"Epoch {epoch}: elbo={total_loss}")
+    return
+
+
+@app.cell
+def _(device, model, recon_loss, test_loader, torch):
+    def evaluate_model(model, device, loader, criterion) -> float:
+        model.eval()
+        total_loss = 0
+
+        for batch in loader:
+            batch = batch.to(device)
+
+            with torch.no_grad():
+                y = model.infer(batch)
+                loss = criterion(y, batch.y)
+
+            total_loss += loss
+
+        return total_loss / len(loader)
+
+    test_loss = evaluate_model(model, device, test_loader, recon_loss)
+    test_loss
+    return (evaluate_model,)
+
+
+@app.cell
+def _(device, evaluate_model, model, recon_loss, train_loader):
+    evaluate_model(model, device, train_loader, recon_loss)
     return
 
 

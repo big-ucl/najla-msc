@@ -7,6 +7,19 @@ import torch_geometric.nn as gnn
 from synthetic import SyntheticGenerator
 
 
+class NodeLabelVGAE(gnn.VGAE):
+    def __init__(self, encoder: nn.Module, decoder: nn.Module):
+        super().__init__(encoder, decoder)
+
+    def forward(self, data):
+        return super().forward(data.x, data)
+
+    def infer(self, data):
+        mu, log_std = super().forward(data.x_infer, data)
+        z = super().reparametrize(mu, log_std)
+        return super().decode(z)
+
+
 class GCNEncoder(nn.Module):
     def __init__(self, in_node_channels, in_graph_channels, hidden_channels, num_layers, latent_channels, dropout=0.2):
         super().__init__()
@@ -18,12 +31,12 @@ class GCNEncoder(nn.Module):
 
         self.gcn_shared = gnn.GCN(in_channels, hidden_channels, num_layers - 1, hidden_channels, dropout=dropout)
         self.gcn_mu = gnn.GCNConv(hidden_channels, latent_channels)
-        self.gcn_log_var = gnn.GCNConv(hidden_channels, latent_channels)
+        self.gcn_log_std = gnn.GCNConv(hidden_channels, latent_channels)
 
-    def forward(self, data):
+    def forward(self, x, data):
         # Inject graph features into node features
         graph_x = data.graph_x[data.batch].unsqueeze(1)
-        node_x = torch.cat([data.x, graph_x], dim=1)
+        node_x = torch.cat([x, graph_x], dim=1)
 
         edge_index = data.edge_index
         edge_weight = data.edge_weight
@@ -32,19 +45,15 @@ class GCNEncoder(nn.Module):
         x = F.relu(x)
 
         mu = self.gcn_mu(x, edge_index, edge_weight)
-        log_var = self.gcn_log_var(x, edge_index, edge_weight)
+        log_std = self.gcn_log_std(x, edge_index, edge_weight)
 
-        return mu, log_var
+        return mu, log_std
 
 
 class MLPDecoder(nn.Module):
-    def __init__(self, latent_channels, hidden_channels, num_layers, out_num_nodes, out_num_classes, dropout=0.2):
+    def __init__(self, latent_channels, hidden_channels, num_layers, out_channels, dropout=0.2):
         super().__init__()
 
-        self._out_num_nodes = out_num_nodes
-        self._out_num_classes = out_num_classes
-
-        out_channels = out_num_nodes * out_num_classes
         layer_channels = (
             [(latent_channels, hidden_channels)]
             + [(hidden_channels, hidden_channels)] * (num_layers - 1)
@@ -59,9 +68,8 @@ class MLPDecoder(nn.Module):
 
         self.mlp = modules
 
-    def forward(self, data):
-        x = self.mlp(data)
-        return x.reshape(-1, self._out_num_nodes, self._out_num_classes)
+    def forward(self, z):
+        return self.mlp(z)
 
 
 class SimpleGCN(nn.Module):
