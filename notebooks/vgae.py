@@ -26,7 +26,8 @@ def _():
 def _():
     import numpy as np
     import polars as pl
-    return (np,)
+    import matplotlib.pyplot as plt
+    return np, plt
 
 
 @app.cell(hide_code=True)
@@ -59,7 +60,7 @@ def _(plotting, synth):
 def _(np, synth):
     from synthetic import SyntheticGenerator
 
-    n_samples = 10000
+    n_samples = 1000
 
     _rng = np.random.default_rng(seed=42)
     _generator = SyntheticGenerator(synth, _rng)
@@ -81,7 +82,7 @@ def _(mo):
 def _(schedules):
     from datasets import convert_to_pyg_dataset
 
-    dataset = convert_to_pyg_dataset(schedules)
+    dataset = convert_to_pyg_dataset(schedules, label_reason_of_visit=False)
     dataset
     return (dataset,)
 
@@ -90,9 +91,10 @@ def _(schedules):
 def _(dataset):
     from datasets import train_test_split
 
-    train_set, test_set = train_test_split(dataset, random_state=42)
-    train_set, test_set
-    return test_set, train_set
+    train_val_set, test_set = train_test_split(dataset, random_state=42)
+    train_set, val_set = train_test_split(train_val_set, random_state=42)
+    train_set, val_set, test_set
+    return test_set, train_set, val_set
 
 
 @app.cell(hide_code=True)
@@ -106,18 +108,35 @@ def _(train_set):
     from models import GCNEncoder
 
     hidden_channels = 32
-    latent_channels = 16
+    latent_channels = 6
 
     gcn_encoder = GCNEncoder(
-        in_node_channels=train_set.num_features, 
-        in_graph_channels=train_set.num_graph_features, 
+        in_node_channels=train_set.num_features,
+        in_graph_channels=train_set.num_graph_features,
         hidden_channels=hidden_channels,
         num_layers=2,
-        latent_channels=latent_channels
+        latent_channels=latent_channels,
     )
 
     gcn_encoder
-    return gcn_encoder, hidden_channels, latent_channels
+    return hidden_channels, latent_channels
+
+
+@app.cell
+def _(hidden_channels, latent_channels, train_set):
+    from models import MLPEncoder
+
+    mlp_encoder = MLPEncoder(
+        in_num_nodes=train_set[0].num_nodes,
+        in_num_node_features=train_set.num_features,
+        in_num_graph_features=train_set.num_graph_features,
+        hidden_channels=hidden_channels,
+        num_layers=3,
+        latent_channels=latent_channels,
+    )
+
+    mlp_encoder
+    return (mlp_encoder,)
 
 
 @app.cell
@@ -128,7 +147,8 @@ def _(hidden_channels, latent_channels, train_set):
         latent_channels=latent_channels,
         hidden_channels=hidden_channels,
         num_layers=3,
-        out_channels=train_set.num_classes,
+        out_nodes=train_set[0].num_nodes,
+        out_classes=train_set.num_classes,
     )
 
     label_decoder
@@ -136,10 +156,10 @@ def _(hidden_channels, latent_channels, train_set):
 
 
 @app.cell
-def _(gcn_encoder, label_decoder):
+def _(label_decoder, mlp_encoder):
     from models import NodeLabelVGAE
 
-    vgae = NodeLabelVGAE(gcn_encoder, label_decoder)
+    vgae = NodeLabelVGAE(mlp_encoder, label_decoder)
     vgae
     return (vgae,)
 
@@ -160,44 +180,7 @@ def _(train_set):
     data = train_set[0]
 
     batch, data
-    return DataLoader, batch
-
-
-@app.cell
-def _(batch, vgae):
-    mu, log_std = vgae.forward(batch)
-    z = vgae.reparametrize(mu, log_std)
-    y = vgae.decode(z)
-
-    y.shape
-    return log_std, mu, y
-
-
-@app.cell
-def _(batch, y):
-    from losses import recon_loss
-
-    recon = recon_loss(y, batch.y)
-    recon
-    return (recon_loss,)
-
-
-@app.cell
-def _(log_std, mu):
-    from losses import kl_loss
-
-    kl = kl_loss(mu, log_std)
-    kl
-    return
-
-
-@app.cell
-def _(batch, log_std, mu, y):
-    from losses import elbo_loss
-
-    elbo = elbo_loss(mu, log_std, y, batch.y)
-    elbo
-    return (elbo_loss,)
+    return (DataLoader,)
 
 
 @app.cell(hide_code=True)
@@ -213,82 +196,256 @@ def _():
 
 
 @app.cell
-def _(DataLoader, test_set, torch, train_set, vgae):
-    lr = 0.01
-    n_epochs = 10
-    batch_size = 32
+def _():
+    from models import EarlyStopping
 
-    model = vgae
-    device = torch.device("cpu")
-    train_loader = DataLoader(train_set, batch_size=batch_size)
-    test_loader = DataLoader(test_set, batch_size=batch_size)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    return device, model, n_epochs, optimizer, test_loader, train_loader
-
-
-@app.cell
-def _(device, elbo_loss, model, n_epochs, optimizer, train_loader):
-    def train_epoch(model, device, train_loader, optimizer):
-        epoch_loss = 0
-        for batch in train_loader:
-            batch = batch.to(device)
-            optimizer.zero_grad()
-
-            mu, log_std = model.forward(batch)
-            z = model.reparametrize(mu, log_std)
-            y = model.decode(z)
-
-            loss = elbo_loss(mu, log_std, y, batch.y)
-            loss.backward()
-
-            epoch_loss += loss.item()
-            optimizer.step()
-
-        return epoch_loss / len(train_loader)
-
-    train_losses = []
-
-    for epoch in range(n_epochs):
-        model.train()
-
-        total_loss = train_epoch(model, device, train_loader, optimizer)
-        train_losses.append(total_loss)
-
-        print(f"Epoch {epoch}: elbo={total_loss}")
+    early_stop = EarlyStopping(verbose=True)
     return
 
 
 @app.cell
-def _(device, model, recon_loss, test_loader, torch):
-    def evaluate_model(model, device, loader, criterion) -> float:
-        model.eval()
-        total_loss = 0
+def _(DataLoader, test_set, torch, train_set, val_set, vgae):
+    lr = 0.0001
+    n_epochs = 150
+    batch_size = 32
+    kl_weight = 0.000001
 
-        for batch in loader:
-            batch = batch.to(device)
-
-            with torch.no_grad():
-                y = model.infer(batch)
-                loss = criterion(y, batch.y)
-
-            total_loss += loss
-
-        return total_loss / len(loader)
-
-    test_loss = evaluate_model(model, device, test_loader, recon_loss)
-    test_loss
-    return (evaluate_model,)
+    model = vgae
+    device = torch.device("cpu")
+    train_loader = DataLoader(train_set, batch_size=batch_size)
+    val_loader = DataLoader(val_set, batch_size=batch_size)
+    test_loader = DataLoader(test_set, batch_size=batch_size)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    return (
+        device,
+        kl_weight,
+        model,
+        n_epochs,
+        optimizer,
+        test_loader,
+        train_loader,
+        val_loader,
+    )
 
 
 @app.cell
-def _(device, evaluate_model, model, recon_loss, train_loader):
-    evaluate_model(model, device, train_loader, recon_loss)
+def _():
+    from losses import make_weighted_recon_loss, make_elbo_loss
+    from experiment import train_vae_epoch, evaluate_model
+    return (
+        evaluate_model,
+        make_elbo_loss,
+        make_weighted_recon_loss,
+        train_vae_epoch,
+    )
+
+
+@app.cell
+def _(
+    device,
+    evaluate_model,
+    kl_weight,
+    make_elbo_loss,
+    make_weighted_recon_loss,
+    model,
+    n_epochs,
+    optimizer,
+    train_loader,
+    train_set,
+    train_vae_epoch,
+    val_loader,
+):
+    weighted_recon_loss = make_weighted_recon_loss(train_set)
+    elbo_loss = make_elbo_loss(weighted_recon_loss, kl_weight=kl_weight)
+
+    train_losses = []
+    val_losses = []
+
+    for epoch in range(n_epochs):
+        model.train()
+
+        train_loss = train_vae_epoch(model, device, train_loader, optimizer, elbo_loss)
+        val_loss = evaluate_model(model, device, val_loader, weighted_recon_loss)
+
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+
+        # if early_stop.check(val_loss):
+        #    pass # break
+
+        if epoch % 10 == 0:
+            print(f"Epoch {epoch}: train_elbo={train_loss}, val_recon={val_loss}")
+    return train_losses, val_losses, weighted_recon_loss
+
+
+@app.cell
+def _(n_epochs, plt, train_losses, val_losses):
+    plt.plot(range(n_epochs), train_losses, label="Train")
+    plt.plot(range(n_epochs), val_losses, label="Validation")
+    plt.xlim(0, n_epochs)
+    plt.xlabel("Epochs")
+    plt.ylabel("Weighted BCE Loss")
+    plt.legend()
+
+    plt.show()
     return
 
 
 @app.cell
 def _():
+    from models import AlwaysZero, FiftyFifty
+    return (FiftyFifty,)
+
+
+@app.cell
+def _():
+    from losses import roc_auc, average_precision, accuracy, recall, precision
+    return accuracy, average_precision, precision, recall, roc_auc
+
+
+@app.cell
+def _(
+    FiftyFifty,
+    accuracy,
+    average_precision,
+    device,
+    evaluate_model,
+    model,
+    precision,
+    recall,
+    roc_auc,
+    test_loader,
+    weighted_recon_loss,
+):
+    metrics = {
+        "Weighted BCE": weighted_recon_loss,
+        "ROC AUC": roc_auc,
+        "Average Precision": average_precision,
+        "Accuracy": accuracy,
+        "Precision": recall,
+        "Recall": precision,
+    }
+
+    padding = max(len(k) for k in metrics.keys())
+
+    for _name, _metric in metrics.items():
+        _model_score = evaluate_model(model, device, test_loader, _metric)
+        _fifty_score = evaluate_model(FiftyFifty(), device, test_loader, _metric)
+        _fifty_pct_diff = (_fifty_score - _model_score) / _model_score
+
+        print(f"{_name.rjust(padding)} : VGAE={_model_score:.4f} - Base={_fifty_score:.4f} (% diff={_fifty_pct_diff:.2%})")
     return
+
+
+@app.cell(hide_code=True)
+def _():
+    from torch_geometric.utils import to_dense_batch
+    import torch.nn.functional as F
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo, test_set):
+    def create_prev_next_buttons(n_samples: int):
+        get_prediction, set_prediction = mo.state(1)
+
+        def _decrease(_):
+            if get_prediction() > 0:
+                set_prediction(lambda x: x - 1)
+
+        def _increase(_):
+            if get_prediction() < n_samples - 1:
+                set_prediction(lambda x: x + 1)
+
+        prev_button = mo.ui.button(on_click=_decrease, label="Prev")
+        next_button = mo.ui.button(on_click=_increase, label="Next")
+
+        return prev_button, next_button, get_prediction
+
+
+    n_test_samples = len(test_set)
+    prev_btn, next_btn, get_prediction_idx = create_prev_next_buttons(n_test_samples)
+    return get_prediction_idx, n_test_samples, next_btn, prev_btn
+
+
+@app.cell(hide_code=True)
+def _(get_prediction_idx, mo, n_test_samples, next_btn, plot_preds, prev_btn):
+    mo.vstack(
+        [
+            mo.md("Comparison of predictions between models and benchmarks: "),
+            mo.hstack(
+                [
+                    prev_btn,
+                    mo.md(f"Sample #{get_prediction_idx()}/{n_test_samples - 1}"),
+                    next_btn,
+                ],
+                align="center",
+            ),
+            plot_preds(get_prediction_idx()),
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(
+    DataLoader,
+    FiftyFifty,
+    accuracy,
+    average_precision,
+    model,
+    plotting,
+    plt,
+    precision,
+    recall,
+    roc_auc,
+    synth,
+    test_set,
+    torch,
+):
+    def print_metrics(_logits, _y_true, prefix):
+        roc = roc_auc(_logits, _y_true)
+        ap = average_precision(_logits, _y_true)
+        acc = accuracy(_logits, _y_true)
+        prec = precision(_logits, _y_true)
+        rec = recall(_logits, _y_true)
+
+        print(f"({prefix}) ROC AUC={roc:.4f}, AP={ap:.4f}, Acc={acc:.4f}, Prec={prec:.4f}, Rec={rec:.4f}")
+
+
+    def plot_preds(i):
+        model.eval()
+        _d = test_set[i]
+
+        _batch = next(iter(DataLoader([_d])))
+        _z = model.encode(_batch.x, _batch)
+
+        print("Latents:", _z.squeeze().detach())
+
+        _logits = model.decode(_z).detach()
+        _y_prob = torch.sigmoid(_logits).detach()
+        _y_pred = (_y_prob > 0.5).float().detach()
+        _y_true = _batch.y.detach()
+
+        _baseline_logits = FiftyFifty().decode(_batch)
+
+        print("Logits:", _logits.squeeze())
+        print()
+        print("Probs :", _y_prob.squeeze())
+        print("Preds :", _y_pred.squeeze())
+        print("Actual:", _y_true.squeeze())
+
+        print("\nMetrics:")
+        print_metrics(_logits, _y_true, "model")
+        print_metrics(_baseline_logits, _y_true, "base ")
+
+        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(12, 6))
+
+        plotting.draw_prediction(synth, _batch.x_labels.squeeze(), _y_true.squeeze(), ax=ax1)
+        plotting.draw_prediction(synth, _batch.x_labels.squeeze(), _y_prob.squeeze(), ax=ax2)
+
+        return fig
+    return (plot_preds,)
 
 
 if __name__ == "__main__":

@@ -89,6 +89,13 @@ class BasicLocationsDataset(InMemoryDataset):
     def person_ids(self) -> list:
         return self._person_ids[self.indices()].squeeze().tolist()
 
+    def class_weights(self):
+        y_labels = self._y_labels[self.indices()]
+        n_examples = y_labels.shape[0] * y_labels.shape[1]
+        n_pos_examples = y_labels.flatten(end_dim=1).sum(dim=0)
+        n_neg_examples = n_examples - n_pos_examples
+        return n_neg_examples / n_pos_examples
+
     def get(self, idx):
         x_train = torch.concat([self._x_features, self._y_labels[idx]], dim=1)
         x_infer = torch.concat([self._x_features, self._x_labels[idx]], dim=1)

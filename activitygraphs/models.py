@@ -5,6 +5,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn
 from synthetic import SyntheticGenerator
+from torch_geometric.utils import to_dense_batch
+
+
+class AlwaysZero(nn.Module):
+    def infer(self, data):
+        return self.decode(data)
+
+    def decode(self, data):
+        y, _ = to_dense_batch(data.y, data.batch)
+        return torch.full_like(y, -torch.inf)
+
+
+class FiftyFifty(nn.Module):
+    def infer(self, data):
+        return self.decode(data)
+
+    def decode(self, data):
+        y, _ = to_dense_batch(data.y, data.batch)
+        return torch.zeros_like(y)
 
 
 class NodeLabelVGAE(gnn.VGAE):
@@ -30,8 +49,8 @@ class GCNEncoder(nn.Module):
         in_channels = in_node_channels + in_graph_channels
 
         self.gcn_shared = gnn.GCN(in_channels, hidden_channels, num_layers - 1, hidden_channels, dropout=dropout)
-        self.gcn_mu = gnn.GCNConv(hidden_channels, latent_channels)
-        self.gcn_log_std = gnn.GCNConv(hidden_channels, latent_channels)
+        self.mu = nn.Linear(hidden_channels, latent_channels)
+        self.log_std = nn.Linear(hidden_channels, latent_channels)
 
     def forward(self, x, data):
         # Inject graph features into node features
@@ -43,33 +62,112 @@ class GCNEncoder(nn.Module):
 
         x = self.gcn_shared(node_x, edge_index, edge_weight)
         x = F.relu(x)
+        x = gnn.global_max_pool(x, data.batch)
 
-        mu = self.gcn_mu(x, edge_index, edge_weight)
-        log_std = self.gcn_log_std(x, edge_index, edge_weight)
+        mu = self.mu(x)
+        log_std = self.log_std(x)
+
+        return mu, log_std
+
+
+class MLPEncoder(nn.Module):
+    def __init__(
+        self,
+        in_num_nodes,
+        in_num_node_features,
+        in_num_graph_features,
+        hidden_channels,
+        num_layers,
+        latent_channels,
+        dropout=0.2,
+    ):
+        super().__init__()
+
+        if num_layers <= 1:
+            raise ValueError(f"MLP encoder needs at least 2 layers, got {num_layers=}")
+
+        in_channels = in_num_nodes * in_num_node_features + in_num_graph_features
+
+        self.mlp_shared = MLP(in_channels, hidden_channels, num_layers - 1, hidden_channels, dropout=dropout)
+        self.mu = nn.Linear(hidden_channels, latent_channels)
+        self.log_std = nn.Linear(hidden_channels, latent_channels)
+
+    def forward(self, x, data):
+        batched_x, _ = to_dense_batch(x, data.batch)
+        node_x = batched_x.flatten(start_dim=1)
+        graph_x = data.graph_x.unsqueeze(1)
+        combined_x = torch.cat([node_x, graph_x], dim=1)
+
+        x = self.mlp_shared(combined_x)
+        x = F.relu(x)
+
+        mu = self.mu(x)
+        log_std = self.log_std(x)
 
         return mu, log_std
 
 
 class MLPDecoder(nn.Module):
-    def __init__(self, latent_channels, hidden_channels, num_layers, out_channels, dropout=0.2):
+    def __init__(self, latent_channels, hidden_channels, num_layers, out_nodes, out_classes, dropout=0.2):
+        super().__init__()
+
+        self.out_nodes = out_nodes
+        self.out_classes = out_classes
+
+        out_channels = out_nodes * out_classes
+
+        self.mlp = MLP(latent_channels, hidden_channels, num_layers, out_channels, dropout=dropout)
+
+    def forward(self, z):
+        y = self.mlp(z)
+        y = y.reshape(y.shape[0], -1, self.out_classes)
+
+        return y
+
+
+class MLP(nn.Module):
+    def __init__(self, input_channels, hidden_channels, num_layers, out_channels, dropout=0.2):
         super().__init__()
 
         layer_channels = (
-            [(latent_channels, hidden_channels)]
+            [(input_channels, hidden_channels)]
             + [(hidden_channels, hidden_channels)] * (num_layers - 1)
             + [(hidden_channels, out_channels)]
         )
 
         modules = nn.Sequential()
         for i, (in_channels, out_channels) in enumerate(layer_channels):
-            modules.add_module(f"dense_{i}", nn.Linear(in_channels, out_channels))
-            modules.add_module(f"relu_{i}", nn.ReLU())
-            modules.add_module(f"dropout_{i}", nn.Dropout(dropout))
+            modules.add_module(f"linear_{i}", nn.Linear(in_channels, out_channels))
+
+            if i < len(layer_channels) - 1:
+                modules.add_module(f"relu_{i}", nn.ReLU())
+                modules.add_module(f"dropout_{i}", nn.Dropout(dropout))
 
         self.mlp = modules
 
-    def forward(self, z):
-        return self.mlp(z)
+    def forward(self, x):
+        return self.mlp(x)
+
+
+class EarlyStopping:
+    def __init__(self, patience=5, delta=0, verbose=False):
+        self.patience = patience
+        self.delta = delta
+        self.verbose = verbose
+        self.best_loss = float("inf")
+        self.no_improvement_count = 0
+
+    def check(self, val_loss: float) -> bool:
+        if val_loss < self.best_loss - self.delta:
+            self.best_loss = val_loss
+            self.no_improvement_count = 0
+        else:
+            self.no_improvement_count += 1
+            if self.no_improvement_count >= self.patience:
+                if self.verbose:
+                    print(f"Early stopping: no improvement. Validation loss={val_loss:.4f}")
+                return True
+        return False
 
 
 class SimpleGCN(nn.Module):
@@ -96,24 +194,6 @@ class SimpleGCN(nn.Module):
         x = self.conv2(x, edge_index, 1 / edge_attr)
 
         return x
-
-
-class MLP(nn.Module):
-    def __init__(self, n_nodes: int, n_graph_x: int, hidden_channels: int, num_layers: int):
-        super().__init__()
-        self.n_nodes = n_nodes
-        self.mlp = gnn.MLP(
-            in_channels=n_nodes + n_graph_x,
-            hidden_channels=hidden_channels,
-            out_channels=n_nodes,
-            num_layers=num_layers,
-        )
-
-    def forward(self, batch):
-        X = batch.x.reshape((-1, self.n_nodes))
-        X = torch.cat([batch.graph_x.unsqueeze(1), X], dim=1)
-
-        return self.mlp(X).reshape((-1, 1))
 
 
 class Benchmark(nn.Module):

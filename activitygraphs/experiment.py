@@ -1,16 +1,16 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Generic, Protocol, TypeVar
 
 import polars as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from datasets import train_test_split
-from torch_geometric.loader import DataLoader
-from utils import check_schema
-
+from datasets import BasicLocationsDataset, train_test_split
 from models import Benchmark
-from datasets import BasicLocationsDataset
+from torch_geometric.loader import DataLoader
+from torch_geometric.utils import to_dense_batch
+from utils import check_schema
 
 
 @dataclass(frozen=True)
@@ -33,12 +33,14 @@ class Experiment:
 class Results:
     """Represents the results of training / testing an ML model on an `Experiment`."""
 
-    LOSSES_SCHEMA = pl.Schema({
-        "epoch": pl.Int64,
-        "loss": pl.Float64,
-        "type": pl.String,
-        "name": pl.String,
-    })
+    LOSSES_SCHEMA = pl.Schema(
+        {
+            "epoch": pl.Int64,
+            "loss": pl.Float64,
+            "type": pl.String,
+            "name": pl.String,
+        }
+    )
 
     def __init__(self, name: str, losses: pl.DataFrame):
         """
@@ -83,8 +85,9 @@ class Results:
         return f"Results({self.name} | Test loss={self.test_loss():.4f})"
 
 
-def create_loss(n_classes: int, with_logits=False, epsilon=0.0001) -> Callable[
-    [torch.Tensor, torch.Tensor], torch.Tensor]:
+def create_loss(
+    n_classes: int, with_logits=False, epsilon=0.0001
+) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
     def loss(out: torch.Tensor, y: torch.Tensor):
         out = out.reshape((-1, n_classes))
         if with_logits:
@@ -96,11 +99,11 @@ def create_loss(n_classes: int, with_logits=False, epsilon=0.0001) -> Callable[
 
 
 def run_experiment(
-        experiment: Experiment,
-        model: nn.Module,
-        lr=0.01,
-        name: str = None,
-        verbose: int | None = 5,
+    experiment: Experiment,
+    model: nn.Module,
+    lr=0.01,
+    name: str = None,
+    verbose: int | None = 5,
 ) -> Results:
     """Trains a Model on the Experiment train set and evaluates the model on the test set.
 
@@ -148,11 +151,13 @@ def run_experiment(
 
     # Build results DataFrame
     epochs = list(range(1, exp.n_epochs + 1))
-    losses = pl.concat([
-        pl.DataFrame({"epoch": epochs, "loss": train_losses}).with_columns(pl.lit("train").alias("type")),
-        pl.DataFrame({"epoch": epochs, "loss": val_losses}).with_columns(pl.lit("val").alias("type")),
-        pl.DataFrame({"epoch": exp.n_epochs, "loss": test_loss}).with_columns(pl.lit("test").alias("type")),
-    ]).with_columns(pl.lit(name).alias("name"))
+    losses = pl.concat(
+        [
+            pl.DataFrame({"epoch": epochs, "loss": train_losses}).with_columns(pl.lit("train").alias("type")),
+            pl.DataFrame({"epoch": epochs, "loss": val_losses}).with_columns(pl.lit("val").alias("type")),
+            pl.DataFrame({"epoch": exp.n_epochs, "loss": test_loss}).with_columns(pl.lit("test").alias("type")),
+        ]
+    ).with_columns(pl.lit(name).alias("name"))
 
     return Results(name, losses)
 
@@ -179,11 +184,11 @@ def compute_benchmark(experiment: Experiment, benchmark_model: Benchmark, name: 
 
 
 def train_epoch(
-        model: nn.Module,
-        device: torch.device,
-        loader: DataLoader,
-        optimizer: torch.optim.Optimizer,
-        criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    model: nn.Module,
+    device: torch.device,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
 ) -> float:
     """Runs a single epoch of training over a model.
 
@@ -214,17 +219,77 @@ def train_epoch(
     return total_loss / len(loader)
 
 
-def evaluate_model(model: nn.Module, device: torch.device, loader: DataLoader, criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],) -> float:
+class VAE(Protocol):
+    def train(self):
+        pass
+
+    def forward(self, batch) -> tuple[torch.Tensor, torch.Tensor]:
+        pass
+
+    def reparametrize(self, mu: torch.Tensor, log_std: torch.Tensor) -> torch.Tensor:
+        pass
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        pass
+
+
+def train_vae_epoch(
+    model: VAE,
+    device: torch.device,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: Callable[..., torch.Tensor],
+) -> float:
+    """Runs a single epoch of training over a model.
+
+    Args:
+        model (nn.Module): The model to be trained
+        device (torch.device): The device on which to run computations
+        loader (DataLoader): The DataLoader containing the training data
+        optimizer (torch.optim.Optimizer): the optimizer
+        criterion (torch.nn.Module): The loss function
+
+    Returns:
+        float: the average training loss (normalized, per sample)
+    """
+    model.train()
+    epoch_loss = 0
+    for batch in loader:
+        batch = batch.to(device)
+        optimizer.zero_grad()
+
+        mu, log_std = model.forward(batch)
+        z = model.reparametrize(mu, log_std)
+        y = model.decode(z)
+
+        y_true, y_true_idx = to_dense_batch(batch.y, batch.batch)
+        loss = criterion(mu, log_std, y, y_true)
+        loss.backward()
+
+        epoch_loss += loss.item()
+        optimizer.step()
+
+    return epoch_loss / len(loader)
+
+
+T_Output = TypeVar("T_Output")
+MetricFn = Callable[[torch.Tensor, torch.Tensor], Generic[T_Output]]
+
+
+def evaluate_model(
+    model: nn.Module, device: torch.device, loader: DataLoader, metric: MetricFn, average=True
+) -> T_Output:
     """Evaluate a model over the test data given a loss function.
 
     Args:
         model (nn.Module): The model to be trained
         device (torch.device): The device on which to run computations
         loader (DataLoader): The DataLoader containing the test data
-        criterion (torch.nn.Module): The loss function
+        metric (MetricFn[T_Output]): The metric to evaluate the model against
+        average (bool, optional): Averages over batches if True, sums otherwise. Defaults to False.
 
     Returns:
-        float: the average test loss (normalized, per sample)
+        T_Output: the result of the metric
     """
     model.eval()
     total_loss = 0
@@ -233,9 +298,13 @@ def evaluate_model(model: nn.Module, device: torch.device, loader: DataLoader, c
         batch = batch.to(device)
 
         with torch.no_grad():
-            out = model(batch)
-            loss = criterion(out, batch.y)
+            out = model.infer(batch)  # TODO Fix this infer mechanism at the dataloader / dataset level
+            y_true, y_true_idx = to_dense_batch(batch.y, batch.batch)
+            loss = metric(out, y_true)
 
         total_loss += loss
 
-    return total_loss / len(loader)
+    if average:
+        total_loss = total_loss / len(loader)
+
+    return total_loss

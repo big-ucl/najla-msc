@@ -278,10 +278,12 @@ def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
 
     app = Dash()
 
-    app.layout = html.Div([
-        dcc.Graph(id="graph-basic-2", figure=_fig, clear_on_unhover=True),
-        dcc.Tooltip(id="graph-tooltip"),
-    ])
+    app.layout = html.Div(
+        [
+            dcc.Graph(id="graph-basic-2", figure=_fig, clear_on_unhover=True),
+            dcc.Tooltip(id="graph-tooltip"),
+        ]
+    )
 
     @callback(
         Output("graph-tooltip", "show"),
@@ -333,11 +335,13 @@ def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
 def _default_axes(ax: Axes = None) -> Axes:
     return ax if ax is not None else plt.subplots(figsize=(10, 5))[1]
 
+
 def _default_positions(G: nx.Graph, weight_name: str) -> dict[str, tuple[float, float]]:
     G = G.copy()
     weights = [(u, v, 1 / d) for u, v, d in G.edges(data=weight_name)]
     nx.set_node_attributes(G, name="weight", values=weights)
     return nx.spring_layout(G, weight="weight", seed=42)
+
 
 class Graph(Protocol):
     """Protocol class emulating SyntheticGraph, as argument to `draw_synthetic_network`"""
@@ -434,10 +438,12 @@ def draw_synthetic_trip(schedules: Schedules, person_id: int, full=False, ax: Ax
     trips = schedules.trip_df.filter(pl.col("person_id") == person_id)
     edgelist = trips.select("from_loc_id", "to_loc_id").rows()
     node_colours = (
-        pl.concat([
-            trips.select("from_loc_id", "from_type").rename({"from_loc_id": "loc_id", "from_type": "type"}),
-            trips.select("to_loc_id", "to_type").rename({"to_loc_id": "loc_id", "to_type": "type"}),
-        ])
+        pl.concat(
+            [
+                trips.select("from_loc_id", "from_type").rename({"from_loc_id": "loc_id", "from_type": "type"}),
+                trips.select("to_loc_id", "to_type").rename({"to_loc_id": "loc_id", "to_type": "type"}),
+            ]
+        )
         .group_by("loc_id")
         .agg(pl.col("type").map_elements(_activities_to_colors, return_dtype=pl.String).first())
         .join(pl.DataFrame({"loc_id": list(G.nodes())}), on="loc_id", how="right")
@@ -545,9 +551,11 @@ def draw_prediction(graph: Graph, x: list, y_prob: list, full=False, labels=True
     nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax)
 
     if labels:
-        label_pos = {n: (x, y + 0.15) for n, (x, y) in pos.items()}
-        lab = {n: f"{y:.2f}" for n, y in zip(G.nodes(), y_prob)}
-        nx.draw_networkx_labels(G, label_pos, lab, font_color="red", font_size=10, ax=ax)
+        label_pos = {n: (x, y + 0.05) for n, (x, y) in pos.items()}
+        neg_label = {n: f"{y:.2f}" for n, y in zip(G.nodes(), y_prob) if y < 0.5}
+        pos_labels = {n: f"{y:.2f}" for n, y in zip(G.nodes(), y_prob) if y >= 0.5}
+        nx.draw_networkx_labels(G, label_pos, neg_label, font_color="red", font_size=10, ax=ax)
+        nx.draw_networkx_labels(G, label_pos, pos_labels, font_color="green", font_size=10, ax=ax)
 
     return ax
 
