@@ -223,7 +223,7 @@ class VAE(Protocol):
     def train(self):
         pass
 
-    def forward(self, batch) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, *args, **kwargs) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         pass
 
     def reparametrize(self, mu: torch.Tensor, log_std: torch.Tensor) -> torch.Tensor:
@@ -258,10 +258,7 @@ def train_vae_epoch(
         batch = batch.to(device)
         optimizer.zero_grad()
 
-        mu, log_std = model.forward(batch)
-        z = model.reparametrize(mu, log_std)
-        y = model.decode(z)
-
+        y, mu, log_std = model.forward(batch.x, batch)
         y_true, y_true_idx = to_dense_batch(batch.y, batch.batch)
         loss = criterion(mu, log_std, y, y_true)
         loss.backward()
@@ -277,7 +274,7 @@ MetricFn = Callable[[torch.Tensor, torch.Tensor], Generic[T_Output]]
 
 
 def evaluate_model(
-    model: nn.Module, device: torch.device, loader: DataLoader, metric: MetricFn, average=True
+    model: VAE, device: torch.device, loader: DataLoader, metric: MetricFn, average=True
 ) -> T_Output:
     """Evaluate a model over the test data given a loss function.
 
@@ -291,14 +288,14 @@ def evaluate_model(
     Returns:
         T_Output: the result of the metric
     """
-    model.eval()
+    model.train()
     total_loss = 0
 
     for batch in loader:
         batch = batch.to(device)
 
         with torch.no_grad():
-            out = model.infer(batch)  # TODO Fix this infer mechanism at the dataloader / dataset level
+            out, _, _ = model.forward(batch.x_infer, batch)
             y_true, y_true_idx = to_dense_batch(batch.y, batch.batch)
             loss = metric(out, y_true)
 

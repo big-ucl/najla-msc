@@ -8,18 +8,9 @@ from synthetic import SyntheticGenerator
 from torch_geometric.utils import to_dense_batch
 
 
-class AlwaysZero(nn.Module):
-    def infer(self, data):
-        return self.decode(data)
-
-    def decode(self, data):
-        y, _ = to_dense_batch(data.y, data.batch)
-        return torch.full_like(y, -torch.inf)
-
-
 class FiftyFifty(nn.Module):
-    def infer(self, data):
-        return self.decode(data)
+    def forward(self, x, data):
+        return self.decode(data), None, None
 
     def decode(self, data):
         y, _ = to_dense_batch(data.y, data.batch)
@@ -39,6 +30,32 @@ class NodeLabelVGAE(gnn.VGAE):
         return super().decode(z)
 
 
+class VAE(nn.Module):
+    def __init__(self, encoder: nn.Module, decoder: nn.Module):
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def forward(self, *args, **kwargs) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        mu, log_var = self.encode(*args, **kwargs)
+        z = self.reparameterize(mu, log_var)
+        y = self.decoder(z)
+        return y, mu, log_var
+
+    def encode(self, *args, **kwargs) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.encoder(*args, **kwargs)
+
+    @staticmethod
+    def reparameterize(mu, log_var) -> torch.Tensor:
+        std = torch.exp(0.5 * log_var)
+        epsilon = torch.randn_like(log_var)
+
+        return mu + epsilon * std
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        pass
+
+
 class GCNEncoder(nn.Module):
     def __init__(self, in_node_channels, in_graph_channels, hidden_channels, num_layers, latent_channels, dropout=0.2):
         super().__init__()
@@ -50,7 +67,7 @@ class GCNEncoder(nn.Module):
 
         self.gcn_shared = gnn.GCN(in_channels, hidden_channels, num_layers - 1, hidden_channels, dropout=dropout)
         self.mu = nn.Linear(hidden_channels, latent_channels)
-        self.log_std = nn.Linear(hidden_channels, latent_channels)
+        self.log_var = nn.Linear(hidden_channels, latent_channels)
 
     def forward(self, x, data):
         # Inject graph features into node features
@@ -65,9 +82,9 @@ class GCNEncoder(nn.Module):
         x = gnn.global_max_pool(x, data.batch)
 
         mu = self.mu(x)
-        log_std = self.log_std(x)
+        log_var = self.log_var(x)
 
-        return mu, log_std
+        return mu, log_var
 
 
 class MLPEncoder(nn.Module):
@@ -90,7 +107,7 @@ class MLPEncoder(nn.Module):
 
         self.mlp_shared = MLP(in_channels, hidden_channels, num_layers - 1, hidden_channels, dropout=dropout)
         self.mu = nn.Linear(hidden_channels, latent_channels)
-        self.log_std = nn.Linear(hidden_channels, latent_channels)
+        self.log_var = nn.Linear(hidden_channels, latent_channels)
 
     def forward(self, x, data):
         batched_x, _ = to_dense_batch(x, data.batch)
@@ -102,9 +119,9 @@ class MLPEncoder(nn.Module):
         x = F.relu(x)
 
         mu = self.mu(x)
-        log_std = self.log_std(x)
+        log_var = self.log_var(x)
 
-        return mu, log_std
+        return mu, log_var
 
 
 class MLPDecoder(nn.Module):

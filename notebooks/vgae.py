@@ -104,27 +104,15 @@ def _(mo):
 
 
 @app.cell
-def _(train_set):
-    from models import GCNEncoder
-
+def _():
     hidden_channels = 32
-    latent_channels = 6
-
-    gcn_encoder = GCNEncoder(
-        in_node_channels=train_set.num_features,
-        in_graph_channels=train_set.num_graph_features,
-        hidden_channels=hidden_channels,
-        num_layers=2,
-        latent_channels=latent_channels,
-    )
-
-    gcn_encoder
+    latent_channels = 2
     return hidden_channels, latent_channels
 
 
 @app.cell
 def _(hidden_channels, latent_channels, train_set):
-    from models import MLPEncoder
+    from models import MLPEncoder, MLPDecoder, VAE
 
     mlp_encoder = MLPEncoder(
         in_num_nodes=train_set[0].num_nodes,
@@ -135,14 +123,6 @@ def _(hidden_channels, latent_channels, train_set):
         latent_channels=latent_channels,
     )
 
-    mlp_encoder
-    return (mlp_encoder,)
-
-
-@app.cell
-def _(hidden_channels, latent_channels, train_set):
-    from models import MLPDecoder
-
     label_decoder = MLPDecoder(
         latent_channels=latent_channels,
         hidden_channels=hidden_channels,
@@ -151,17 +131,9 @@ def _(hidden_channels, latent_channels, train_set):
         out_classes=train_set.num_classes,
     )
 
-    label_decoder
-    return (label_decoder,)
-
-
-@app.cell
-def _(label_decoder, mlp_encoder):
-    from models import NodeLabelVGAE
-
-    vgae = NodeLabelVGAE(mlp_encoder, label_decoder)
-    vgae
-    return (vgae,)
+    vae = VAE(mlp_encoder, label_decoder)
+    vae
+    return (vae,)
 
 
 @app.cell(hide_code=True)
@@ -180,7 +152,7 @@ def _(train_set):
     data = train_set[0]
 
     batch, data
-    return (DataLoader,)
+    return DataLoader, batch
 
 
 @app.cell(hide_code=True)
@@ -204,13 +176,13 @@ def _():
 
 
 @app.cell
-def _(DataLoader, test_set, torch, train_set, val_set, vgae):
-    lr = 0.0001
-    n_epochs = 150
+def _(DataLoader, test_set, torch, train_set, vae, val_set):
+    lr = 0.001
+    n_epochs = 100
     batch_size = 32
-    kl_weight = 0.000001
+    kl_weight = 0.00
 
-    model = vgae
+    model = vae
     device = torch.device("cpu")
     train_loader = DataLoader(train_set, batch_size=batch_size)
     val_loader = DataLoader(val_set, batch_size=batch_size)
@@ -222,7 +194,6 @@ def _(DataLoader, test_set, torch, train_set, val_set, vgae):
         model,
         n_epochs,
         optimizer,
-        test_loader,
         train_loader,
         val_loader,
     )
@@ -293,7 +264,7 @@ def _(n_epochs, plt, train_losses, val_losses):
 
 @app.cell
 def _():
-    from models import AlwaysZero, FiftyFifty
+    from models import FiftyFifty
     return (FiftyFifty,)
 
 
@@ -314,7 +285,7 @@ def _(
     precision,
     recall,
     roc_auc,
-    test_loader,
+    train_loader,
     weighted_recon_loss,
 ):
     metrics = {
@@ -329,8 +300,8 @@ def _(
     padding = max(len(k) for k in metrics.keys())
 
     for _name, _metric in metrics.items():
-        _model_score = evaluate_model(model, device, test_loader, _metric)
-        _fifty_score = evaluate_model(FiftyFifty(), device, test_loader, _metric)
+        _model_score = evaluate_model(model, device, train_loader, _metric)
+        _fifty_score = evaluate_model(FiftyFifty(), device, train_loader, _metric)
         _fifty_pct_diff = (_fifty_score - _model_score) / _model_score
 
         print(f"{_name.rjust(padding)} : VGAE={_model_score:.4f} - Base={_fifty_score:.4f} (% diff={_fifty_pct_diff:.2%})")
@@ -338,14 +309,13 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _():
-    from torch_geometric.utils import to_dense_batch
-    import torch.nn.functional as F
-    return
+def _(mo):
+    dropdown = mo.ui.dropdown(options=["Train", "Val", "Test"], value="Train", allow_select_none=False, label="Dataset")
+    return (dropdown,)
 
 
 @app.cell(hide_code=True)
-def _(mo, test_set):
+def _(dropdown, mo, test_set, train_set, val_set):
     def create_prev_next_buttons(n_samples: int):
         get_prediction, set_prediction = mo.state(1)
 
@@ -363,16 +333,25 @@ def _(mo, test_set):
         return prev_button, next_button, get_prediction
 
 
-    n_test_samples = len(test_set)
+    _set = train_set if dropdown.value == "Train" else val_set if dropdown.value == "Val" else test_set
+    n_test_samples = len(_set)
     prev_btn, next_btn, get_prediction_idx = create_prev_next_buttons(n_test_samples)
     return get_prediction_idx, n_test_samples, next_btn, prev_btn
 
 
 @app.cell(hide_code=True)
-def _(get_prediction_idx, mo, n_test_samples, next_btn, plot_preds, prev_btn):
+def _(
+    dropdown,
+    get_prediction_idx,
+    mo,
+    n_test_samples,
+    next_btn,
+    plot_preds,
+    prev_btn,
+):
     mo.vstack(
         [
-            mo.md("Comparison of predictions between models and benchmarks: "),
+            mo.hstack([mo.md("Comparison of predictions between models and benchmarks: "), dropdown]),
             mo.hstack(
                 [
                     prev_btn,
@@ -418,11 +397,11 @@ def _(
         _d = test_set[i]
 
         _batch = next(iter(DataLoader([_d])))
-        _z = model.encode(_batch.x, _batch)
+        _logits, _mu, _log_var = model.forward(_batch.x, _batch)
+        _z = model.reparameterize(_mu, _log_var)
 
         print("Latents:", _z.squeeze().detach())
 
-        _logits = model.decode(_z).detach()
         _y_prob = torch.sigmoid(_logits).detach()
         _y_pred = (_y_prob > 0.5).float().detach()
         _y_true = _batch.y.detach()
@@ -439,13 +418,44 @@ def _(
         print_metrics(_logits, _y_true, "model")
         print_metrics(_baseline_logits, _y_true, "base ")
 
-        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(12, 6))
+        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(12, 5))
 
         plotting.draw_prediction(synth, _batch.x_labels.squeeze(), _y_true.squeeze(), ax=ax1)
         plotting.draw_prediction(synth, _batch.x_labels.squeeze(), _y_prob.squeeze(), ax=ax2)
 
         return fig
     return (plot_preds,)
+
+
+@app.cell(hide_code=True)
+def _(batch, model, plt, torch, train_loader):
+    def plot_latent_space():
+        zs = []
+        model.eval()
+
+        for _batch in train_loader:
+            with torch.no_grad():
+                mu, log_std = model.encode(batch.x, batch)
+                z = model.reparameterize(mu, log_std)
+
+            zs.append(z)
+
+        zs = torch.cat(zs)
+        print(zs.shape)
+        plt.figure(figsize=(8, 6))
+        plt.grid(True)
+        plt.scatter(zs[:, 0], zs[:, 1], alpha=0.7)
+        plt.title("First two dimensions of the VAE latent space")
+        plt.show()
+
+
+    plot_latent_space()
+    return
+
+
+@app.cell
+def _():
+    return
 
 
 if __name__ == "__main__":
