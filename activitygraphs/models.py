@@ -112,8 +112,7 @@ class MLPEncoder(nn.Module):
     def forward(self, x, data):
         batched_x, _ = to_dense_batch(x, data.batch)
         node_x = batched_x.flatten(start_dim=1)
-        graph_x = data.graph_x.unsqueeze(1)
-        combined_x = torch.cat([node_x, graph_x], dim=1)
+        combined_x = torch.cat([node_x, data.graph_x], dim=1)
 
         x = self.mlp_shared(combined_x)
         x = F.relu(x)

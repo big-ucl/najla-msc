@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from functools import cached_property
 from typing import Optional
 
@@ -68,8 +69,8 @@ class SyntheticGraph:
             ("H", "C"): 16,
         }
 
-        workplace_nodes = ["A", "B", "C"]
-        shopping_nodes = ["B", "C", "D", "E"]
+        workplace_nodes = np.array(["A", "B", "C"])
+        shopping_nodes = np.array(["B", "C", "D", "E"])
 
         return cls(edges, workplace_nodes, shopping_nodes)
 
@@ -219,28 +220,146 @@ class SyntheticSchedules:
         )
 
 
-class SyntheticGenerator:
-    """A class for generating synthetic populations and schedules on a SyntheticGraph"""
+class SyntheticGenerator(ABC):
+    AVAILABLE_SCHEDULES = np.array([
+        ["W", "-", "-"],
+        ["S1", "-", "-"],
+        ["S2", "-", "-"],
+        ["W", "S1", "-"],
+        ["W", "S2", "-"],
+        ["S1", "W", "-"],
+        ["S1", "S2", "-"],
+        ["S2", "W", "-"],
+        ["S2", "S1", "-"],
+        # ["W", "S1", "S2"],
+        ["W", "S2", "S1"],
+        ["S1", "W", "S2"],
+        ["S1", "S2", "W"],
+        ["S2", "W", "S1"],
+        # ["S2", "S1", "W"],
+    ])
 
-    AVAILABLE_SCHEDULES = np.array(
-        [
-            ["W", "-", "-"],
-            ["S1", "-", "-"],
-            ["S2", "-", "-"],
-            ["W", "S1", "-"],
-            ["W", "S2", "-"],
-            ["S1", "W", "-"],
-            ["S1", "S2", "-"],
-            ["S2", "W", "-"],
-            ["S2", "S1", "-"],
-            # ["W", "S1", "S2"],
-            ["W", "S2", "S1"],
-            ["S1", "W", "S2"],
-            ["S1", "S2", "W"],
-            ["S2", "W", "S1"],
-            # ["S2", "S1", "W"],
-        ]
-    )
+    def __init__(self, graph: SyntheticGraph, rng: np.random.Generator):
+        self._graph = graph
+        self._rng = rng if rng is not None else np.random.default_rng()
+
+        self._n_samples = None
+        self._person_df = None
+        self._person_choices_df = None
+        self._schedule_df = None
+
+    @property
+    def person_df(self) -> pl.DataFrame:
+        """Returns a polars DataFrame of the population and its characteristics"""
+        if self._person_df is None:
+            raise LookupError("The population has not yet been generated yet Please call `generate_population`.")
+
+        return self._person_df
+
+    @property
+    def person_choices_df(self) -> pl.DataFrame:
+        """Returns a polars DataFrame of the chosen locations for each person in the population
+
+        Raises:
+            LookupError: If the population has not been generated yet
+        """
+        if self._person_choices_df is None:
+            raise LookupError("The population has not been generated yet. Please call `generate_population`.")
+
+        return self._person_choices_df
+
+    @property
+    def n_samples(self) -> int:
+        """Returns the number of samples in the population
+
+        Raises:
+            LookupError: If the population has not been generated yet
+        """
+        if self._n_samples is None:
+            raise LookupError("The population has not been generated yet. Please call `generate_population`.")
+
+        return self._n_samples
+
+    @property
+    def schedule_df(self) -> pl.DataFrame:
+        """Returns a polars DataFrame of the schedules for each person in the population
+
+        Raises:
+            LookupError: If the schedules have not been generated yet
+        """
+        if self._schedule_df is None:
+            raise LookupError("The schedules have not been generated yet. Please call `generate_schedules`.")
+
+        return self._schedule_df
+
+    @abstractmethod
+    def generate_population(self, n_samples: int):
+        """Generates a population that lives on the graph, with a home, a workplace, and two shopping destinations.
+
+        Args:
+            n_samples (int): the number of samples (people) to generate.
+        """
+        pass
+
+    @abstractmethod
+    def generate_schedules(self):
+        """Generates schedules for the population.
+
+        Raises:
+            LookupError: if the population has not been generated yet
+        """
+        pass
+
+    def build(self) -> SyntheticSchedules:
+        return SyntheticSchedules(
+            self.n_samples,
+            self._graph,
+            self.person_df,
+            self.person_choices_df,
+            self.schedule_df,
+        )
+
+    def _set_person_choices(self, homes, workplaces, home_shopping, work_shopping):
+        self._person_choices_df = pl.concat([
+            pl.DataFrame({
+                "type": "H",
+                "loc_id": homes,
+            }).with_row_index("person_id"),
+            pl.DataFrame({
+                "type": "W",
+                "loc_id": workplaces,
+            }).with_row_index("person_id"),
+            pl.DataFrame({
+                "type": "S1",
+                "loc_id": home_shopping,
+            }).with_row_index("person_id"),
+            pl.DataFrame({
+                "type": "S2",
+                "loc_id": work_shopping,
+            }).with_row_index("person_id"),
+        ]).sort(by="person_id")
+
+    def _set_schedules(self, chosen_schedules):
+        schedules = self.AVAILABLE_SCHEDULES[chosen_schedules]
+        home_col = np.repeat("H", self.n_samples).reshape(self.n_samples, 1)
+        schedules = np.hstack([home_col, schedules, home_col])
+
+        self._schedule_df = (
+            pl.DataFrame(schedules, schema=["1", "2", "3", "4", "5"])
+            .with_row_index("person_id")
+            .unpivot(index="person_id", variable_name="numpy_seq", value_name="type")
+            .sort(by=["person_id", "numpy_seq"])
+            .filter(pl.col("type") != "-")
+            .with_columns(pl.int_range(pl.len()).over("person_id", order_by="numpy_seq").alias("sequence_num"))
+            .drop("numpy_seq")
+            .join(self.person_choices_df, on=["person_id", "type"])
+            .select("person_id", "sequence_num", "type", "loc_id")
+            .sort(by=["person_id", "sequence_num"])
+        )
+
+
+class ProbabilisticSyntheticGenerator(SyntheticGenerator):
+    """A class for generating synthetic populations and schedules on a SyntheticGraph"""
 
     def __init__(
         self,
@@ -265,61 +384,12 @@ class SyntheticGenerator:
             income_sigma (float, optional):
                 the sigma parameter of the lognormal income distribution. Defaults to 0.8.
         """
-        self._graph = graph
-        self._rng = rng if rng is not None else np.random.default_rng()
+        super().__init__(graph, rng)
+
         self._distance_scale = distance_scale
         self._income_mu = income_mu
         self._income_sigma = income_sigma
         self._income_scale = 10
-
-        self._n_samples = None
-        self._person_df = None
-        self._person_choices_df = None
-        self._schedule_df = None
-
-    @property
-    def person_df(self):
-        """Returns a polars DataFrame of the population and its characteristics"""
-        if self._person_df is None:
-            raise LookupError("The population has not yet been generated yet Please call `generate_population`.")
-
-        return self._person_df
-
-    @property
-    def person_choices_df(self):
-        """Returns a polars DataFrame of the chosen locations for each person in the population
-
-        Raises:
-            LookupError: If the population has not been generated yet
-        """
-        if self._person_choices_df is None:
-            raise LookupError("The population has not been generated yet. Please call `generate_population`.")
-
-        return self._person_choices_df
-
-    @property
-    def n_samples(self):
-        """Returns the number of samples in the population
-
-        Raises:
-            LookupError: If the population has not been generated yet
-        """
-        if self._n_samples is None:
-            raise LookupError("The population has not been generated yet. Please call `generate_population`.")
-
-        return self._n_samples
-
-    @property
-    def schedule_df(self):
-        """Returns a polars DataFrame of the schedules for each person in the population
-
-        Raises:
-            LookupError: If the schedules have not been generated yet
-        """
-        if self._schedule_df is None:
-            raise LookupError("The schedules have not been generated yet. Please call `generate_schedules`.")
-
-        return self._schedule_df
 
     def _choice_with_incomes(
         self,
@@ -403,40 +473,11 @@ class SyntheticGenerator:
 
         self._n_samples = n_samples
 
-        self._person_df = pl.DataFrame(
-            {
-                "income": incomes,
-            }
-        ).with_row_index("person_id")
+        self._person_df = pl.DataFrame({
+            "income": incomes,
+        }).with_row_index("person_id")
 
-        self._person_choices_df = pl.concat(
-            [
-                pl.DataFrame(
-                    {
-                        "type": "H",
-                        "loc_id": homes,
-                    }
-                ).with_row_index("person_id"),
-                pl.DataFrame(
-                    {
-                        "type": "W",
-                        "loc_id": workplaces,
-                    }
-                ).with_row_index("person_id"),
-                pl.DataFrame(
-                    {
-                        "type": "S1",
-                        "loc_id": home_shopping,
-                    }
-                ).with_row_index("person_id"),
-                pl.DataFrame(
-                    {
-                        "type": "S2",
-                        "loc_id": work_shopping,
-                    }
-                ).with_row_index("person_id"),
-            ]
-        ).sort(by="person_id")
+        self._set_person_choices(homes, workplaces, home_shopping, work_shopping)
 
     def generate_schedules(self):
         """Generates schedules for the population.
@@ -444,36 +485,58 @@ class SyntheticGenerator:
         Raises:
             LookupError: if the population has not been generated yet
         """
-        n_samples = self.n_samples
+        chosen_schedules = self._rng.integers(low=0, high=len(self.AVAILABLE_SCHEDULES), size=self.n_samples)
+        self._set_schedules(chosen_schedules)
 
-        available_schedules = self.AVAILABLE_SCHEDULES
 
-        chosen_schedules = self._rng.integers(low=0, high=len(available_schedules), size=n_samples)
-        schedules = available_schedules[chosen_schedules]
-        home_col = np.repeat("H", n_samples).reshape(n_samples, 1)
-        schedules = np.hstack([home_col, schedules, home_col])
+class DeterministicSyntheticGenerator(SyntheticGenerator):
+    def __init__(
+        self, graph: SyntheticGraph, rng: np.random.Generator = None, p_is_rich: bool = 0.3, p_shop_first: bool = 0.2
+    ):
+        super().__init__(graph, rng)
 
-        self._schedule_df = (
-            pl.DataFrame(schedules, schema=["1", "2", "3", "4", "5"])
-            .with_row_index("person_id")
-            .unpivot(index="person_id", variable_name="numpy_seq", value_name="type")
-            .sort(by=["person_id", "numpy_seq"])
-            .filter(pl.col("type") != "-")
-            .with_columns(pl.int_range(pl.len()).over("person_id", order_by="numpy_seq").alias("sequence_num"))
-            .drop("numpy_seq")
-            .join(self.person_choices_df, on=["person_id", "type"])
-            .select("person_id", "sequence_num", "type", "loc_id")
-            .sort(by=["person_id", "sequence_num"])
-        )
+        self.p_is_rich = p_is_rich
+        self.p_shop_first = p_shop_first
 
-    def build(self) -> SyntheticSchedules:
-        return SyntheticSchedules(
-            self.n_samples,
-            self._graph,
-            self.person_df,
-            self.person_choices_df,
-            self.schedule_df,
-        )
+    def generate_population(self, n_samples: int):
+        p_is_rich = self.p_is_rich
+        p_shop_first = self.p_shop_first
+        n_schedules = len(self.AVAILABLE_SCHEDULES)
+
+        is_rich = self._rng.choice([True, False], size=n_samples, p=[p_is_rich, 1 - p_is_rich])
+        shop_first = self._rng.choice([True, False], size=n_samples, p=[p_shop_first, 1 - p_shop_first])
+        chosen_schedule = self._rng.integers(low=0, high=n_schedules, size=n_samples)
+
+        homes = np.where(is_rich, self._graph.home_nodes[-1], self._graph.home_nodes[-2])
+        workplaces = np.where(is_rich, self._graph.workplace_nodes[0], self._graph.workplace_nodes[-1])
+        home_shopping = np.where(shop_first, self._graph.shopping_nodes[-1], self._graph.shopping_nodes[-2])
+        work_shopping = np.where(shop_first, self._graph.shopping_nodes[0], self._graph.shopping_nodes[1])
+
+        print(self._graph.home_nodes[-1], self._graph.home_nodes[-2])
+        print(self._graph.workplace_nodes[0], self._graph.workplace_nodes[-1])
+        print(self._graph.shopping_nodes[-1], self._graph.shopping_nodes[-2])
+        print(self._graph.shopping_nodes[0], self._graph.shopping_nodes[1])
+
+        self._n_samples = n_samples
+        self._person_df = pl.DataFrame({
+            "is_rich": is_rich,
+            "shop_first": shop_first,
+            "chosen_schedule": chosen_schedule,
+        }).with_row_index("person_id")
+        self._set_person_choices(homes, workplaces, home_shopping, work_shopping)
+
+    def generate_schedules(self):
+        chosen_schedules = self.person_df["chosen_schedule"].to_numpy()
+        self._set_schedules(chosen_schedules)
+
+
+def make_generator(kind: str = "probabilistic", *generator_args, **generator_kwargs) -> SyntheticGenerator:
+    if kind == "probabilistic":
+        return ProbabilisticSyntheticGenerator(*generator_args, **generator_kwargs)
+    elif kind == "deterministic":
+        return DeterministicSyntheticGenerator(*generator_args, **generator_kwargs)
+
+    raise ValueError(f"Unknown generator kind: {kind}. Must be 'probabilistic' or 'deterministic'")
 
 
 def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: np.ndarray) -> pl.DataFrame:
@@ -509,14 +572,12 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
         exclude_chosen=True,
     )
 
-    person_choices = np.stack(
-        [
-            home_choice,
-            work_choice,
-            closest_home_shopping,
-            closest_work_shopping,
-        ]
-    ).T
+    person_choices = np.stack([
+        home_choice,
+        work_choice,
+        closest_home_shopping,
+        closest_work_shopping,
+    ]).T
 
     choices_repeated = np.repeat(person_choices, len(available_schedules), axis=0)
     home_choice_repeated = choices_repeated[:, 0].reshape(-1, 1)

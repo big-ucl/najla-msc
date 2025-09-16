@@ -51,19 +51,30 @@ def _():
 
 
 @app.cell
+def _(synth):
+    synth.shopping_nodes
+    return
+
+
+@app.cell
 def _(plotting, synth):
     plotting.draw_synthetic_network(synth)
     return
 
 
 @app.cell
+def _():
+    return
+
+
+@app.cell
 def _(np, synth):
-    from synthetic import SyntheticGenerator
+    from synthetic import make_generator
 
     n_samples = 1000
 
     _rng = np.random.default_rng(seed=42)
-    _generator = SyntheticGenerator(synth, _rng)
+    _generator = make_generator("deterministic", synth, _rng)
     _generator.generate_population(n_samples)
     _generator.generate_schedules()
 
@@ -106,7 +117,7 @@ def _(mo):
 @app.cell
 def _():
     hidden_channels = 32
-    latent_channels = 2
+    latent_channels = 16
     return hidden_channels, latent_channels
 
 
@@ -333,10 +344,10 @@ def _(dropdown, mo, test_set, train_set, val_set):
         return prev_button, next_button, get_prediction
 
 
-    _set = train_set if dropdown.value == "Train" else val_set if dropdown.value == "Val" else test_set
-    n_test_samples = len(_set)
+    selected_set = train_set if dropdown.value == "Train" else val_set if dropdown.value == "Val" else test_set
+    n_test_samples = len(selected_set)
     prev_btn, next_btn, get_prediction_idx = create_prev_next_buttons(n_test_samples)
-    return get_prediction_idx, n_test_samples, next_btn, prev_btn
+    return get_prediction_idx, n_test_samples, next_btn, prev_btn, selected_set
 
 
 @app.cell(hide_code=True)
@@ -348,21 +359,20 @@ def _(
     next_btn,
     plot_preds,
     prev_btn,
+    selected_set,
 ):
-    mo.vstack(
-        [
-            mo.hstack([mo.md("Comparison of predictions between models and benchmarks: "), dropdown]),
-            mo.hstack(
-                [
-                    prev_btn,
-                    mo.md(f"Sample #{get_prediction_idx()}/{n_test_samples - 1}"),
-                    next_btn,
-                ],
-                align="center",
-            ),
-            plot_preds(get_prediction_idx()),
-        ]
-    )
+    mo.vstack([
+        mo.hstack([mo.md("Comparison of predictions between models and benchmarks: "), dropdown]),
+        mo.hstack(
+            [
+                prev_btn,
+                mo.md(f"Sample #{get_prediction_idx()}/{n_test_samples - 1}"),
+                next_btn,
+            ],
+            align="center",
+        ),
+        plot_preds(selected_set, get_prediction_idx()),
+    ])
     return
 
 
@@ -379,7 +389,6 @@ def _(
     recall,
     roc_auc,
     synth,
-    test_set,
     torch,
 ):
     def print_metrics(_logits, _y_true, prefix):
@@ -392,9 +401,9 @@ def _(
         print(f"({prefix}) ROC AUC={roc:.4f}, AP={ap:.4f}, Acc={acc:.4f}, Prec={prec:.4f}, Rec={rec:.4f}")
 
 
-    def plot_preds(i):
+    def plot_preds(selected_set, i):
         model.eval()
-        _d = test_set[i]
+        _d = selected_set[i]
 
         _batch = next(iter(DataLoader([_d])))
         _logits, _mu, _log_var = model.forward(_batch.x, _batch)
@@ -407,6 +416,9 @@ def _(
         _y_true = _batch.y.detach()
 
         _baseline_logits = FiftyFifty().decode(_batch)
+
+        attrs = selected_set[i].graph_x[0]
+        print(f"Attributes: is_rich={attrs[0]}, shop_first={attrs[1]}, chosen_schedule={attrs[2]}")
 
         print("Logits:", _logits.squeeze())
         print()

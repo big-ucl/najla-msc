@@ -42,7 +42,7 @@ class BasicLocationsDataset(InMemoryDataset):
         self,
         data: Data,
         person_ids: torch.Tensor,
-        incomes: torch.Tensor,
+        person_features: torch.Tensor,
         home_node_labels: torch.Tensor,
         node_labels: torch.Tensor,
     ):
@@ -50,7 +50,7 @@ class BasicLocationsDataset(InMemoryDataset):
         Args:
             data (Data): The underlying graph without the schedules with V nodes
             person_ids (torch.Tensor): A tensor of all person_ids in the dataset, shape=(N, 1)
-            incomes (torch.Tensor): A tensor of income by person in the dataset, shape=(N, 1)
+            incomes (torch.Tensor): A tensor of income by person in the dataset, shape=(N, F)
             home_node_labels (torch.Tensor):
                 A tensor of one-hot encoded node labels, with only home visits labeled, shape=(N, V, L)
             node_labels (torch.Tensor):
@@ -70,7 +70,7 @@ class BasicLocationsDataset(InMemoryDataset):
         self._edge_index = data.edge_index
         self._edge_attr = data.edge_attr
         self._person_ids = check_shape(person_ids, (n_samples, 1))
-        self._graph_x = check_shape(incomes, (n_samples, -1))
+        self._graph_x = check_shape(person_features, (n_samples, -1))
         self._x_features = check_shape(data.x, (n_nodes, n_features))
         self._x_labels = check_shape(home_node_labels, (n_samples, n_nodes, self._n_labels))
         self._y_labels = check_shape(node_labels, (n_samples, n_nodes, self._n_labels))
@@ -106,7 +106,7 @@ class BasicLocationsDataset(InMemoryDataset):
             edge_index=self._edge_index,
             edge_attr=self._edge_attr,
             y=self._y_labels[idx],
-            graph_x=self._graph_x[idx],
+            graph_x=self._graph_x[[idx]],
             x_features=self._x_features,
             x_labels=self._x_labels[idx],
             person_id=self._person_ids[idx],
@@ -120,7 +120,13 @@ def _encode_node_visits(schedules: Schedules, only_encode_labels: list[str] | No
         else schedules.schedule_df.filter(pl.col("type").is_in(only_encode_labels))
     )
 
-    dummies = schedules_df.to_dummies("loc_id")
+    nodes = schedules.graph.nodes
+    included_nodes = schedules_df["loc_id"].unique()
+
+    dummy_columns = [f"loc_id_{node}" for node in nodes]
+    missing_columns = [pl.lit(0).alias(f"loc_id_{node}") for node in nodes if node not in included_nodes]
+
+    dummies = schedules_df.to_dummies("loc_id").with_columns(*missing_columns).select("person_id", *dummy_columns)
     node_labels_df = dummies.group_by("person_id").agg(cs.starts_with("loc_id").bitwise_or()).sort(by="person_id")
 
     # Convert to PyTorch tensors
@@ -155,8 +161,12 @@ def _encode_node_labels(schedules: Schedules, only_encode_labels: list[str] | No
     return node_labels
 
 
-def convert_to_pyg_dataset(schedules: Schedules, label_reason_of_visit: bool = True) -> Dataset:
+def convert_to_pyg_dataset(
+    schedules: Schedules, label_reason_of_visit: bool = True, categorical_person_features: list[str] = None
+) -> Dataset:
     """Converts a population schedule object into a PyG Dataset"""
+
+    categorical_person_features = [] if categorical_person_features is None else categorical_person_features
 
     pyg_graph = from_networkx(
         schedules.graph.G,
@@ -164,15 +174,17 @@ def convert_to_pyg_dataset(schedules: Schedules, label_reason_of_visit: bool = T
         group_edge_attrs=[schedules.graph.WEIGHT_NAME],
     )
 
-    person_ids = schedules.person_df.sort(by="person_id")["person_id"].to_torch().unsqueeze(1)
-    incomes = schedules.person_df.sort(by="person_id")["income"].to_torch().unsqueeze(1)
+    person_df = schedules.person_df.sort(by="person_id")
+    person_ids = person_df["person_id"].to_torch().unsqueeze(1)
+    person_features_df = person_df.drop("person_id").to_dummies(categorical_person_features, drop_first=True)
+    person_features = person_features_df.to_torch()
 
     encoder = _encode_node_labels if label_reason_of_visit else _encode_node_visits
     home_node_labels = encoder(schedules, only_encode_labels=["H"])
     node_labels = encoder(schedules)
 
     return BasicLocationsDataset(
-        pyg_graph, person_ids.float(), incomes.float(), home_node_labels.float(), node_labels.float()
+        pyg_graph, person_ids.float(), person_features.float(), home_node_labels.float(), node_labels.float()
     )
 
 

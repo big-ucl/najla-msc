@@ -51,3 +51,7 @@ enabled = true               # Show diagnostics in the editor
 
 [tool.ruff]
 line-length = 120
+
+[tool.ruff.format]
+# Enable preview style formatting.
+preview = true
