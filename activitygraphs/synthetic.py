@@ -512,11 +512,6 @@ class DeterministicSyntheticGenerator(SyntheticGenerator):
         home_shopping = np.where(shop_first, self._graph.shopping_nodes[-1], self._graph.shopping_nodes[-2])
         work_shopping = np.where(shop_first, self._graph.shopping_nodes[0], self._graph.shopping_nodes[1])
 
-        print(self._graph.home_nodes[-1], self._graph.home_nodes[-2])
-        print(self._graph.workplace_nodes[0], self._graph.workplace_nodes[-1])
-        print(self._graph.shopping_nodes[-1], self._graph.shopping_nodes[-2])
-        print(self._graph.shopping_nodes[0], self._graph.shopping_nodes[1])
-
         self._n_samples = n_samples
         self._person_df = pl.DataFrame({
             "is_rich": is_rich,

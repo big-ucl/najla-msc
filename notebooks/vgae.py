@@ -13,20 +13,22 @@ def _(mo):
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
 @app.cell
 def _():
     import plotting
+
     return (plotting,)
 
 
 @app.cell
 def _():
-    import numpy as np
-    import polars as pl
     import matplotlib.pyplot as plt
+    import numpy as np
+
     return np, plt
 
 
@@ -51,19 +53,8 @@ def _():
 
 
 @app.cell
-def _(synth):
-    synth.shopping_nodes
-    return
-
-
-@app.cell
 def _(plotting, synth):
     plotting.draw_synthetic_network(synth)
-    return
-
-
-@app.cell
-def _():
     return
 
 
@@ -71,7 +62,7 @@ def _():
 def _(np, synth):
     from synthetic import make_generator
 
-    n_samples = 1000
+    n_samples = 10000
 
     _rng = np.random.default_rng(seed=42)
     _generator = make_generator("deterministic", synth, _rng)
@@ -93,7 +84,10 @@ def _(mo):
 def _(schedules):
     from datasets import convert_to_pyg_dataset
 
-    dataset = convert_to_pyg_dataset(schedules, label_reason_of_visit=False)
+    dataset = convert_to_pyg_dataset(
+        schedules, label_reason_of_visit=False, categorical_person_features=["chosen_schedule"]
+    )
+
     dataset
     return (dataset,)
 
@@ -117,13 +111,13 @@ def _(mo):
 @app.cell
 def _():
     hidden_channels = 32
-    latent_channels = 16
+    latent_channels = 4
     return hidden_channels, latent_channels
 
 
 @app.cell
 def _(hidden_channels, latent_channels, train_set):
-    from models import MLPEncoder, MLPDecoder, VAE
+    from models import VAE, MLPDecoder, MLPEncoder
 
     mlp_encoder = MLPEncoder(
         in_num_nodes=train_set[0].num_nodes,
@@ -175,6 +169,7 @@ def _(mo):
 @app.cell
 def _():
     import torch
+
     return (torch,)
 
 
@@ -189,9 +184,9 @@ def _():
 @app.cell
 def _(DataLoader, test_set, torch, train_set, vae, val_set):
     lr = 0.001
-    n_epochs = 100
+    n_epochs = 30
     batch_size = 32
-    kl_weight = 0.00
+    kl_weight = 0.0001
 
     model = vae
     device = torch.device("cpu")
@@ -212,8 +207,9 @@ def _(DataLoader, test_set, torch, train_set, vae, val_set):
 
 @app.cell
 def _():
-    from losses import make_weighted_recon_loss, make_elbo_loss
-    from experiment import train_vae_epoch, evaluate_model
+    from experiment import evaluate_model, train_vae_epoch
+    from losses import make_elbo_loss, make_weighted_recon_loss
+
     return (
         evaluate_model,
         make_elbo_loss,
@@ -255,7 +251,7 @@ def _(
         # if early_stop.check(val_loss):
         #    pass # break
 
-        if epoch % 10 == 0:
+        if epoch % 5 == 0:
             print(f"Epoch {epoch}: train_elbo={train_loss}, val_recon={val_loss}")
     return train_losses, val_losses, weighted_recon_loss
 
@@ -276,12 +272,14 @@ def _(n_epochs, plt, train_losses, val_losses):
 @app.cell
 def _():
     from models import FiftyFifty
+
     return (FiftyFifty,)
 
 
 @app.cell
 def _():
-    from losses import roc_auc, average_precision, accuracy, recall, precision
+    from losses import accuracy, average_precision, precision, recall, roc_auc
+
     return accuracy, average_precision, precision, recall, roc_auc
 
 
@@ -315,7 +313,9 @@ def _(
         _fifty_score = evaluate_model(FiftyFifty(), device, train_loader, _metric)
         _fifty_pct_diff = (_fifty_score - _model_score) / _model_score
 
-        print(f"{_name.rjust(padding)} : VGAE={_model_score:.4f} - Base={_fifty_score:.4f} (% diff={_fifty_pct_diff:.2%})")
+        print(
+            f"{_name.rjust(padding)} : VGAE={_model_score:.4f} - Base={_fifty_score:.4f} (% diff={_fifty_pct_diff:.2%})"
+        )
     return
 
 
@@ -328,7 +328,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(dropdown, mo, test_set, train_set, val_set):
     def create_prev_next_buttons(n_samples: int):
-        get_prediction, set_prediction = mo.state(1)
+        get_prediction, set_prediction = mo.state(0)
 
         def _decrease(_):
             if get_prediction() > 0:
@@ -342,7 +342,6 @@ def _(dropdown, mo, test_set, train_set, val_set):
         next_button = mo.ui.button(on_click=_increase, label="Next")
 
         return prev_button, next_button, get_prediction
-
 
     selected_set = train_set if dropdown.value == "Train" else val_set if dropdown.value == "Val" else test_set
     n_test_samples = len(selected_set)
@@ -400,7 +399,6 @@ def _(
 
         print(f"({prefix}) ROC AUC={roc:.4f}, AP={ap:.4f}, Acc={acc:.4f}, Prec={prec:.4f}, Rec={rec:.4f}")
 
-
     def plot_preds(selected_set, i):
         model.eval()
         _d = selected_set[i]
@@ -436,6 +434,7 @@ def _(
         plotting.draw_prediction(synth, _batch.x_labels.squeeze(), _y_prob.squeeze(), ax=ax2)
 
         return fig
+
     return (plot_preds,)
 
 
@@ -460,13 +459,7 @@ def _(batch, model, plt, torch, train_loader):
         plt.title("First two dimensions of the VAE latent space")
         plt.show()
 
-
     plot_latent_space()
-    return
-
-
-@app.cell
-def _():
     return
 
 

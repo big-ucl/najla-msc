@@ -33,14 +33,12 @@ class Experiment:
 class Results:
     """Represents the results of training / testing an ML model on an `Experiment`."""
 
-    LOSSES_SCHEMA = pl.Schema(
-        {
-            "epoch": pl.Int64,
-            "loss": pl.Float64,
-            "type": pl.String,
-            "name": pl.String,
-        }
-    )
+    LOSSES_SCHEMA = pl.Schema({
+        "epoch": pl.Int64,
+        "loss": pl.Float64,
+        "type": pl.String,
+        "name": pl.String,
+    })
 
     def __init__(self, name: str, losses: pl.DataFrame):
         """
@@ -151,13 +149,11 @@ def run_experiment(
 
     # Build results DataFrame
     epochs = list(range(1, exp.n_epochs + 1))
-    losses = pl.concat(
-        [
-            pl.DataFrame({"epoch": epochs, "loss": train_losses}).with_columns(pl.lit("train").alias("type")),
-            pl.DataFrame({"epoch": epochs, "loss": val_losses}).with_columns(pl.lit("val").alias("type")),
-            pl.DataFrame({"epoch": exp.n_epochs, "loss": test_loss}).with_columns(pl.lit("test").alias("type")),
-        ]
-    ).with_columns(pl.lit(name).alias("name"))
+    losses = pl.concat([
+        pl.DataFrame({"epoch": epochs, "loss": train_losses}).with_columns(pl.lit("train").alias("type")),
+        pl.DataFrame({"epoch": epochs, "loss": val_losses}).with_columns(pl.lit("val").alias("type")),
+        pl.DataFrame({"epoch": exp.n_epochs, "loss": test_loss}).with_columns(pl.lit("test").alias("type")),
+    ]).with_columns(pl.lit(name).alias("name"))
 
     return Results(name, losses)
 
@@ -274,7 +270,7 @@ MetricFn = Callable[[torch.Tensor, torch.Tensor], Generic[T_Output]]
 
 
 def evaluate_model(
-    model: VAE, device: torch.device, loader: DataLoader, metric: MetricFn, average=True
+    model: VAE, device: torch.device, loader: DataLoader, metric: MetricFn, average=True, infer=False
 ) -> T_Output:
     """Evaluate a model over the test data given a loss function.
 
@@ -295,7 +291,9 @@ def evaluate_model(
         batch = batch.to(device)
 
         with torch.no_grad():
-            out, _, _ = model.forward(batch.x_infer, batch)
+            x = batch.x_infer if infer else batch.x
+            out, _, _ = model.forward(x, batch)
+
             y_true, y_true_idx = to_dense_batch(batch.y, batch.batch)
             loss = metric(out, y_true)
 
