@@ -7,6 +7,11 @@ from omegaconf import OmegaConf
 
 @dataclass
 class RawFiles:
+    raw_trips: str
+
+
+@dataclass
+class RawGenevaTPGFiles(RawFiles):
     pass
 
 

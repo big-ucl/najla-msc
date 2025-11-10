@@ -1,0 +1,13 @@
+# @package data
+name: GenevaTPG
+
+files:
+  raw_trips: tpg_od.parquet
+
+paths:
+  processed: data/processed/${..name}
+  raw: data/raw/${..name}
+  act_dataset: ${..paths.processed}/act_dataset
+  graphs: ${..paths.processed}/graphs
+  metrics: ${..paths.processed}/metrics
+  

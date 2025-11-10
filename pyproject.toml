@@ -32,7 +32,7 @@ dependencies = [
 ]
 
 [tool.marimo.runtime]
-pythonpath = ["activitygraphs"]
+pythonpath = ["."]
 lsp = true
 output_max_bytes = 30_000_000
 

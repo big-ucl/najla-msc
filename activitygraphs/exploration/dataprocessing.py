@@ -5,10 +5,11 @@ from typing import Self
 import numpy as np
 import polars as pl
 from pyproj import Transformer
-from utils import check_schema
+
+from activitygraphs.utils import check_schema
 
 
-def convert_excel_to_parquet(data_path: Path, *files: list[Path]) -> list[Path]:
+def convert_excel_to_parquet(data_path: Path, *files: Path) -> list[Path]:
     new_files = []
 
     for file in files:
@@ -29,9 +30,9 @@ def read_from_parquet(path: Path, schema: dict = None) -> pl.DataFrame:
 
 
 def bng_to_lat_long(df: pl.DataFrame, eastings_col: str, northings_col: str) -> tuple[np.ndarray, np.ndarray]:
-    BNG_EPSG_CODE = 27700
-    LAT_LONG_EPSG_CODE = 4326
-    transformer = Transformer.from_crs(BNG_EPSG_CODE, LAT_LONG_EPSG_CODE)
+    bng_epsg_code = 27700
+    lat_long_epsg_code = 4326
+    transformer = Transformer.from_crs(bng_epsg_code, lat_long_epsg_code)
 
     return transformer.transform(df[eastings_col], df[northings_col])
 
@@ -50,12 +51,12 @@ class _PolarsEnum(IntFlag):
         return cls(member).name
 
     @classmethod
-    def _check_description(cls, desciption: dict[Self, str]) -> dict[Self, str]:
-        mismatch = set(cls) ^ set(desciption.keys())
+    def _check_description(cls, description: dict[Self, str]) -> dict[Self, str]:
+        mismatch = set(cls) ^ set(description.keys())
         if mismatch:
-            raise KeyError(f"Missing keys in desciption: {mismatch}")
+            raise KeyError(f"Missing keys in description: {mismatch}")
 
-        return desciption
+        return description
 
 
 class Purpose(_PolarsEnum):
@@ -111,7 +112,7 @@ class Purpose(_PolarsEnum):
             cls.SHOPPING_OTHER: "Shopping - Other",
         }
 
-        return cls._check_description(descriptions[member])
+        return cls._check_description(descriptions)[member]
 
 
 class LandUse(_PolarsEnum):
@@ -188,7 +189,7 @@ class Mode(_PolarsEnum):
             cls.OTHER: "Other",
         }
 
-        return cls._check_description(descriptions[member])
+        return cls._check_description(descriptions)[member]
 
 
 HH_PERSON_SCHEMA = pl.Schema({
