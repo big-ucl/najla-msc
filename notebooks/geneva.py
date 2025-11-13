@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.17.6"
+__generated_with = "0.17.7"
 app = marimo.App(width="medium")
 
 
@@ -209,6 +209,16 @@ def _(cfg):
     r = _read_raw_data(cfg.data)
     n = _handle_null_values(r)
     n.filter(mode="mode_bateau_navette")
+    return (n,)
+
+
+@app.cell
+def _(n, pl):
+    import altair as alt
+    alt.data_transformers.enable("vegafusion")
+
+
+    n.group_by("id_utilisateur").agg(pl.len())["len"].plot.hist()
     return
 
 
@@ -236,7 +246,58 @@ def _(df, pl):
 
 
 @app.cell
+def _(mo):
+    mo.md(r"""
+    # GTFS to NetworkX construction
+    """)
+    return
+
+
+@app.cell
 def _():
+    import partridge as ptg
+    from pathlib import Path
+
+    # Pick a random date in 2022
+
+    path = Path("data/raw/gtfs/gtfs_2022_switzerland")
+    boundaries = Path("data/raw/boundaries/swissboundaries3d_2025-04_2056_5728.shp/swissBOUNDARIES3D_1_5_TLM_KANTONSGEBIET.shp")
+    return boundaries, path
+
+
+@app.cell
+def _(path, pl):
+    stops = pl.read_csv(path / "stops.txt", schema={
+        "stop_id": pl.String,
+        "stop_name": pl.String,
+        "stop_lat": pl.Float32,
+        "stop_lon": pl.Float32,
+        "location_type": pl.Categorical,
+        "parent_station": pl.String,
+    })
+    return (stops,)
+
+
+@app.cell
+def _(boundaries):
+    import geopandas as gpd
+
+    geneva = gpd.read_file(boundaries).to_crs("EPSG:4326").query("NAME == 'Genève'").iloc[0]["geometry"]
+    geneva
+    return geneva, gpd
+
+
+@app.cell
+def _(geneva, gpd, stops):
+    stops_gdf = gpd.GeoDataFrame(stops.to_pandas(), geometry=gpd.points_from_xy(stops["stop_lon"], stops["stop_lat"], crs="EPSG:4326"))
+
+    stops_gdf[stops_gdf.intersects(geneva)].explore()
+    return
+
+
+@app.cell
+def _(stops):
+    stops
     return
 
 
