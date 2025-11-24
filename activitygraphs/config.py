@@ -24,7 +24,7 @@ class RawLTDSFiles(RawFiles):
 
 
 @dataclass
-class Paths:
+class DataPaths:
     processed: Path
     raw: Path
     act_dataset: Path
@@ -36,12 +36,19 @@ class Paths:
 class DataConfig:
     name: str
     files: RawFiles
-    paths: Paths
+    paths: DataPaths
+
+
+@dataclass
+class OutputPaths:
+    reports: Path
+    figures: Path
 
 
 @dataclass
 class Config:
     data: DataConfig
+    paths: OutputPaths
 
 
 # cs = ConfigStore.instance()

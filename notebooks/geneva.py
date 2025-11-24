@@ -1,7 +1,7 @@
 import marimo
 
 __generated_with = "0.17.7"
-app = marimo.App(width="medium")
+app = marimo.App(width="full")
 
 
 @app.cell
@@ -9,15 +9,17 @@ def _():
     import marimo as mo
     import polars as pl
     import polars.selectors as cs
-    return cs, mo, pl
+    from pathlib import Path
+    return Path, cs, mo, pl
 
 
 @app.cell
-def _(mo):
+def _(Path, mo):
     from activitygraphs.config import load_config
 
-    cfg = load_config(mo.notebook_dir().parent)
-    return (cfg,)
+    project_root = Path(mo.notebook_dir().parent)
+    cfg = load_config(project_root)
+    return cfg, project_root
 
 
 @app.cell(hide_code=True)
@@ -37,8 +39,8 @@ def _(mo):
 
 
 @app.cell
-def _(cfg, pl):
-    raw_path = cfg.data.paths.raw + "/" + cfg.data.files.raw_trips
+def _(cfg, pl, project_root):
+    raw_path = project_root / cfg.data.paths.raw / cfg.data.files.raw_trips
 
     df = pl.read_parquet(raw_path)
     df
@@ -203,10 +205,10 @@ def _(df):
 
 
 @app.cell
-def _(cfg):
+def _(cfg, project_root):
     from activitygraphs.data.geneva import _read_raw_data, _handle_null_values
 
-    r = _read_raw_data(cfg.data)
+    r = _read_raw_data(cfg.data, project_root=project_root)
     n = _handle_null_values(r)
     n.filter(mode="mode_bateau_navette")
     return (n,)
@@ -215,6 +217,7 @@ def _(cfg):
 @app.cell
 def _(n, pl):
     import altair as alt
+
     alt.data_transformers.enable("vegafusion")
 
 
@@ -245,7 +248,7 @@ def _(df, pl):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     # GTFS to NetworkX construction
@@ -255,49 +258,223 @@ def _(mo):
 
 @app.cell
 def _():
-    import partridge as ptg
-    from pathlib import Path
-
-    # Pick a random date in 2022
-
-    path = Path("data/raw/gtfs/gtfs_2022_switzerland")
-    boundaries = Path("data/raw/boundaries/swissboundaries3d_2025-04_2056_5728.shp/swissBOUNDARIES3D_1_5_TLM_KANTONSGEBIET.shp")
-    return boundaries, path
-
-
-@app.cell
-def _(path, pl):
-    stops = pl.read_csv(path / "stops.txt", schema={
-        "stop_id": pl.String,
-        "stop_name": pl.String,
-        "stop_lat": pl.Float32,
-        "stop_lon": pl.Float32,
-        "location_type": pl.Categorical,
-        "parent_station": pl.String,
-    })
-    return (stops,)
-
-
-@app.cell
-def _(boundaries):
     import geopandas as gpd
-
-    geneva = gpd.read_file(boundaries).to_crs("EPSG:4326").query("NAME == 'Genève'").iloc[0]["geometry"]
-    geneva
-    return geneva, gpd
+    return (gpd,)
 
 
-@app.cell
-def _(geneva, gpd, stops):
-    stops_gdf = gpd.GeoDataFrame(stops.to_pandas(), geometry=gpd.points_from_xy(stops["stop_lon"], stops["stop_lat"], crs="EPSG:4326"))
-
-    stops_gdf[stops_gdf.intersects(geneva)].explore()
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Links to various datasets
+    - Geneva subsectors: [home](https://sitg.ge.ch/donnees/geo-girec), [file](https://ge.ch/sitg/geodata/SITG/OPENDATA/GEO_GIREC-SHP.zip)
+    - Swiss 2022 timetable: [home](https://archive.opentransportdata.swiss/timetable_gtfs_archive.htm), [file](https://archive.opentransportdata.swiss/timetable_gtfs/timetable-2022-gtfs2020/GTFS_FP2022_2022-12-07_04-15.zip)
+    - Swiss postcode and locality boundaries: [home](https://www.swisstopo.admin.ch/en/official-directory-of-towns-and-cities), [file](https://data.geo.admin.ch/ch.swisstopo-vd.ortschaftenverzeichnis_plz/ortschaftenverzeichnis_plz/ortschaftenverzeichnis_plz_2056.shp.zip)
+    - French postcode boundaries: [home](https://www.data.gouv.fr/datasets/fond-de-carte-des-codes-postaux/), [file](https://www.data.gouv.fr/api/1/datasets/r/029656d6-0fcd-48ec-917d-d511e1f36ff6)
+    """)
     return
 
 
 @app.cell
+def _(project_root):
+    gtfs_path = project_root / "data/raw/gtfs/gtfs_2022_switzerland"
+    stops_path = gtfs_path / "stops.txt"
+    boundaries_path = project_root / "data/raw/boundaries"
+    subsectors_path = boundaries_path / "GEO_GIREC-SHP.shp"
+    swiss_boundaries_path = boundaries_path / "swissboundaries3d_2025-04_2056_5728.shp"
+    postcodes_path = boundaries_path / "ortschaftenverzeichnis_plz_2056.shp/AMTOVZ_SHP_LV95"
+    french_path = boundaries_path / "codes_postaux_V5"
+    return (
+        french_path,
+        postcodes_path,
+        stops_path,
+        subsectors_path,
+        swiss_boundaries_path,
+    )
+
+
+@app.cell
+def _(french_path, gpd, pl, postcodes_path, stops_path, subsectors_path):
+    stops = pl.read_csv(
+        stops_path,
+        schema={
+            "stop_id": pl.String,
+            "stop_name": pl.String,
+            "stop_lat": pl.Float32,
+            "stop_lon": pl.Float32,
+            "location_type": pl.Categorical,
+            "parent_station": pl.String,
+        },
+    )
+
+    subsectors_gdf = gpd.read_file(subsectors_path).to_crs("EPSG:4326")
+    postcodes_gdf = gpd.read_file(postcodes_path, layer="AMTOVZ_ZIP").to_crs("EPSG:4326")
+    localities_gdf = gpd.read_file(postcodes_path, layer="AMTOVZ_LOCALITY").to_crs("EPSG:4326")
+    french_gdf = gpd.read_file(french_path).to_crs("EPSG:4326")
+    return french_gdf, localities_gdf, postcodes_gdf, stops, subsectors_gdf
+
+
+@app.cell
+def _(gpd, stops, subsectors_gdf, swiss_boundaries_path):
+    geneva_gdf = (
+        gpd.read_file(swiss_boundaries_path, layer="swissBOUNDARIES3D_1_5_TLM_KANTONSGEBIET")
+        .to_crs("EPSG:4326")
+        .query("NAME == 'Genève'")
+    )
+    geneva_shape = geneva_gdf.iloc[0]["geometry"]
+
+    stops_gdf = gpd.GeoDataFrame(
+        stops.to_pandas(), geometry=gpd.points_from_xy(stops["stop_lon"], stops["stop_lat"], crs="EPSG:4326")
+    )
+    geneva_stops_gdf = stops_gdf[stops_gdf.intersects(geneva_shape)]
+
+    _m = subsectors_gdf.explore()
+    geneva_stops_gdf.explore(m=_m, color="orange")
+    return
+
+
+@app.cell
+def _(french_gdf, localities_gdf, pl, postcodes_gdf, stops, subsectors_gdf):
+    from activitygraphs.network import build_locations
+
+    locations = build_locations(stops, subsectors_gdf, postcodes_gdf, localities_gdf, french_gdf)
+    locations_df = pl.DataFrame(locations.drop(columns=["geometry"]))
+
+    locations
+    return (locations_df,)
+
+
+@app.cell
 def _(stops):
-    stops
+    from activitygraphs.network import build_stop_names_to_loc_id_mapping
+
+    stop_names_to_id_df = build_stop_names_to_loc_id_mapping(stops)
+    stop_names_to_id_df
+    return (stop_names_to_id_df,)
+
+
+@app.cell
+def _(df, locations_df, stops):
+    from activitygraphs.network import match_loc_ids
+
+    matched_df = match_loc_ids(df, locations_df, stops)
+    matched_df
+    return (matched_df,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Types of unmatched location names:
+    - [Subsector (Geneva)] - sous_secteur
+    - [Municipality (CH)] - [Postcode (CH)]
+    - [MUNICIPALITY (FR)] - [Postcode (FR)]
+    - NA
+    - Typos
+    """)
+    return
+
+
+@app.cell
+def _(matched_df, pl, stop_names_to_id_df):
+    from activitygraphs.network import match_loc_id_on_fuzzy_stop_names
+
+    test = match_loc_id_on_fuzzy_stop_names(
+        matched_df, stop_names_to_id_df, "dep_loc_id", "lieu_depart_trajet", "dep_match_type"
+    )
+    match_loc_id_on_fuzzy_stop_names(
+        test, stop_names_to_id_df, "arr_loc_id", "lieu_arrivee_trajet", "arr_match_type"
+    ).filter(pl.col("dep_loc_id").is_null())
+    return
+
+
+@app.cell
+def _(matched_df, pl, stop_names_to_id_df):
+    from rapidfuzz import process, fuzz
+
+    _loc_id_col = "dep_loc_id"
+    _match_type_col = "dep_match_type"
+    _stop_name_col = "lieu_depart_trajet"
+
+    _unmatched_stop_names = matched_df.filter(pl.col("dep_loc_id").is_null(), pl.col("arr_loc_id").is_null())
+    _unmatched_stop_names = pl.concat([
+        _unmatched_stop_names["lieu_depart_trajet"],
+        _unmatched_stop_names["lieu_arrivee_trajet"],
+    ]).unique()
+    _unmatched_stop_names = pl.DataFrame(_unmatched_stop_names.alias("stop_name"))
+
+    _stop_names_list = stop_names_to_id_df["loc_name"].str.to_lowercase().to_list()
+    _stop_ids_list = stop_names_to_id_df["loc_id"].to_list()
+
+
+    def fuzzy_match(stop_name: str):
+        best_name, best_score, best_idx = process.extractOne(stop_name, _stop_names_list, scorer=fuzz.ratio)
+
+        return {
+            "closest_stop_name": best_name,
+            "closest_stop_id": _stop_ids_list[best_idx],
+            "score": best_score,
+        }
+
+
+    FUZZY_MATCH_THRESHOLD = 65
+
+    stripped_stop_names = pl.col("stop_name").str.to_lowercase().str.strip_chars("0123456789- ")
+    matched_stop_names = (
+        _unmatched_stop_names.with_columns(stripped_stop_names.map_elements(fuzzy_match).alias("result"))
+        .unnest("result")
+        .filter(pl.col("score") > FUZZY_MATCH_THRESHOLD)
+        .select("stop_name", pl.col("closest_stop_id").alias("loc_id"))
+    )
+
+    is_fuzzy_match_success = pl.col(_loc_id_col).is_null() & pl.col("loc_id").is_not_null()
+
+    matched_df.join(matched_stop_names, left_on=_stop_name_col, right_on="stop_name", how="inner").with_columns(
+        pl.when(is_fuzzy_match_success).then("loc_id").otherwise(_loc_id_col).alias(_loc_id_col),
+        pl.when(is_fuzzy_match_success).then(pl.lit("fuzzy_stop_name")).otherwise(_match_type_col).alias(_match_type_col),
+    ).drop("loc_id")
+    return (matched_stop_names,)
+
+
+@app.cell
+def _(matched_stop_names, pl, stop_names_df, trips_df):
+    stop_name_col = "lieu_depart_trajet"
+    stop_id_col = "dep_stop_id"
+    closest_stop_col_prefix = "closest_"
+
+    _matches = matched_stop_names.select("stop_name", "closest_stop_id")
+
+    trips_df.join(_matches, left_on=stop_name_col, right_on="stop_name", how="inner").with_columns(
+        pl.when(pl.col(stop_id_col).is_null()).then("closest_stop_id").otherwise(stop_id_col).alias(stop_id_col)
+    ).join(
+        stop_names_df.select(pl.all().name.prefix("dep_")),
+        on="dep_stop_id",
+        how="left",
+    ).join(
+        stop_names_df.select(pl.all().name.prefix("arr_")),
+        on="arr_stop_id",
+        how="left",
+    )
+    return
+
+
+@app.cell
+def _(locations_df):
+    locations_df
+    return
+
+
+@app.cell
+def _(location_regexes, pl, trips_df):
+    _stop_name_col = "lieu_depart_trajet"
+    _regex_name = "subsector"
+
+
+    trips_df.filter(pl.col(_stop_name_col).str.contains(location_regexes[_regex_name]))
+    return
+
+
+@app.cell
+def _():
     return
 
 
