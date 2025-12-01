@@ -340,7 +340,7 @@ def _(french_gdf, localities_gdf, pl, postcodes_gdf, stops, subsectors_gdf):
     locations_df = pl.DataFrame(locations_gdf.drop(columns=["geometry"]))
 
     locations_gdf
-    return (locations_df,)
+    return locations_df, locations_gdf
 
 
 @app.cell
@@ -349,6 +349,20 @@ def _(df, locations_df, stops):
 
     trips_df = match_loc_ids(df, locations_df, stops)
     trips_df
+    return (trips_df,)
+
+
+@app.cell
+def _(locations_gdf, trips_df):
+    from activitygraphs.network import explore_location_affluence
+
+    explore_location_affluence(trips_df, locations_gdf, "dep_loc_id")
+    return (explore_location_affluence,)
+
+
+@app.cell
+def _(explore_location_affluence, locations_gdf, trips_df):
+    explore_location_affluence(trips_df, locations_gdf, "arr_loc_id")
     return
 
 

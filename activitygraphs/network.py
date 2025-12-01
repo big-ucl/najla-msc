@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import folium
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -401,6 +402,28 @@ def match_null_loc_ids_to_na(df: pl.DataFrame, loc_id_col: str, match_type_col: 
     return df.with_columns(
         pl.when(is_unmatched).then(pl.lit("NA")).otherwise(loc_id_col).alias(loc_id_col),
         pl.when(is_unmatched).then(pl.lit("na")).otherwise(match_type_col).alias(match_type_col),
+    )
+
+
+def explore_location_affluence(
+    trips_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame, loc_id_column: str
+) -> folium.Map:
+    stops = locations_gdf.merge(
+        trips_df[loc_id_column].value_counts(name="num_visits").to_pandas(),
+        left_on="loc_id",
+        right_on=loc_id_column,
+        how="right",
+    )
+    stops.set_geometry(gpd.points_from_xy(stops["lon"], stops["lat"], crs="EPSG:4326"), inplace=True)
+
+    return stops.explore(
+        column="num_visits",
+        cmap="viridis_r",
+        tiles="Cartodb Positron",
+        scheme="NaturalBreaks",
+        k=10,
+        tooltip=["loc_name", "num_visits"],
+        marker_kwds={"radius": 5},
     )
 
 
