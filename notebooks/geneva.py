@@ -336,140 +336,19 @@ def _(gpd, stops, subsectors_gdf, swiss_boundaries_path):
 def _(french_gdf, localities_gdf, pl, postcodes_gdf, stops, subsectors_gdf):
     from activitygraphs.network import build_locations
 
-    locations = build_locations(stops, subsectors_gdf, postcodes_gdf, localities_gdf, french_gdf)
-    locations_df = pl.DataFrame(locations.drop(columns=["geometry"]))
+    locations_gdf = build_locations(stops, subsectors_gdf, postcodes_gdf, localities_gdf, french_gdf)
+    locations_df = pl.DataFrame(locations_gdf.drop(columns=["geometry"]))
 
-    locations
+    locations_gdf
     return (locations_df,)
-
-
-@app.cell
-def _(stops):
-    from activitygraphs.network import build_stop_names_to_loc_id_mapping
-
-    stop_names_to_id_df = build_stop_names_to_loc_id_mapping(stops)
-    stop_names_to_id_df
-    return (stop_names_to_id_df,)
 
 
 @app.cell
 def _(df, locations_df, stops):
     from activitygraphs.network import match_loc_ids
 
-    matched_df = match_loc_ids(df, locations_df, stops)
-    matched_df
-    return (matched_df,)
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""
-    Types of unmatched location names:
-    - [Subsector (Geneva)] - sous_secteur
-    - [Municipality (CH)] - [Postcode (CH)]
-    - [MUNICIPALITY (FR)] - [Postcode (FR)]
-    - NA
-    - Typos
-    """)
-    return
-
-
-@app.cell
-def _(matched_df, pl, stop_names_to_id_df):
-    from activitygraphs.network import match_loc_id_on_fuzzy_stop_names
-
-    test = match_loc_id_on_fuzzy_stop_names(
-        matched_df, stop_names_to_id_df, "dep_loc_id", "lieu_depart_trajet", "dep_match_type"
-    )
-    match_loc_id_on_fuzzy_stop_names(
-        test, stop_names_to_id_df, "arr_loc_id", "lieu_arrivee_trajet", "arr_match_type"
-    ).filter(pl.col("dep_loc_id").is_null())
-    return
-
-
-@app.cell
-def _(matched_df, pl, stop_names_to_id_df):
-    from rapidfuzz import process, fuzz
-
-    _loc_id_col = "dep_loc_id"
-    _match_type_col = "dep_match_type"
-    _stop_name_col = "lieu_depart_trajet"
-
-    _unmatched_stop_names = matched_df.filter(pl.col("dep_loc_id").is_null(), pl.col("arr_loc_id").is_null())
-    _unmatched_stop_names = pl.concat([
-        _unmatched_stop_names["lieu_depart_trajet"],
-        _unmatched_stop_names["lieu_arrivee_trajet"],
-    ]).unique()
-    _unmatched_stop_names = pl.DataFrame(_unmatched_stop_names.alias("stop_name"))
-
-    _stop_names_list = stop_names_to_id_df["loc_name"].str.to_lowercase().to_list()
-    _stop_ids_list = stop_names_to_id_df["loc_id"].to_list()
-
-
-    def fuzzy_match(stop_name: str):
-        best_name, best_score, best_idx = process.extractOne(stop_name, _stop_names_list, scorer=fuzz.ratio)
-
-        return {
-            "closest_stop_name": best_name,
-            "closest_stop_id": _stop_ids_list[best_idx],
-            "score": best_score,
-        }
-
-
-    FUZZY_MATCH_THRESHOLD = 65
-
-    stripped_stop_names = pl.col("stop_name").str.to_lowercase().str.strip_chars("0123456789- ")
-    matched_stop_names = (
-        _unmatched_stop_names.with_columns(stripped_stop_names.map_elements(fuzzy_match).alias("result"))
-        .unnest("result")
-        .filter(pl.col("score") > FUZZY_MATCH_THRESHOLD)
-        .select("stop_name", pl.col("closest_stop_id").alias("loc_id"))
-    )
-
-    is_fuzzy_match_success = pl.col(_loc_id_col).is_null() & pl.col("loc_id").is_not_null()
-
-    matched_df.join(matched_stop_names, left_on=_stop_name_col, right_on="stop_name", how="inner").with_columns(
-        pl.when(is_fuzzy_match_success).then("loc_id").otherwise(_loc_id_col).alias(_loc_id_col),
-        pl.when(is_fuzzy_match_success).then(pl.lit("fuzzy_stop_name")).otherwise(_match_type_col).alias(_match_type_col),
-    ).drop("loc_id")
-    return (matched_stop_names,)
-
-
-@app.cell
-def _(matched_stop_names, pl, stop_names_df, trips_df):
-    stop_name_col = "lieu_depart_trajet"
-    stop_id_col = "dep_stop_id"
-    closest_stop_col_prefix = "closest_"
-
-    _matches = matched_stop_names.select("stop_name", "closest_stop_id")
-
-    trips_df.join(_matches, left_on=stop_name_col, right_on="stop_name", how="inner").with_columns(
-        pl.when(pl.col(stop_id_col).is_null()).then("closest_stop_id").otherwise(stop_id_col).alias(stop_id_col)
-    ).join(
-        stop_names_df.select(pl.all().name.prefix("dep_")),
-        on="dep_stop_id",
-        how="left",
-    ).join(
-        stop_names_df.select(pl.all().name.prefix("arr_")),
-        on="arr_stop_id",
-        how="left",
-    )
-    return
-
-
-@app.cell
-def _(locations_df):
-    locations_df
-    return
-
-
-@app.cell
-def _(location_regexes, pl, trips_df):
-    _stop_name_col = "lieu_depart_trajet"
-    _regex_name = "subsector"
-
-
-    trips_df.filter(pl.col(_stop_name_col).str.contains(location_regexes[_regex_name]))
+    trips_df = match_loc_ids(df, locations_df, stops)
+    trips_df
     return
 
 

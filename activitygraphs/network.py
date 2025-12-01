@@ -1,4 +1,3 @@
-import itertools
 from pathlib import Path
 
 import geopandas as gpd
@@ -6,6 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import polars as pl
 import polars.selectors as cs
+from rapidfuzz import fuzz, process
 
 from activitygraphs.config import Config
 
@@ -40,9 +40,17 @@ STOP_NAME_MAPPING = {
     "Lancy - 1212": "Grand-Lancy - 1212",
     "Pringy": "Pringy - 1663",
     "Cluses": "CLUSES - 74300",
+    "Signy-Avenex - 1274": "Signy, Le Glassey",
+    "De-Chateaubriand, lac": "Genève-De-Châteaubriand (lac)",
+    "Eaux-Vives, lac": "Genève-Eaux-Vives (lac)",
+    "Saint-Cergue - 1265": "La Cure",
+    "Saint-Cergue - 1264": "St-Cergue",
+    "Vernier, Etang-Place": "Vernier, Etang Place",
+    "Vernier, CHôtelaine": "Vernier, Châtelaine",
 }
 
 FUZZY_MATCH_THRESHOLD = 65
+
 
 def load_files(cfg: Config) -> tuple[pl.DataFrame, gpd.GeoDataFrame]:
     raw_dir = Path(cfg.data.paths.raw).parent  # TODO Fix this in config.yaml
@@ -209,14 +217,15 @@ def match_loc_ids(trips_df: pl.DataFrame, locations_df: pl.DataFrame, stops_df: 
         ("arr_loc_id", "lieu_arrivee_trajet", "arr_match_type"),
     ]
 
-    pipeline = [
-        match_loc_id_on_subsector,
-        match_loc_id_on_municipality_swiss,
-        match_loc_id_on_municipality_french,
-        match_loc_id_on_na,
-    ]
-    for (loc_id_col, stop_name_col, match_type_col), match_fn in itertools.product(columns, pipeline):
-        matched_df = match_fn(matched_df, locations_df, loc_id_col, stop_name_col, match_type_col)
+    for loc_id_col, stop_name_col, match_type_col in columns:
+        matched_df = (
+            matched_df.pipe(match_loc_id_on_subsector, locations_df, loc_id_col, stop_name_col, match_type_col)
+            .pipe(match_loc_id_on_municipality_swiss, locations_df, loc_id_col, stop_name_col, match_type_col)
+            .pipe(match_loc_id_on_municipality_french, locations_df, loc_id_col, stop_name_col, match_type_col)
+            .pipe(match_loc_id_on_na, locations_df, loc_id_col, stop_name_col, match_type_col)
+            .pipe(match_loc_id_on_fuzzy_stop_names, stop_names_to_id_df, loc_id_col, stop_name_col, match_type_col)
+            .pipe(match_null_loc_ids_to_na, loc_id_col, match_type_col)
+        )
 
     return matched_df
 
@@ -320,7 +329,7 @@ def match_loc_id_on_municipality_french(
 
 def match_loc_id_on_na(
     df: pl.DataFrame, all_locations_df: pl.DataFrame, loc_id_col: str, stop_name_col: str, match_type_col: str
-):
+) -> pl.DataFrame:
     regex = LOCATION_REGEXES["na"]
     municipalities = all_locations_df.filter(pl.col("type") == "na").select("loc_id", "loc_name")
     does_regex_match_expr = (
@@ -341,34 +350,31 @@ def match_loc_id_on_na(
         .drop("loc_id")
     )
 
-from rapidfuzz import fuzz, process
 
-
-def match_loc_id_on_fuzzy_stop_names(df: pl.DataFrame, stop_names_to_id_df: pl.DataFrame, loc_id_col: str, stop_name_col: str,
-                                     match_type_col: str):
-    _unmatched_stop_names = df.filter(pl.col("dep_loc_id").is_null(), pl.col("arr_loc_id").is_null())
-    _unmatched_stop_names = pl.concat([
-        _unmatched_stop_names["lieu_depart_trajet"],
-        _unmatched_stop_names["lieu_arrivee_trajet"],
+def match_loc_id_on_fuzzy_stop_names(
+    df: pl.DataFrame, stop_names_to_id_df: pl.DataFrame, loc_id_col: str, stop_name_col: str, match_type_col: str
+) -> pl.DataFrame:
+    unmatched_stop_names = pl.concat([
+        df.filter(pl.col("dep_loc_id").is_null())["lieu_depart_trajet"].rename("stop_name"),
+        df.filter(pl.col("arr_loc_id").is_null())["lieu_arrivee_trajet"].rename("stop_name"),
     ]).unique()
-    _unmatched_stop_names = pl.DataFrame(_unmatched_stop_names.alias("stop_name"))
+    unmatched_stop_names = pl.DataFrame(unmatched_stop_names)
 
-    _stop_names_list = stop_names_to_id_df["loc_name"].str.to_lowercase().to_list()
-    _stop_ids_list = stop_names_to_id_df["loc_id"].to_list()
+    stop_names_list: list[str] = stop_names_to_id_df["loc_name"].str.to_lowercase().to_list()
+    stop_ids_list = stop_names_to_id_df["loc_id"].to_list()
 
     def fuzzy_match(stop_name: str):
-        best_name, best_score, best_idx = process.extractOne(stop_name, _stop_names_list, scorer=fuzz.ratio)
+        best_name, best_score, best_idx = process.extractOne(stop_name, stop_names_list, scorer=fuzz.ratio)
 
         return {
             "closest_stop_name": best_name,
-            "closest_stop_id": _stop_ids_list[best_idx],
+            "closest_stop_id": stop_ids_list[best_idx],
             "score": best_score,
         }
 
-
     stripped_stop_names = pl.col("stop_name").str.to_lowercase().str.strip_chars("0123456789- ")
     matched_stop_names = (
-        _unmatched_stop_names.with_columns(stripped_stop_names.map_elements(fuzzy_match).alias("result"))
+        unmatched_stop_names.with_columns(stripped_stop_names.map_elements(fuzzy_match).alias("result"))
         .unnest("result")
         .filter(pl.col("score") > FUZZY_MATCH_THRESHOLD)
         .select("stop_name", pl.col("closest_stop_id").alias("loc_id"))
@@ -376,13 +382,26 @@ def match_loc_id_on_fuzzy_stop_names(df: pl.DataFrame, stop_names_to_id_df: pl.D
 
     is_fuzzy_match_success = pl.col(loc_id_col).is_null() & pl.col("loc_id").is_not_null()
 
-    return df.join(matched_stop_names, left_on=stop_name_col, right_on="stop_name", how="left").with_columns(
-        pl.when(is_fuzzy_match_success).then("loc_id").otherwise(loc_id_col).alias(loc_id_col),
-        pl.when(is_fuzzy_match_success)
-        .then(pl.lit("fuzzy_stop_name"))
-        .otherwise(match_type_col)
-        .alias(match_type_col),
-    ).drop("loc_id")
+    return (
+        df.join(matched_stop_names, left_on=stop_name_col, right_on="stop_name", how="left")
+        .with_columns(
+            pl.when(is_fuzzy_match_success).then("loc_id").otherwise(loc_id_col).alias(loc_id_col),
+            pl.when(is_fuzzy_match_success)
+            .then(pl.lit("fuzzy_stop_name"))
+            .otherwise(match_type_col)
+            .alias(match_type_col),
+        )
+        .drop("loc_id")
+    )
+
+
+def match_null_loc_ids_to_na(df: pl.DataFrame, loc_id_col: str, match_type_col: str) -> pl.DataFrame:
+    is_unmatched = pl.col(loc_id_col).is_null()
+
+    return df.with_columns(
+        pl.when(is_unmatched).then(pl.lit("NA")).otherwise(loc_id_col).alias(loc_id_col),
+        pl.when(is_unmatched).then(pl.lit("na")).otherwise(match_type_col).alias(match_type_col),
+    )
 
 
 def plot(*gdfs: gpd.GeoDataFrame | tuple[gpd.GeoDataFrame, dict], cfg: Config):
