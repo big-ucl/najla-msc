@@ -3,19 +3,19 @@ from dataclasses import dataclass
 import polars as pl
 import polars.selectors as cs
 
-from activitygraphs.network import PT_EDGE_LIST_SCHEMA
+from activitygraphs.network import PT_EDGE_LIST_SCHEMA, Mode
 from activitygraphs.utils import check_schema
 
 ROUTE_TYPE_TO_MODE_MAP = {
-    101: "mode_train",
-    102: "mode_train",
-    103: "mode_train",
-    106: "mode_train",
-    109: "mode_train",
-    117: "mode_train",
-    700: "mode_bus",
-    900: "mode_tram",
-    1000: "mode_bateau_navette",
+    101: Mode.TRAIN,
+    102: Mode.TRAIN,
+    103: Mode.TRAIN,
+    106: Mode.TRAIN,
+    109: Mode.TRAIN,
+    117: Mode.TRAIN,
+    700: Mode.BUS,
+    900: Mode.TRAMWAY,
+    1000: Mode.BOAT,
 }
 
 AGENCY_NAME_MAP = {
@@ -28,10 +28,10 @@ AGENCY_NAME_MAP = {
 }
 
 MODE_TO_SHORT_NAME_MAP = {
-    "mode_train": "Train : ",
-    "mode_tram": "Tram  : ",
-    "mode_bus": "Bus  : ",
-    "mode_bateau_navette": "Boat : ",
+    Mode.TRAIN: "Train : ",
+    Mode.TRAMWAY: "Tram  : ",
+    Mode.BUS: "Bus  : ",
+    Mode.BOAT: "Boat : ",
 }
 
 
@@ -77,26 +77,15 @@ def build_pt_network_edges(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.D
 
 
 def filter_active_stop_times(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.LazyFrame:
-    # Find all trip_ids that connect at least 2 locations in the list of active locations
-    active_trip_ids = (
+    # Filter out all stops not in the list of active locations
+    # Only keep trips that connect at least 2 active locations
+
+    return (
         gtfs.stop_times_df.filter(pl.col("loc_id").is_in(locations_df["loc_id"].implode()))
         .filter((pl.len() >= 2).over("trip_id"))
-        .unique("trip_id")
+        .with_columns(pl.col("stop_sequence").rank("dense").over("trip_id", order_by="stop_sequence"))
+        .join(gtfs.trips_df.select("route_id", "service_id", "trip_id"), on="trip_id")
     )
-
-    # Find the corresponding active routes
-    active_route_ids = active_trip_ids.join(gtfs.trips_df, on="trip_id").unique("route_id").select("route_id")
-
-    # Find the stop_times of all trips on the corresponding active routes
-    trips_on_active_route_df = gtfs.trips_df.select("route_id", "service_id", "trip_id").join(
-        active_route_ids, on="route_id"
-    )
-
-    active_stop_times = gtfs.stop_times_df.join(trips_on_active_route_df, on="trip_id").with_columns(
-        pl.col("stop_sequence").rank("dense").over("trip_id", order_by="stop_sequence")
-    )
-
-    return active_stop_times
 
 
 def create_pt_trip_df(active_stop_times: pl.LazyFrame) -> pl.LazyFrame:
@@ -154,7 +143,7 @@ def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl
     agencies = gtfs.agency_df.select("agency_id", "agency_name")
 
     route_mode = pl.col("route_type").replace_strict(
-        ROUTE_TYPE_TO_MODE_MAP, default="mode_unknown", return_dtype=pl.Categorical
+        ROUTE_TYPE_TO_MODE_MAP, default=Mode.UNKNOWN, return_dtype=pl.Categorical
     )
     route_mode_desc = pl.col("route_mode").cast(pl.String).replace(MODE_TO_SHORT_NAME_MAP)
     agency_name = pl.lit("  (") + pl.col("agency_name").replace(AGENCY_NAME_MAP) + pl.lit(")")

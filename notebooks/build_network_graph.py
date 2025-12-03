@@ -64,5 +64,21 @@ def _(gva_data):
     return
 
 
+@app.cell
+def _():
+    mo.md(r"""
+    ### Questions and To-Dos
+
+    **Question: Multi-edges or duplicate nodes?**
+
+    Do we do multi-edges between `loc_id`s with `route_id` as the edge type, or do we create one node per (`loc_id`, `route_id`) pair. If feasible, multi-nodes would get inter-line transfers for almost free, as well as cleaner interface in PyG.
+
+    Current data:
+    - 1736 nodes, 1141 of which are PT nodes
+    - 6639 unique (`loc_id`, `route_id`) pairs
+    """)
+    return
+
+
 if __name__ == "__main__":
     app.run()

@@ -11,7 +11,7 @@ import activitygraphs.exploration.dataprocessing as dp
 from activitygraphs import utils
 from activitygraphs.config import DataConfig, GenevaDataConfig
 from activitygraphs.data.gtfs import GTFSInputs
-from activitygraphs.network import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, NA_LAT, NA_LON, USER_JOURNEY_SCHEMA
+from activitygraphs.network import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, NA_LAT, NA_LON, USER_JOURNEY_SCHEMA, Mode
 from activitygraphs.utils import check_schema
 
 LOCATION_REGEXES = {
@@ -20,6 +20,7 @@ LOCATION_REGEXES = {
     "municipality_french": r"([\s\S]+) - (\d\d\d\d\d)\s*$",
     "na": r"NA",
 }
+
 STOP_NAME_MAPPING = {
     "Domicile": "NA",
     "Home": "NA",
@@ -46,6 +47,24 @@ STOP_NAME_MAPPING = {
     "Vernier, Etang-Place": "Vernier, Etang Place",
     "Vernier, CHôtelaine": "Vernier, Châtelaine",
 }
+
+MODE_MAPPING = {
+    "mode_autre": Mode.OTHER,
+    "mode_bateau_navette": Mode.BOAT,
+    "mode_bus": Mode.BUS,
+    "mode_car_interurbain": Mode.COACH,
+    "mode_marche_à_pied": Mode.WALK,
+    "mode_moto_scooter": Mode.MOTORCYCLE,
+    "mode_taxi_vtc": Mode.TAXI,
+    "mode_train": Mode.TRAIN,
+    "mode_tramway": Mode.TRAMWAY,
+    "mode_trottinette": Mode.CYCLE,
+    "mode_velo": Mode.CYCLE,
+    "mode_voiture_conducteur": Mode.CAR,
+    "mode_voiture_passager": Mode.VEH_PASS,
+}
+
+
 FUZZY_MATCH_THRESHOLD = 65
 
 
@@ -135,7 +154,7 @@ def build_geneva_data(inputs: GenevaInputs) -> GenevaData:
         user_id=pl.col("id_utilisateur").cast(pl.String),
         journey_id=pl.col("id_deplacement").cast(pl.String),
         leg_id=pl.col("id_trajet").cast(pl.Int8),
-        leg_mode=pl.col("mode").cast(pl.Categorical),
+        leg_mode=pl.col("mode").cast(pl.Categorical).replace(MODE_MAPPING),
         leg_line=pl.col("ligne_trajet").cast(pl.String),
         dep_day=pl.col("jour_depart").str.to_date("%+"),
         dep_time=pl.col("date").str.split(" - ").list.first().str.to_time("%R"),
@@ -552,7 +571,7 @@ def _handle_null_values(raw_geneva_df: pl.DataFrame) -> pl.DataFrame:
     # Impute empty values to unknown for mode column
     cols_impute_empty_to_unknown = ["mode"]
     imputed_unknown_rows_df = imputed_na_rows_df.with_columns(
-        pl.col(cols_impute_empty_to_unknown).replace(old="", new="mode_unknown")
+        pl.col(cols_impute_empty_to_unknown).replace(old="", new=Mode.UNKNOWN)
     )
 
     # Impute empty values of `ligne_trajet` to UNKNOWN or NA for ligne column depending on if mode is applicable

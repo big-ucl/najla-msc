@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 import folium
 import geopandas as gpd
 import polars as pl
@@ -43,6 +45,22 @@ PT_EDGE_LIST_SCHEMA = pl.Schema({
 })
 
 
+class Mode(StrEnum):
+    OTHER = "mode_other"
+    UNKNOWN = "mode_unknown"
+    BOAT = "mode_boat"
+    BUS = "mode_bus"
+    COACH = "mode_coach"
+    WALK = "mode_walk"
+    CYCLE = "mode_cycle"
+    MOTORCYCLE = "mode_motorcycle"
+    TAXI = "mode_taxi"
+    TRAIN = "mode_train"
+    TRAMWAY = "mode_tramway"
+    VEH_PASS = "mode_vehicle_passenger"
+    CAR = "mode_car"
+
+
 def explore_location_affluence(
     trips_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame, loc_id_column: str
 ) -> folium.Map:
@@ -52,7 +70,7 @@ def explore_location_affluence(
         right_on=loc_id_column,
         how="right",
     )
-    stops.set_geometry(gpd.points_from_xy(stops["lon"], stops["lat"], crs="EPSG:4326"), inplace=True)
+    stops.set_geometry(gpd.points_from_xy(stops["lon"], stops["lat"], crs=CRS), inplace=True)
 
     return stops.explore(
         column="num_visits",
