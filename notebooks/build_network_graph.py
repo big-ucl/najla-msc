@@ -59,8 +59,19 @@ def _():
 def _(gva_data):
     from activitygraphs.data.gtfs import build_pt_network_edges
 
-    pt_edge_df = build_pt_network_edges(gva_data.locations_df, gva_data.gtfs)
+    pt_edge_df, transfer_edge_df = build_pt_network_edges(gva_data.locations_df, gva_data.gtfs)
+    return pt_edge_df, transfer_edge_df
+
+
+@app.cell
+def _(pt_edge_df):
     pt_edge_df
+    return
+
+
+@app.cell
+def _(transfer_edge_df):
+    transfer_edge_df
     return
 
 

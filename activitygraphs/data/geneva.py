@@ -118,25 +118,33 @@ def load_files(cfg: GenevaDataConfig, project_root: Path | None = None) -> Genev
             "stop_name": pl.String,
             "stop_lat": pl.Float32,
             "stop_lon": pl.Float32,
-            "location_type": pl.Categorical,
+            "location_type": pl.Categorical(),
             "parent_station": pl.String,
         },
-    )
+    ).with_columns(loc_id=pl.when(pl.col("parent_station") == "").then("stop_id").otherwise("parent_station"))
 
-    stop_id_to_loc_id = stops_df.select(
-        "stop_id", pl.when(pl.col("parent_station") == "").then("stop_id").otherwise("parent_station").alias("loc_id")
-    )
-
-    stop_times_df = pl.scan_csv(gtfs_path / gtfs_files.stop_times).join(
-        stop_id_to_loc_id.lazy(), on="stop_id", how="left"
-    )
+    stop_id_to_loc_id = stops_df.select("stop_id", "loc_id").lazy()
+    stop_times_df = pl.scan_csv(gtfs_path / gtfs_files.stop_times).join(stop_id_to_loc_id, on="stop_id", how="left")
     trips_df = pl.scan_csv(gtfs_path / gtfs_files.trips)
     routes_df = pl.read_csv(gtfs_path / gtfs_files.routes)
     agency_df = pl.read_csv(gtfs_path / gtfs_files.agency)
     calendar_df = pl.read_csv(gtfs_path / gtfs_files.calendar).with_columns(parse_gtfs_date("start_date", "end_date"))
     calendar_dates_df = pl.read_csv(gtfs_path / gtfs_files.calendar_dates).with_columns(parse_gtfs_date("date"))
 
-    gtfs = GTFSInputs(stops_df, stop_times_df, trips_df, routes_df, agency_df, calendar_df, calendar_dates_df)
+    transfers_df = pl.read_csv(
+        gtfs_path / gtfs_files.transfers,
+        schema={
+            "from_stop_id": pl.String,
+            "to_stop_id": pl.String,
+            "transfer_type": pl.Categorical(),
+            "min_transfer_time": pl.Int64,
+            # All other fields are empty in the 2022 Swiss GTFS timetable, and `transfer_type` is always 2
+        },
+    )
+
+    gtfs = GTFSInputs(
+        stops_df, stop_times_df, trips_df, routes_df, agency_df, calendar_df, calendar_dates_df, transfers_df
+    )
 
     return GenevaInputs(raw_journeys_df, subsectors_gdf, postcodes_gdf, localities_gdf, french_gdf, gtfs)
 

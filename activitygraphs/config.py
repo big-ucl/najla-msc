@@ -16,6 +16,7 @@ class GTFSFiles:
     agency: str
     calendar: str
     calendar_dates: str
+    transfers: str
 
 
 @dataclass

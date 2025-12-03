@@ -6,6 +6,19 @@ import polars.selectors as cs
 from activitygraphs.network import PT_EDGE_LIST_SCHEMA, Mode
 from activitygraphs.utils import check_schema
 
+
+@dataclass(frozen=True)
+class GTFSInputs:
+    stops_df: pl.DataFrame
+    stop_times_df: pl.LazyFrame
+    trips_df: pl.LazyFrame
+    routes_df: pl.DataFrame
+    agency_df: pl.DataFrame
+    calendar_df: pl.DataFrame
+    calendar_dates_df: pl.DataFrame
+    transfers_df: pl.DataFrame
+
+
 ROUTE_TYPE_TO_MODE_MAP = {
     101: Mode.TRAIN,
     102: Mode.TRAIN,
@@ -41,25 +54,14 @@ SAMPLE_DAY_START = pl.time(6, 0, 0)
 SAMPLE_DAY_END = pl.time(21, 0, 0)
 
 
-@dataclass(frozen=True)
-class GTFSInputs:
-    stops_df: pl.DataFrame
-    stop_times_df: pl.LazyFrame
-    trips_df: pl.LazyFrame
-    routes_df: pl.DataFrame
-    agency_df: pl.DataFrame
-    calendar_df: pl.DataFrame
-    calendar_dates_df: pl.DataFrame
-
-
-def build_pt_network_edges(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.DataFrame:
+def build_pt_network_edges(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> tuple[pl.DataFrame, pl.DataFrame]:
     edge_ids = ["route_id", "orig_loc_id", "dest_loc_id"]
 
     active_stop_times = filter_active_stop_times(locations_df, gtfs)
     pt_trips = create_pt_trip_df(active_stop_times)
     headways_df = compute_avg_headways(pt_trips, gtfs, edge_ids)
 
-    edge_df = (
+    pt_edge_df = (
         pt_trips.group_by(edge_ids)
         .agg(
             first_departure_time=pl.col("orig_departure_time").min(),
@@ -70,10 +72,12 @@ def build_pt_network_edges(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.D
         .join(headways_df, on=edge_ids, how="left")
     ).collect()
 
-    edge_df = add_route_attributes_to_edges(edge_df, gtfs)
-    edge_df = edge_df.select(PT_EDGE_LIST_SCHEMA.keys())
+    pt_edge_df = add_route_attributes_to_edges(pt_edge_df, gtfs)
+    pt_edge_df = pt_edge_df.select(PT_EDGE_LIST_SCHEMA.keys())
 
-    return check_schema(edge_df, PT_EDGE_LIST_SCHEMA)
+    transfer_edge_df = create_transfer_edges(gtfs)
+
+    return check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA), transfer_edge_df
 
 
 def filter_active_stop_times(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.LazyFrame:
@@ -157,3 +161,16 @@ def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl
     )
 
     return edge_df.join(active_routes_df, on="route_id")
+
+
+def create_transfer_edges(gtfs: GTFSInputs) -> pl.DataFrame:
+    return (
+        gtfs.transfers_df.join(
+            gtfs.stops_df.select("stop_id", orig_loc_id="loc_id"), left_on="from_stop_id", right_on="stop_id"
+        )
+        .join(gtfs.stops_df.select("stop_id", dest_loc_id="loc_id"), left_on="to_stop_id", right_on="stop_id")
+        .group_by("orig_loc_id", "dest_loc_id")
+        .agg(pl.col("min_transfer_time").unique())
+        .with_columns(transfer_time_min=pl.col("min_transfer_time").list.mean() / 60)
+        .select("orig_loc_id", "dest_loc_id", "transfer_time_min")
+    )
