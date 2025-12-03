@@ -2,11 +2,34 @@
 name: GenevaTPG
 
 files:
-  raw_trips: tpg_od.parquet
+  raw_journeys: tpg_od.parquet
+
+  boundaries:
+    geneva_subsectors: GEO_GIREC-SHP.shp
+    french_postcodes: code_postaux_V5.shp
+    swiss_postcodes: ortschaftenverzeichnis_plz_2056.shp/AMTOVZ_SHP_LV95/AMTOVZ_ZIP.shp
+    swiss_localities: ortschaftenverzeichnis_plz_2056.shp/AMTOVZ_SHP_LV95/AMTOVZ_LOCALITY.shp
+
+  gtfs:
+    directory: gtfs_2022_switzerland
+
+    stops: ${..gtfs.directory}/stops.txt
+    stop_times: ${..gtfs.directory}/stop_times.txt
+    trips: ${..gtfs.directory}/trips.txt
+    routes: ${..gtfs.directory}/routes.txt
+    agency: ${..gtfs.directory}/agency.txt
+    calendar: ${..gtfs.directory}/calendar.txt
+    calendar_dates: ${..gtfs.directory}/calendar_dates.txt
+    transfers: ${..gtfs.directory}/transfers.txt
 
 paths:
   processed: data/processed/${..name}
   raw: data/raw/${..name}
+
+  external: data/external
+  gtfs: ${..paths.external}/gtfs
+  boundaries: ${..paths.external}/boundaries
+
   act_dataset: ${..paths.processed}/act_dataset
   graphs: ${..paths.processed}/graphs
   metrics: ${..paths.processed}/metrics

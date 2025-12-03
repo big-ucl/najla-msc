@@ -1,13 +1,22 @@
+from collections.abc import Mapping
+from typing import TypeVar
+
+import geopandas as gpd
+import pandas as pd
 import polars as pl
 import torch
 
+PandasSchema = Mapping[str, str]
+TDataFrame = TypeVar("TDataFrame", gpd.GeoDataFrame, pl.DataFrame)
+TSchema = TypeVar("TSchema", pl.Schema, PandasSchema)
 
-def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
+
+def check_schema(df: TDataFrame, schema: pl.Schema) -> TDataFrame:
     """Checks that a DataFrame matches provided Schema.
 
     Args:
-        df (pl.DataFrame): the dataframe to be checked
-        schema (pl.Schema): the schema to check against
+        df (pl.DataFrame | gpd.GeoDataFrame): the dataframe to be checked
+        schema (pl.Schema | dict): the schema to check against
 
     Raises:
         ValueError: if the DataFrame does not match the schema
@@ -15,17 +24,42 @@ def check_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
     Returns:
         pl.DataFrame: the valid DataFrame
     """
+
+    if isinstance(df, pl.DataFrame) and isinstance(schema, pl.Schema):
+        return check_polars_schema(df, schema)
+
+    if (isinstance(df, gpd.GeoDataFrame) or isinstance(df, pd.DataFrame)) and isinstance(schema, dict):
+        return check_geopandas_schema(df, schema)
+
+    raise ValueError(f"Invalid types: Got {type(df)=}, {type(schema)=}")
+
+
+def check_polars_schema(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
     df_items = set(df.schema.items())
     schema_items = set(schema.items())
 
-    difference = df_items ^ schema_items
+    missing = schema_items - df_items
+    extra = df_items - schema_items
 
-    if difference:
-        raise ValueError(
-            f"Schemas do not match:\nExpected: {schema}\nGot:      {df.schema}\nDifferent elements: {difference}"
-        )
+    if missing or extra:
+        raise ValueError(f"Schemas do not match:\nMissing elements: {missing}\nExtra elements: {extra}")
 
     return df
+
+
+def check_geopandas_schema(gdf: gpd.GeoDataFrame, schema: PandasSchema) -> gpd.GeoDataFrame:
+    if set(schema.keys()) != set(gdf.columns):
+        raise ValueError(
+            f"Columns do not match schema. \nGot: {sorted(schema.keys())}\nExpected: {sorted(gdf.columns)}"
+        )
+
+    # noinspection PyTypeChecker
+    mismatches = [(col, dtype, schema[col]) for col, dtype in gdf.dtypes.items() if dtype != schema[col]]
+    if mismatches:
+        errors = [f"\n\t`{col}`: got {dtype}, expected {expected}" for col, dtype, expected in mismatches]
+        raise ValueError("Invalid types: " + "".join(errors))
+
+    return gdf
 
 
 def check_shape(tensor: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
@@ -52,3 +86,7 @@ def check_shape(tensor: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
             )
 
     return tensor
+
+
+def gdf_to_polars(gdf: gpd.GeoDataFrame) -> pl.DataFrame:
+    return pl.DataFrame(gdf.drop(columns=["geometry"]))

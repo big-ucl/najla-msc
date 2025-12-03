@@ -6,10 +6,12 @@ app = marimo.App(width="full")
 
 @app.cell
 def _():
+    from pathlib import Path
+
     import marimo as mo
     import polars as pl
     import polars.selectors as cs
-    from pathlib import Path
+
     return Path, cs, mo, pl
 
 
@@ -206,7 +208,7 @@ def _(df):
 
 @app.cell
 def _(cfg, project_root):
-    from activitygraphs.data.geneva import _read_raw_data, _handle_null_values
+    from activitygraphs.data.geneva import _handle_null_values, _read_raw_data
 
     r = _read_raw_data(cfg.data, project_root=project_root)
     n = _handle_null_values(r)
@@ -219,7 +221,6 @@ def _(n, pl):
     import altair as alt
 
     alt.data_transformers.enable("vegafusion")
-
 
     n.group_by("id_utilisateur").agg(pl.len())["len"].plot.hist()
     return
@@ -243,7 +244,9 @@ def _(df, mo):
 
 @app.cell
 def _(df, pl):
-    _num_days_per_user = df.group_by("id_utilisateur").agg(pl.col("jour_depart").n_unique())["jour_depart"].value_counts()
+    _num_days_per_user = (
+        df.group_by("id_utilisateur").agg(pl.col("jour_depart").n_unique())["jour_depart"].value_counts()
+    )
     _num_days_per_user.plot.bar(x="jour_depart:N", y="count")
     return
 
@@ -259,6 +262,7 @@ def _(mo):
 @app.cell
 def _():
     import geopandas as gpd
+
     return (gpd,)
 
 
@@ -282,7 +286,7 @@ def _(project_root):
     subsectors_path = boundaries_path / "GEO_GIREC-SHP.shp"
     swiss_boundaries_path = boundaries_path / "swissboundaries3d_2025-04_2056_5728.shp"
     postcodes_path = boundaries_path / "ortschaftenverzeichnis_plz_2056.shp/AMTOVZ_SHP_LV95"
-    french_path = boundaries_path / "codes_postaux_V5"
+    french_path = boundaries_path / "code_postaux_V5.shp"
     return (
         french_path,
         postcodes_path,
@@ -334,9 +338,9 @@ def _(gpd, stops, subsectors_gdf, swiss_boundaries_path):
 
 @app.cell
 def _(french_gdf, localities_gdf, pl, postcodes_gdf, stops, subsectors_gdf):
-    from activitygraphs.network import build_locations
+    from activitygraphs.data.geneva import build_geneva_locations
 
-    locations_gdf = build_locations(stops, subsectors_gdf, postcodes_gdf, localities_gdf, french_gdf)
+    locations_gdf = build_geneva_locations(stops, subsectors_gdf, postcodes_gdf, localities_gdf, french_gdf)
     locations_df = pl.DataFrame(locations_gdf.drop(columns=["geometry"]))
 
     locations_gdf
@@ -345,7 +349,7 @@ def _(french_gdf, localities_gdf, pl, postcodes_gdf, stops, subsectors_gdf):
 
 @app.cell
 def _(df, locations_df, stops):
-    from activitygraphs.network import match_loc_ids
+    from activitygraphs.data.geneva import match_loc_ids
 
     trips_df = match_loc_ids(df, locations_df, stops)
     trips_df

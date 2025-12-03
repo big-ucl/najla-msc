@@ -6,17 +6,33 @@ from omegaconf import OmegaConf
 
 
 @dataclass
-class RawFiles:
-    raw_trips: str
+class GTFSFiles:
+    directory: str
+
+    stops: str
+    stop_times: str
+    trips: str
+    routes: str
+    agency: str
+    calendar: str
+    calendar_dates: str
 
 
 @dataclass
-class RawGenevaTPGFiles(RawFiles):
-    pass
+class GenevaBoundaryFiles:
+    geneva_subsectors: str
+    french_postcodes: str
+    swiss_postcodes: str
+    swiss_localities: str
 
 
 @dataclass
-class RawLTDSFiles(RawFiles):
+class InputFiles:
+    raw_journeys: str
+
+
+@dataclass
+class LTDSInputFiles(InputFiles):
     raw_household: str
     raw_person: str
     raw_trip: str
@@ -24,9 +40,20 @@ class RawLTDSFiles(RawFiles):
 
 
 @dataclass
+class GenevaInputFiles(InputFiles):
+    boundaries: GenevaBoundaryFiles
+    gtfs: GTFSFiles
+
+
+@dataclass
 class DataPaths:
     processed: Path
     raw: Path
+
+    external: Path
+    gtfs: Path
+    boundaries: Path
+
     act_dataset: Path
     graphs: Path
     metrics: Path
@@ -35,8 +62,18 @@ class DataPaths:
 @dataclass
 class DataConfig:
     name: str
-    files: RawFiles
+    files: InputFiles
     paths: DataPaths
+
+
+@dataclass
+class LTDSDataConfig(DataConfig):
+    files: LTDSInputFiles
+
+
+@dataclass
+class GenevaDataConfig(DataConfig):
+    files: GenevaInputFiles
 
 
 @dataclass
