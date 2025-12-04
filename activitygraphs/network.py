@@ -1,10 +1,22 @@
+from abc import ABC
+from collections import defaultdict
 from enum import StrEnum
 
 import folium
 import geopandas as gpd
 import polars as pl
+from shapely.geometry.linestring import LineString
+
+from activitygraphs.utils import check_schema
+
+
+class NetworkData(ABC):
+    user_journeys: pl.DataFrame
+    locations_gdf: gpd.GeoDataFrame
+
 
 CRS = "EPSG:4326"
+TILES = "Cartodb Positron"
 NA_LON, NA_LAT = 6.1709475192397605, 46.24348817355701
 
 LOCATIONS_SCHEMA = {
@@ -61,23 +73,119 @@ class Mode(StrEnum):
     CAR = "mode_car"
 
 
-def explore_location_affluence(
-    trips_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame, loc_id_column: str
+def add_line_geometry_to_edge_df(edge_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    check_schema(edge_df, pl.Schema({"orig_loc_id": pl.String, "dest_loc_id": pl.String}), ignore_extra_cols=True)
+    check_schema(locations_gdf, LOCATIONS_SCHEMA)
+
+    edge_locs = edge_df.select("orig_loc_id", "dest_loc_id").unique().to_pandas()
+    locs = locations_gdf[["loc_id", "geometry"]]
+
+    points = edge_locs.merge(locs.add_prefix("orig_"), on="orig_loc_id").merge(
+        locs.add_prefix("dest_"), on="dest_loc_id"
+    )
+
+    points["geometry"] = points[["orig_geometry", "dest_geometry"]].apply(lambda x: LineString(x), axis=1)
+    edges = points.drop(columns=["orig_geometry", "dest_geometry"]).set_geometry("geometry", crs=CRS)
+
+    return edge_df.to_pandas().merge(edges, on=["orig_loc_id", "dest_loc_id"]).set_geometry("geometry", crs=CRS)
+
+
+def _convert_to_point_geometry(locations_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    locations_gdf = locations_gdf.copy()
+    locations_gdf.set_geometry(gpd.points_from_xy(locations_gdf["lon"], locations_gdf["lat"], crs=CRS), inplace=True)
+
+    return locations_gdf
+
+
+def explore_locations_by_type(
+    locations_gdf: gpd.GeoDataFrame, m: folium.Map | None = None, tiles: str = TILES
 ) -> folium.Map:
+    locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
+    locations_gdf = _convert_to_point_geometry(locations_gdf)
+
+    location_type_color_map = {
+        "na": "#570408",
+        "subsector": "#9f1853",
+        "municipality_swiss": "#8a3ffc",
+        "municipality_french": "#8a3ffc",
+        "public_transport": "#1192e8",
+    }
+
+    colors = locations_gdf["type"].map(location_type_color_map)
+
+    return locations_gdf.explore(
+        m=m,
+        color=colors,
+        tiles=tiles,
+        tooltip=["loc_name", "loc_id", "type"],
+        marker_kwds={"radius": 4},
+    )
+
+
+def explore_locations_by_affluence(
+    user_journeys_df: pl.DataFrame,
+    locations_gdf: gpd.GeoDataFrame,
+    loc_id_column: str,
+    m: folium.Map | None = None,
+    tiles: str = TILES,
+) -> folium.Map:
+    check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)
+    check_schema(locations_gdf, LOCATIONS_SCHEMA)
+
     stops = locations_gdf.merge(
-        trips_df[loc_id_column].value_counts(name="num_visits").to_pandas(),
+        user_journeys_df[loc_id_column].value_counts(name="num_visits").to_pandas(),
         left_on="loc_id",
         right_on=loc_id_column,
         how="right",
     )
-    stops.set_geometry(gpd.points_from_xy(stops["lon"], stops["lat"], crs=CRS), inplace=True)
+    stops = _convert_to_point_geometry(stops)
 
     return stops.explore(
+        m=m,
         column="num_visits",
         cmap="viridis_r",
-        tiles="Cartodb Positron",
+        tiles=tiles,
         scheme="NaturalBreaks",
         k=10,
         tooltip=["loc_name", "num_visits"],
         marker_kwds={"radius": 5},
+    )
+
+
+def explore_pt_edges_by_mode(
+    pt_edge_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame, m: folium.Map | None = None, tiles: str = TILES
+):
+    pt_edge_df = check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA)
+    locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
+
+    route_mode_color_map = {Mode.BUS: "#82cfff", Mode.TRAMWAY: "#6929c4", Mode.TRAIN: "#0072c3", Mode.BOAT: "#005d5d"}
+    route_mode_color_map = defaultdict(lambda: "#1192e8", **route_mode_color_map)
+
+    formatted_routes_expr = pl.format(
+        "{} (T={} min / H={} min) - {}",
+        pl.element().struct.field("route_name"),
+        pl.element().struct.field("avg_travel_time_min").round(1),
+        pl.element().struct.field("avg_headway_min").round(1),
+        pl.element().struct.field("route_id"),
+    )
+
+    _map_edges = (
+        pt_edge_df.group_by("orig_loc_id", "dest_loc_id", "route_mode")
+        .agg(
+            travel_time_min=pl.col("avg_travel_time_min").mean(),
+            route_attrs=pl.struct(["route_id", "route_name", "avg_travel_time_min", "avg_headway_min"]).unique(),
+        )
+        .with_columns(pl.col("route_attrs").list.eval(formatted_routes_expr).list.join("<br />"))
+    )
+
+    map_edges_gdf = add_line_geometry_to_edge_df(_map_edges, locations_gdf)
+    route_mode_colors = map_edges_gdf["route_mode"].map(route_mode_color_map).astype(str)
+
+    return map_edges_gdf.explore(
+        m=m,
+        tiles=tiles,
+        # column="route_mode",
+        color=route_mode_colors,
+        tooltip=["route_mode", "travel_time_min", "route_attrs"],
+        style_kwds={"weight": 3, "opacity": 0.5},
     )

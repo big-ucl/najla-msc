@@ -11,7 +11,16 @@ import activitygraphs.exploration.dataprocessing as dp
 from activitygraphs import utils
 from activitygraphs.config import DataConfig, GenevaDataConfig
 from activitygraphs.data.gtfs import GTFSInputs
-from activitygraphs.network import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, NA_LAT, NA_LON, USER_JOURNEY_SCHEMA, Mode
+from activitygraphs.network import (
+    CRS,
+    LOCATIONS_COLUMNS,
+    LOCATIONS_SCHEMA,
+    NA_LAT,
+    NA_LON,
+    USER_JOURNEY_SCHEMA,
+    Mode,
+    NetworkData,
+)
 from activitygraphs.utils import check_schema
 
 LOCATION_REGEXES = {
@@ -80,7 +89,7 @@ class GenevaInputs:
     gtfs: GTFSInputs
 
 
-class GenevaData:
+class GenevaData(NetworkData):
     def __init__(self, inputs: GenevaInputs, locations_gdf: gpd.GeoDataFrame, user_journeys_df: pl.DataFrame):
         self.inputs = inputs
         self.user_journeys_df = check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)

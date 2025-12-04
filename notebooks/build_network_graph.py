@@ -37,7 +37,7 @@ def _():
 
 @app.cell
 def _(gva_data):
-    gva_data.locations_df
+    gva_data.locations_gdf
     return
 
 
@@ -87,7 +87,38 @@ def _():
     Current data:
     - 1736 nodes, 1141 of which are PT nodes
     - 6639 unique (`loc_id`, `route_id`) pairs
+
+    Leaning towards multi-nodes.
     """)
+    return
+
+
+@app.cell
+def _(gva_data, pt_edge_df):
+    from activitygraphs.network import explore_locations_by_type, explore_pt_edges_by_mode
+
+    pt_edges_with_non_null_headways_df = pt_edge_df.drop_nulls("avg_headway_min")
+
+    m = explore_pt_edges_by_mode(pt_edges_with_non_null_headways_df, gva_data.locations_gdf)
+    m = explore_locations_by_type(gva_data.locations_gdf, m=m)
+
+    m
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(gva_data):
+    gva_data.locations_df
+    return
+
+
+@app.cell
+def _():
     return
 
 
