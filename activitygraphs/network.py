@@ -81,14 +81,22 @@ class Mode(StrEnum):
     CAR = "mode_car"
 
 
-route_mode_color_map = {
+ROUTE_MODE_COLOUR_MAP = {
     Mode.BUS: "#82cfff",
     Mode.TRAMWAY: "#6929c4",
     Mode.TRAIN: "#0072c3",
     Mode.BOAT: "#005d5d",
     Mode.WALK: "#8a3800",
 }
-route_mode_color_map = defaultdict(lambda: "#1192e8", **route_mode_color_map)
+ROUTE_MODE_COLOUR_MAP = defaultdict(lambda: "#1192e8", **ROUTE_MODE_COLOUR_MAP)
+
+LOCATION_TYPE_COLOR_MAP = {
+    "na": "#570408",
+    "subsector": "#9f1853",
+    "municipality_swiss": "#8a3ffc",
+    "municipality_french": "#8a3ffc",
+    "public_transport": "#1192e8",
+}
 
 
 def add_line_geometry_to_edge_df(edge_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -116,27 +124,34 @@ def _convert_to_point_geometry(locations_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFr
 
 
 def explore_locations_by_type(
-    locations_gdf: gpd.GeoDataFrame, m: folium.Map | None = None, tiles: str = TILES
+    locations_gdf: gpd.GeoDataFrame,
+    types: str | list[str] | None = None,
+    as_points: bool = True,
+    m: folium.Map | None = None,
+    tiles: str = TILES,
 ) -> folium.Map:
     locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
-    locations_gdf = _convert_to_point_geometry(locations_gdf)
 
-    location_type_color_map = {
-        "na": "#570408",
-        "subsector": "#9f1853",
-        "municipality_swiss": "#8a3ffc",
-        "municipality_french": "#8a3ffc",
-        "public_transport": "#1192e8",
-    }
+    if types is not None:
+        types = [types] if isinstance(types, str) else types
+        locations_gdf = locations_gdf[locations_gdf["type"].isin(types)]
 
-    colors = locations_gdf["type"].map(location_type_color_map)
+    if as_points:
+        locations_gdf = _convert_to_point_geometry(locations_gdf)
+
+    colors = locations_gdf["type"].map(LOCATION_TYPE_COLOR_MAP)
+    marker_kwds = {"radius": 4} if as_points else {}
+    style_kwds = {} if as_points else {"opacity": 0.2, "fillOpacity": 0.05}
+    highlight_kwds = {} if as_points else {"fillOpacity": 0.2}
 
     return locations_gdf.explore(
         m=m,
         color=colors,
         tiles=tiles,
         tooltip=["loc_name", "loc_id", "type"],
-        marker_kwds={"radius": 4},
+        marker_kwds=marker_kwds,
+        style_kwds=style_kwds,
+        highlight_kwds=highlight_kwds,
     )
 
 
@@ -194,7 +209,7 @@ def explore_pt_edges_by_mode(
     )
 
     map_edges_gdf = add_line_geometry_to_edge_df(_map_edges, locations_gdf)
-    route_mode_colors = map_edges_gdf["route_mode"].map(route_mode_color_map).astype(str)
+    route_mode_colors = map_edges_gdf["route_mode"].map(ROUTE_MODE_COLOUR_MAP).astype(str)
 
     return map_edges_gdf.explore(
         m=m,
@@ -216,7 +231,7 @@ def explore_transfer_edges(
     check_schema(transfer_edge_df, TRANSFER_EDGE_LIST_SCHEMA)
     check_schema(locations_gdf, LOCATIONS_SCHEMA)
 
-    walk_color = route_mode_color_map[Mode.WALK]
+    walk_color = ROUTE_MODE_COLOUR_MAP[Mode.WALK]
 
     external_transfers = transfer_edge_df.filter(pl.col("orig_loc_id") != pl.col("dest_loc_id"))
     external_transfers_gdf = add_line_geometry_to_edge_df(external_transfers, locations_gdf)
@@ -243,3 +258,33 @@ def explore_transfer_edges(
     m = route_transfer_locs_df.explore(m=m, tiles=tiles, color=walk_color)
 
     return m
+
+
+def add_legend_pane_to_map(m: folium.Map, legends: dict[str, dict[str, str]]):
+    legend_html = """
+    <div style="
+        position: fixed;
+        bottom: 40px;
+        right: 40px;
+        z-index:9999;
+        background-color:white;
+        padding: 10px;
+        border:2px solid grey;
+        border-radius:5px;
+        font-size:14px;
+    ">
+    """
+
+    for legend_name, colour_map in legends.items():
+        legend_html += f"<b>{legend_name}</b><br>"
+
+        for element, colour in colour_map.items():
+            legend_html += f"""
+                <div style="display: flex; align-items: center">
+                    <i style="background: {colour}; width: 10px; height: 10px; margin-right: 5px;"></i> {element}
+                </div>
+            """
+
+    legend_html += "</div>"
+
+    m.get_root().html.add_child(folium.Element(legend_html))
