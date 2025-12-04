@@ -56,6 +56,14 @@ PT_EDGE_LIST_SCHEMA = pl.Schema({
     "route_name": pl.String,
 })
 
+TRANSFER_EDGE_LIST_SCHEMA = pl.Schema({
+    "orig_loc_id": pl.String,
+    "orig_route_id": pl.String,
+    "dest_loc_id": pl.String,
+    "dest_route_id": pl.String,
+    "transfer_time_min": pl.Float64,
+})
+
 
 class Mode(StrEnum):
     OTHER = "mode_other"
@@ -71,6 +79,16 @@ class Mode(StrEnum):
     TRAMWAY = "mode_tramway"
     VEH_PASS = "mode_vehicle_passenger"
     CAR = "mode_car"
+
+
+route_mode_color_map = {
+    Mode.BUS: "#82cfff",
+    Mode.TRAMWAY: "#6929c4",
+    Mode.TRAIN: "#0072c3",
+    Mode.BOAT: "#005d5d",
+    Mode.WALK: "#8a3800",
+}
+route_mode_color_map = defaultdict(lambda: "#1192e8", **route_mode_color_map)
 
 
 def add_line_geometry_to_edge_df(edge_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -158,9 +176,6 @@ def explore_pt_edges_by_mode(
     pt_edge_df = check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA)
     locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
 
-    route_mode_color_map = {Mode.BUS: "#82cfff", Mode.TRAMWAY: "#6929c4", Mode.TRAIN: "#0072c3", Mode.BOAT: "#005d5d"}
-    route_mode_color_map = defaultdict(lambda: "#1192e8", **route_mode_color_map)
-
     formatted_routes_expr = pl.format(
         "{} (T={} min / H={} min) - {}",
         pl.element().struct.field("route_name"),
@@ -189,3 +204,42 @@ def explore_pt_edges_by_mode(
         tooltip=["route_mode", "travel_time_min", "route_attrs"],
         style_kwds={"weight": 3, "opacity": 0.5},
     )
+
+
+def explore_transfer_edges(
+    transfer_edge_df: pl.DataFrame,
+    locations_gdf: gpd.GeoDataFrame,
+    show_locations: bool = False,
+    m: folium.Map | None = None,
+    tiles: str = TILES,
+) -> folium.Map:
+    check_schema(transfer_edge_df, TRANSFER_EDGE_LIST_SCHEMA)
+    check_schema(locations_gdf, LOCATIONS_SCHEMA)
+
+    walk_color = route_mode_color_map[Mode.WALK]
+
+    external_transfers = transfer_edge_df.filter(pl.col("orig_loc_id") != pl.col("dest_loc_id"))
+    external_transfers_gdf = add_line_geometry_to_edge_df(external_transfers, locations_gdf)
+    m = external_transfers_gdf.explore(
+        m=m,
+        tiles=tiles,
+        style_kwds={"weight": 3, "opacity": 0.5, "color": walk_color, "dashArray": "10"},
+    )
+
+    if not show_locations:
+        return m
+
+    internal_transfers = transfer_edge_df.filter(
+        pl.col("orig_loc_id") == pl.col("dest_loc_id"), dest_route_id="transfer_route"
+    )
+
+    route_transfer_locs_df = (
+        internal_transfers.rename({"orig_loc_id": "loc_id"})
+        .group_by("loc_id")
+        .agg(pl.col("transfer_time_min").first(), num_transfers=pl.len())
+    )
+    route_transfer_locs_df = locations_gdf.merge(route_transfer_locs_df.to_pandas(), on="loc_id")
+
+    m = route_transfer_locs_df.explore(m=m, tiles=tiles, color=walk_color)
+
+    return m

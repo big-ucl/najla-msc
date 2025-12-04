@@ -6,6 +6,9 @@ import polars.selectors as cs
 from activitygraphs.network import PT_EDGE_LIST_SCHEMA, Mode
 from activitygraphs.utils import check_schema
 
+TRANSFER_ROUTE_ID = "transfer_route"
+DEFAULT_TRANSFER_TIME_MIN = 2
+
 
 @dataclass(frozen=True)
 class GTFSInputs:
@@ -75,7 +78,7 @@ def build_pt_network_edges(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> tupl
     pt_edge_df = add_route_attributes_to_edges(pt_edge_df, gtfs)
     pt_edge_df = pt_edge_df.select(PT_EDGE_LIST_SCHEMA.keys())
 
-    transfer_edge_df = create_transfer_edges(gtfs)
+    transfer_edge_df = create_transfer_edges(pt_edge_df, gtfs)
 
     return check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA), transfer_edge_df
 
@@ -163,8 +166,9 @@ def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl
     return edge_df.join(active_routes_df, on="route_id")
 
 
-def create_transfer_edges(gtfs: GTFSInputs) -> pl.DataFrame:
-    return (
+def create_transfer_edges(pt_edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.DataFrame:
+    # Compute average transfer time in minutes between loc_ids
+    gtfs_transfers = (
         gtfs.transfers_df.join(
             gtfs.stops_df.select("stop_id", orig_loc_id="loc_id"), left_on="from_stop_id", right_on="stop_id"
         )
@@ -174,3 +178,35 @@ def create_transfer_edges(gtfs: GTFSInputs) -> pl.DataFrame:
         .with_columns(transfer_time_min=pl.col("min_transfer_time").list.mean() / 60)
         .select("orig_loc_id", "dest_loc_id", "transfer_time_min")
     )
+
+    # For every (route_id, loc_id) pair, add an incoming edge from the pair to the central (TRANSFER_ROUTE_ID, loc_id) node
+    # The incoming edge has a transfer time defined in the GTFS or the default transfer time if not defined
+    pt_nodes_df = pl.concat([
+        pt_edge_df.select("route_id", loc_id="orig_loc_id"),
+        pt_edge_df.select("route_id", loc_id="dest_loc_id"),
+    ]).unique()
+
+    incoming_transfers = pt_nodes_df.select(
+        orig_loc_id="loc_id", orig_route_id="route_id", dest_loc_id="loc_id", dest_route_id=pl.lit(TRANSFER_ROUTE_ID)
+    )
+    incoming_transfers = incoming_transfers.join(
+        gtfs_transfers, on=["orig_loc_id", "dest_loc_id"], how="left"
+    ).with_columns(pl.col("transfer_time_min").fill_null(DEFAULT_TRANSFER_TIME_MIN))
+
+    # Similarly, an outgoing edge from the central (TRANSFER_ROUTE_ID, loc_id) node to the (route_id, loc_id) pair, with no travel time
+    outgoing_transfers = pt_nodes_df.select(
+        orig_loc_id="loc_id",
+        orig_route_id=pl.lit(TRANSFER_ROUTE_ID),
+        dest_loc_id="loc_id",
+        dest_route_id="route_id",
+        transfer_time_min=0.0,
+    )
+
+    # Add the GTFS transfers between different loc_ids
+    inter_loc_transfers = (
+        gtfs_transfers.filter(pl.col("orig_loc_id") != pl.col("dest_loc_id"))
+        .with_columns(orig_route_id=pl.lit(TRANSFER_ROUTE_ID), dest_route_id=pl.lit(TRANSFER_ROUTE_ID))
+        .select(incoming_transfers.columns)
+    )
+
+    return pl.concat([inter_loc_transfers, incoming_transfers, outgoing_transfers])

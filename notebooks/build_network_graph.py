@@ -94,26 +94,16 @@ def _():
 
 
 @app.cell
-def _(gva_data, pt_edge_df):
-    from activitygraphs.network import explore_locations_by_type, explore_pt_edges_by_mode
+def _(gva_data, pt_edge_df, transfer_edge_df):
+    from activitygraphs.network import explore_pt_edges_by_mode, explore_transfer_edges, explore_locations_by_type
 
     pt_edges_with_non_null_headways_df = pt_edge_df.drop_nulls("avg_headway_min")
 
     m = explore_pt_edges_by_mode(pt_edges_with_non_null_headways_df, gva_data.locations_gdf)
+    m = explore_transfer_edges(transfer_edge_df, gva_data.locations_gdf, m=m)
     m = explore_locations_by_type(gva_data.locations_gdf, m=m)
 
     m
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _(gva_data):
-    gva_data.locations_df
     return
 
 
