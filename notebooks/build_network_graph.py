@@ -95,13 +95,18 @@ def _():
 
 @app.cell
 def _(gva_data, pt_edge_df, transfer_edge_df):
-    from activitygraphs.network import explore_pt_edges_by_mode, explore_transfer_edges, explore_locations_by_type, add_legend_pane_to_map
+    from activitygraphs.network import (
+        explore_pt_edges_by_mode,
+        explore_transfer_edges,
+        explore_locations_by_type,
+        add_legend_pane_to_map,
+    )
     from activitygraphs.network import ROUTE_MODE_COLOUR_MAP, LOCATION_TYPE_COLOR_MAP
 
     pt_edges_with_non_null_headways_df = pt_edge_df.drop_nulls("avg_headway_min")
     legends = {
-        "Transport modes": ROUTE_MODE_COLOUR_MAP,
-        "Location types": LOCATION_TYPE_COLOR_MAP,
+        "Transport modes": ("line", ROUTE_MODE_COLOUR_MAP),
+        "Location types": ("circle", LOCATION_TYPE_COLOR_MAP),
     }
 
     m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector", "municipality_french"], as_points=False)

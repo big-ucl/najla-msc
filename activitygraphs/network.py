@@ -260,7 +260,7 @@ def explore_transfer_edges(
     return m
 
 
-def add_legend_pane_to_map(m: folium.Map, legends: dict[str, dict[str, str]]):
+def add_legend_pane_to_map(m: folium.Map, legends: dict[str, tuple[str, dict[str, str]]]):
     legend_html = """
     <div style="
         position: fixed;
@@ -275,13 +275,29 @@ def add_legend_pane_to_map(m: folium.Map, legends: dict[str, dict[str, str]]):
     ">
     """
 
-    for legend_name, colour_map in legends.items():
+    def create_icon(shape: str, col: str):
+        translucent = col + "C0"
+
+        if shape == "circle":
+            return f'<i style="border: 1px {col}; background: {translucent}; width: 10px; height: 10px; margin-right: 5px; border-radius: 10px"></i>'
+
+        if shape == "square":
+            return f'<i style="border: 1px {col}; background: {translucent}; width: 10px; height: 10px; margin-right: 5px;"></i>'
+
+        if shape == "line":
+            return f'<i style="background: {col}; width: 10px; height: 3px; margin-right: 5px;"></i>'
+
+        return ""
+
+    for legend_name, (icon_shape, colour_map) in legends.items():
         legend_html += f"<b>{legend_name}</b><br>"
 
         for element, colour in colour_map.items():
+            icon = create_icon(icon_shape, colour)
+
             legend_html += f"""
                 <div style="display: flex; align-items: center">
-                    <i style="background: {colour}; width: 10px; height: 10px; margin-right: 5px;"></i> {element}
+                    {icon} {element}
                 </div>
             """
 
