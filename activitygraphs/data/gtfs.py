@@ -57,7 +57,9 @@ SAMPLE_DAY_START = pl.time(6, 0, 0)
 SAMPLE_DAY_END = pl.time(21, 0, 0)
 
 
-def build_pt_network_edges(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> tuple[pl.DataFrame, pl.DataFrame]:
+def build_pt_network_edges(
+    locations_df: pl.DataFrame, gtfs: GTFSInputs, drop_null_headways: bool = False
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     edge_ids = ["route_id", "orig_loc_id", "dest_loc_id"]
 
     active_stop_times = filter_active_stop_times(locations_df, gtfs)
@@ -70,7 +72,7 @@ def build_pt_network_edges(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> tupl
             first_departure_time=pl.col("orig_departure_time").min(),
             last_departure_time=pl.col("orig_departure_time").max(),
             avg_dwell_time_min=pl.col("orig_dwell_time_min").mean(),
-            avg_travel_time_min=pl.col("travel_time_min").mean(),
+            travel_time_min=pl.col("travel_time_min").mean(),
         )
         .join(headways_df, on=edge_ids, how="left")
     ).collect()
@@ -78,7 +80,10 @@ def build_pt_network_edges(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> tupl
     pt_edge_df = add_route_attributes_to_edges(pt_edge_df, gtfs)
     pt_edge_df = pt_edge_df.select(PT_EDGE_LIST_SCHEMA.keys())
 
-    transfer_edge_df = create_transfer_edges(pt_edge_df, gtfs)
+    if drop_null_headways:
+        pt_edge_df = pt_edge_df.drop_nulls("avg_headway_min")
+
+    transfer_edge_df = create_transfer_edges(pt_edge_df, locations_df, gtfs)
 
     return check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA), transfer_edge_df
 
@@ -166,17 +171,21 @@ def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl
     return edge_df.join(active_routes_df, on="route_id")
 
 
-def create_transfer_edges(pt_edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.DataFrame:
+def create_transfer_edges(pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.DataFrame:
+    # Include only stops appearing in the edge list
+    loc_ids = locations_df.select("loc_id")
+    stops = gtfs.stops_df.join(loc_ids, on="loc_id")
+
     # Compute average transfer time in minutes between loc_ids
     gtfs_transfers = (
         gtfs.transfers_df.join(
-            gtfs.stops_df.select("stop_id", orig_loc_id="loc_id"), left_on="from_stop_id", right_on="stop_id"
+            stops.select("stop_id", orig_loc_id="loc_id"), left_on="from_stop_id", right_on="stop_id"
         )
-        .join(gtfs.stops_df.select("stop_id", dest_loc_id="loc_id"), left_on="to_stop_id", right_on="stop_id")
+        .join(stops.select("stop_id", dest_loc_id="loc_id"), left_on="to_stop_id", right_on="stop_id")
         .group_by("orig_loc_id", "dest_loc_id")
         .agg(pl.col("min_transfer_time").unique())
-        .with_columns(transfer_time_min=pl.col("min_transfer_time").list.mean() / 60)
-        .select("orig_loc_id", "dest_loc_id", "transfer_time_min")
+        .with_columns(travel_time_min=pl.col("min_transfer_time").list.mean() / 60)
+        .select("orig_loc_id", "dest_loc_id", "travel_time_min")
     )
 
     # For every (route_id, loc_id) pair, add an incoming edge from the pair to the central (TRANSFER_ROUTE_ID, loc_id) node
@@ -191,7 +200,7 @@ def create_transfer_edges(pt_edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.Data
     )
     incoming_transfers = incoming_transfers.join(
         gtfs_transfers, on=["orig_loc_id", "dest_loc_id"], how="left"
-    ).with_columns(pl.col("transfer_time_min").fill_null(DEFAULT_TRANSFER_TIME_MIN))
+    ).with_columns(pl.col("travel_time_min").fill_null(DEFAULT_TRANSFER_TIME_MIN))
 
     # Similarly, an outgoing edge from the central (TRANSFER_ROUTE_ID, loc_id) node to the (route_id, loc_id) pair, with no travel time
     outgoing_transfers = pt_nodes_df.select(
@@ -199,7 +208,7 @@ def create_transfer_edges(pt_edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.Data
         orig_route_id=pl.lit(TRANSFER_ROUTE_ID),
         dest_loc_id="loc_id",
         dest_route_id="route_id",
-        transfer_time_min=0.0,
+        travel_time_min=0.0,
     )
 
     # Add the GTFS transfers between different loc_ids

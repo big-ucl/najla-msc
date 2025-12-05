@@ -73,6 +73,17 @@ def check_geopandas_schema(gdf: gpd.GeoDataFrame, schema: PandasSchema, ignore_e
     return gdf
 
 
+def check_geometry_shapes(geometry: gpd.GeoSeries, *shapes: str) -> gpd.GeoSeries:
+    geom_types: pd.Series = geometry.geom_type
+    is_valid = geom_types.isin(shapes)
+
+    if not is_valid.all():
+        invalid = list(geom_types[~is_valid].unique())
+        raise ValueError(f"Invalid shapes in geometry. Permitted: {shapes}, found {invalid}")
+
+    return geometry
+
+
 def check_shape(tensor: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
     """
     Checks that a Tensor has a given shape, ignores size of dimension if size is set to -1.

@@ -55,11 +55,19 @@ def _():
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+ 
+    """)
+    return
+
+
 @app.cell
 def _(gva_data):
     from activitygraphs.data.gtfs import build_pt_network_edges
 
-    pt_edge_df, transfer_edge_df = build_pt_network_edges(gva_data.locations_df, gva_data.gtfs)
+    pt_edge_df, transfer_edge_df = build_pt_network_edges(gva_data.locations_df, gva_data.gtfs, drop_null_headways=True)
     return pt_edge_df, transfer_edge_df
 
 
@@ -75,20 +83,10 @@ def _(transfer_edge_df):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ### Questions and To-Dos
-
-    **Question: Multi-edges or duplicate nodes?**
-
-    Do we do multi-edges between `loc_id`s with `route_id` as the edge type, or do we create one node per (`loc_id`, `route_id`) pair. If feasible, multi-nodes would get inter-line transfers for almost free, as well as cleaner interface in PyG.
-
-    Current data:
-    - 1736 nodes, 1141 of which are PT nodes
-    - 6639 unique (`loc_id`, `route_id`) pairs
-
-    Leaning towards multi-nodes.
+    PT edges (bus / tram / train / boat) between stops, as well as (official) walking transfers between stops. Geneva subsectors and french municipalities in the background.
     """)
     return
 
@@ -103,19 +101,177 @@ def _(gva_data, pt_edge_df, transfer_edge_df):
     )
     from activitygraphs.network import ROUTE_MODE_COLOUR_MAP, LOCATION_TYPE_COLOR_MAP
 
-    pt_edges_with_non_null_headways_df = pt_edge_df.drop_nulls("avg_headway_min")
     legends = {
         "Transport modes": ("line", ROUTE_MODE_COLOUR_MAP),
         "Location types": ("circle", LOCATION_TYPE_COLOR_MAP),
     }
 
-    m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector", "municipality_french"], as_points=False)
-    m = explore_pt_edges_by_mode(pt_edges_with_non_null_headways_df, gva_data.locations_gdf, m=m)
-    m = explore_transfer_edges(transfer_edge_df, gva_data.locations_gdf, m=m)
-    m = explore_locations_by_type(gva_data.locations_gdf, types=["public_transport", "na"], m=m)
-    add_legend_pane_to_map(m, legends)
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector", "municipality_french"], as_points=False)
+    _m = explore_pt_edges_by_mode(pt_edge_df, gva_data.locations_gdf, m=_m)
+    _m = explore_transfer_edges(transfer_edge_df, gva_data.locations_gdf, m=_m)
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["public_transport", "na"], m=_m)
+    add_legend_pane_to_map(_m, legends)
 
-    m
+    _m
+    return (explore_locations_by_type,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Walking layer
+
+    Add walking links between adjacent Geneva subsectors
+    """)
+    return
+
+
+@app.cell
+def _(gva_data):
+    municipality_types = ["municipality_french", "municipality_swiss"]
+
+    pt_stops = gva_data.locations_gdf[gva_data.locations_gdf["type"] == "public_transport"]
+    subsectors = gva_data.locations_gdf[gva_data.locations_gdf["type"] == "subsector"]
+    municipalities = gva_data.locations_gdf[gva_data.locations_gdf["type"].isin(municipality_types)]
+    return municipalities, pt_stops, subsectors
+
+
+@app.cell
+def _(subsectors):
+    from activitygraphs.network import build_planar_edges
+
+    subsector_walk_edge_df = build_planar_edges(subsectors, travel_time_f=0.0)
+    subsector_walk_edge_df
+    return (subsector_walk_edge_df,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Walking edges between subsectors
+    """)
+    return
+
+
+@app.cell
+def _(explore_locations_by_type, gva_data, subsector_walk_edge_df):
+    from activitygraphs.network import explore_walk_edges
+
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector"], as_points=False)
+    _m = explore_walk_edges(subsector_walk_edge_df, gva_data.locations_gdf, m=_m)
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector"], m=_m)
+    _m
+    return (explore_walk_edges,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Inter-layer links
+
+    Create three kinds of edges between different layers:
+      - Create edges between subsectors and PT stops within them, linking the PT layer with the subsector layer.
+      - Create edges between municipalities that do not have subsectors, and PT stops, linking the PT layer with (some of) the municipality layer
+      - Create edges between municipalities and subsectors within them, linking the subsectors with the municipalities layer
+    """)
+    return
+
+
+@app.cell
+def _(municipalities, pt_stops, subsectors):
+    import pandas as pd
+    from activitygraphs.network import build_layer_link_edges
+
+    _subsector_geom = subsectors.geometry.union_all()
+    _disjoints = municipalities[~municipalities.intersects(_subsector_geom)]
+    _overlaps = municipalities[municipalities.overlaps(_subsector_geom)]
+
+    _pt_municipalities = pd.concat([_disjoints, _overlaps])
+    pt_subsector_link_edge_df = build_layer_link_edges(subsectors, pt_stops, 0.0)
+    pt_municipality_link_edge_df = build_layer_link_edges(_pt_municipalities, pt_stops, 0.0)
+    pt_link_edge_df = pl.concat([pt_subsector_link_edge_df, pt_municipality_link_edge_df])
+
+    pt_link_edge_df
+    return (
+        build_layer_link_edges,
+        pt_municipality_link_edge_df,
+        pt_subsector_link_edge_df,
+    )
+
+
+@app.cell
+def _(build_layer_link_edges, municipalities, subsectors):
+    municipality_subsector_link_edge_df = build_layer_link_edges(municipalities, subsectors, 0.0)
+    municipality_subsector_link_edge_df
+    return (municipality_subsector_link_edge_df,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Links between subsectors and PT stops:
+    """)
+    return
+
+
+@app.cell
+def _(
+    explore_locations_by_type,
+    explore_walk_edges,
+    gva_data,
+    pt_subsector_link_edge_df,
+):
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector"], as_points=False)
+    _m = explore_walk_edges(pt_subsector_link_edge_df, gva_data.locations_gdf, m=_m)
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector", "public_transport"], m=_m)
+    _m
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Links between municipalities, both French and Swiss, and PT stops
+    """)
+    return
+
+
+@app.cell
+def _(
+    explore_locations_by_type,
+    explore_walk_edges,
+    gva_data,
+    pt_municipality_link_edge_df,
+):
+    _m = explore_locations_by_type(
+        gva_data.locations_gdf, types=["municipality_swiss", "municipality_french"], as_points=False
+    )
+    _m = explore_walk_edges(pt_municipality_link_edge_df, gva_data.locations_gdf, m=_m)
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["municipality_swiss", "municipality_french"], m=_m)
+    _m
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Links between municipalities and subsectors
+    """)
+    return
+
+
+@app.cell
+def _(
+    explore_locations_by_type,
+    explore_walk_edges,
+    gva_data,
+    municipality_subsector_link_edge_df,
+):
+    _m = explore_walk_edges(municipality_subsector_link_edge_df, gva_data.locations_gdf)
+    _m = explore_locations_by_type(
+        gva_data.locations_gdf, types=["subsector", "municipality_swiss", "municipality_french"], m=_m
+    )
+    _m
     return
 
 
