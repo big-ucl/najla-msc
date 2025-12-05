@@ -57,7 +57,7 @@ def check_geopandas_schema(gdf: gpd.GeoDataFrame, schema: PandasSchema, ignore_e
             f"Columns do not match schema. \nGot: {sorted(gdf.columns)}\nExpected: {sorted(schema.keys())}"
         )
 
-    if ignore_extra_cols and set(schema.keys()).issubset(set(gdf.columns)):
+    if ignore_extra_cols and not set(schema.keys()).issubset(set(gdf.columns)):
         missing = set(schema.keys()).difference(set(gdf.columns))
 
         raise ValueError(f"Columns do not match schema. \nGot: {sorted(schema.keys())}\nMissing columns: {missing}")
