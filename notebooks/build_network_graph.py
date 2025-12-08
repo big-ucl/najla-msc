@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.18.1"
+__generated_with = "0.18.3"
 app = marimo.App(width="full")
 
 with app.setup:
@@ -27,17 +27,46 @@ def _():
 
 
 @app.cell
+def _(gva_inputs):
+    _gdf = gpd.read_file(
+        "data/external/boundaries/swissboundaries3d_2025-04_2056_5728.shp/swissBOUNDARIES3D_1_5_TLM_HOHEITSGEBIET.shp"
+    )
+    _gdf = _gdf[_gdf["KANTONSNUM"] == 25].geometry.to_crs("EPSG:4326").union_all()
+    gva_inputs.localities_gdf.to_crs("EPSG:4326").within(_gdf)
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    - Avusy
+    - Bardonnex
+    - Carouge (GE)
+    - Collex-Bossy
+    - Corsier (GE)
+    - Lancy
+    - Perly-Certoux
+    - Pregny-Chambésy
+    """)
+    return
+
+
+@app.cell
 def _():
     from activitygraphs.data.geneva import load_files, build_geneva_data
 
     gva_inputs = load_files(cfg.data, project_root)
     gva_data = build_geneva_data(gva_inputs)
-    return (gva_data,)
+    return gva_data, gva_inputs
 
 
 @app.cell
-def _(gva_data):
-    gva_data.locations_gdf
+def _():
     return
 
 
@@ -106,7 +135,9 @@ def _(gva_data, pt_edge_df, transfer_edge_df):
         "Location types": ("circle", LOCATION_TYPE_COLOR_MAP),
     }
 
-    _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector", "municipality_french"], as_points=False)
+    _m = explore_locations_by_type(
+        gva_data.locations_gdf, types=["subsector", "municipality_swiss", "municipality_french"], as_points=False
+    )
     _m = explore_pt_edges_by_mode(pt_edge_df, gva_data.locations_gdf, m=_m)
     _m = explore_transfer_edges(transfer_edge_df, gva_data.locations_gdf, m=_m)
     _m = explore_locations_by_type(gva_data.locations_gdf, types=["public_transport", "na"], m=_m)
@@ -128,12 +159,19 @@ def _():
 
 @app.cell
 def _(gva_data):
-    municipality_types = ["municipality_french", "municipality_swiss"]
+    municipality_types = ["municipality_french", "municipality_swiss", "municipality_geneva"]
 
     pt_stops = gva_data.locations_gdf[gva_data.locations_gdf["type"] == "public_transport"]
     subsectors = gva_data.locations_gdf[gva_data.locations_gdf["type"] == "subsector"]
     municipalities = gva_data.locations_gdf[gva_data.locations_gdf["type"].isin(municipality_types)]
-    return municipalities, pt_stops, subsectors
+    geneva_municipalities = municipalities[municipalities["type"] == "municipality_geneva"]
+    non_geneva_municipalities = municipalities[municipalities["type"] != "municipality_geneva"]
+    return (
+        geneva_municipalities,
+        non_geneva_municipalities,
+        pt_stops,
+        subsectors,
+    )
 
 
 @app.cell
@@ -170,25 +208,21 @@ def _():
     ### Inter-layer links
 
     Create three kinds of edges between different layers:
-      - Create edges between subsectors and PT stops within them, linking the PT layer with the subsector layer.
-      - Create edges between municipalities that do not have subsectors, and PT stops, linking the PT layer with (some of) the municipality layer
-      - Create edges between municipalities and subsectors within them, linking the subsectors with the municipalities layer
+      - Create edges between subsectors of canton Geneva and PT stops within them, linking the PT layer with the subsector layer.
+      - Create edges between municipalities of canton Geneva and subsectors within them, linking the subsectors with the municipalities layer
+      - Create edges between municipalities outside of Geneva (France and rest of Switzerland), and PT stops, linking the PT layer with (some of) the municipality layer
     """)
     return
 
 
 @app.cell
-def _(municipalities, pt_stops, subsectors):
+def _(non_geneva_municipalities, pt_stops, subsectors):
     import pandas as pd
     from activitygraphs.network import build_layer_link_edges
 
-    _subsector_geom = subsectors.geometry.union_all()
-    _disjoints = municipalities[~municipalities.intersects(_subsector_geom)]
-    _overlaps = municipalities[municipalities.overlaps(_subsector_geom)]
 
-    _pt_municipalities = pd.concat([_disjoints, _overlaps])
     pt_subsector_link_edge_df = build_layer_link_edges(subsectors, pt_stops, 0.0)
-    pt_municipality_link_edge_df = build_layer_link_edges(_pt_municipalities, pt_stops, 0.0)
+    pt_municipality_link_edge_df = build_layer_link_edges(non_geneva_municipalities, pt_stops, 0.0)
     pt_link_edge_df = pl.concat([pt_subsector_link_edge_df, pt_municipality_link_edge_df])
 
     pt_link_edge_df
@@ -200,8 +234,8 @@ def _(municipalities, pt_stops, subsectors):
 
 
 @app.cell
-def _(build_layer_link_edges, municipalities, subsectors):
-    municipality_subsector_link_edge_df = build_layer_link_edges(municipalities, subsectors, 0.0)
+def _(build_layer_link_edges, geneva_municipalities, subsectors):
+    municipality_subsector_link_edge_df = build_layer_link_edges(geneva_municipalities, subsectors, 0.0, mode="centroid_nearest")
     municipality_subsector_link_edge_df
     return (municipality_subsector_link_edge_df,)
 
@@ -231,7 +265,7 @@ def _(
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Links between municipalities, both French and Swiss, and PT stops
+    Links between municipalities, both French and Swiss (but not from Geneva), and PT stops
     """)
     return
 
@@ -247,7 +281,9 @@ def _(
         gva_data.locations_gdf, types=["municipality_swiss", "municipality_french"], as_points=False
     )
     _m = explore_walk_edges(pt_municipality_link_edge_df, gva_data.locations_gdf, m=_m)
-    _m = explore_locations_by_type(gva_data.locations_gdf, types=["municipality_swiss", "municipality_french"], m=_m)
+    _m = explore_locations_by_type(
+        gva_data.locations_gdf, types=["public_transport", "municipality_swiss", "municipality_french"], m=_m
+    )
     _m
     return
 
@@ -267,11 +303,26 @@ def _(
     gva_data,
     municipality_subsector_link_edge_df,
 ):
-    _m = explore_walk_edges(municipality_subsector_link_edge_df, gva_data.locations_gdf)
-    _m = explore_locations_by_type(
-        gva_data.locations_gdf, types=["subsector", "municipality_swiss", "municipality_french"], m=_m
-    )
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["municipality_geneva", "subsector"], as_points=False)
+    _m = explore_walk_edges(municipality_subsector_link_edge_df, gva_data.locations_gdf, m=_m)
+    _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector", "municipality_geneva"], m=_m)
     _m
+    return
+
+
+@app.cell
+def _():
+    mo.md(r"""
+    TODO:
+    - add a `municipality_geneva` type to avoid the issues with linking PT stops to both munis and subsectors
+    - add a travel time calculation method
+    - start creating a PyG graph: heterogeneous graph?
+    """)
+    return
+
+
+@app.cell
+def _():
     return
 
 

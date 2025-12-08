@@ -23,6 +23,8 @@ from activitygraphs.network import (
 )
 from activitygraphs.utils import check_schema
 
+GENEVA_CANTON_CODE = 25
+
 LOCATION_REGEXES = {
     "subsector": r"([\s\S]+) - sous_secteur\s*$",
     "municipality_swiss": r"([\s\S]+) - (\d\d\d\d)\s*$",
@@ -84,6 +86,7 @@ class GenevaInputs:
     subsectors_gdf: gpd.GeoDataFrame
     postcodes_gdf: gpd.GeoDataFrame
     localities_gdf: gpd.GeoDataFrame
+    swiss_boundaries_gdf: gpd.GeoDataFrame
     french_gdf: gpd.GeoDataFrame
 
     gtfs: GTFSInputs
@@ -118,6 +121,7 @@ def load_files(cfg: GenevaDataConfig, project_root: Path | None = None) -> Genev
     subsectors_gdf = gpd.read_file(boundaries_path / boundaries_files.geneva_subsectors).to_crs(CRS)
     postcodes_gdf = gpd.read_file(boundaries_path / boundaries_files.swiss_postcodes).to_crs(CRS)
     localities_gdf = gpd.read_file(boundaries_path / boundaries_files.swiss_localities).to_crs(CRS)
+    boundaries_gdf = gpd.read_file(boundaries_path / boundaries_files.swiss_boundaries).to_crs(CRS)
     french_gdf = gpd.read_file(boundaries_path / boundaries_files.french_postcodes).to_crs(CRS)
 
     stops_df = pl.read_csv(
@@ -155,13 +159,20 @@ def load_files(cfg: GenevaDataConfig, project_root: Path | None = None) -> Genev
         stops_df, stop_times_df, trips_df, routes_df, agency_df, calendar_df, calendar_dates_df, transfers_df
     )
 
-    return GenevaInputs(raw_journeys_df, subsectors_gdf, postcodes_gdf, localities_gdf, french_gdf, gtfs)
+    return GenevaInputs(
+        raw_journeys_df, subsectors_gdf, postcodes_gdf, localities_gdf, boundaries_gdf, french_gdf, gtfs
+    )
 
 
 def build_geneva_data(inputs: GenevaInputs) -> GenevaData:
     # Create locations with all PT stops
     locations_gdf = build_geneva_locations(
-        inputs.gtfs.stops_df, inputs.subsectors_gdf, inputs.postcodes_gdf, inputs.localities_gdf, inputs.french_gdf
+        inputs.gtfs.stops_df,
+        inputs.subsectors_gdf,
+        inputs.postcodes_gdf,
+        inputs.localities_gdf,
+        inputs.swiss_boundaries_gdf,
+        inputs.french_gdf,
     )
 
     # Match user trips to existing locations then parse other columns
@@ -200,12 +211,13 @@ def build_geneva_locations(
     subsectors: gpd.GeoDataFrame,
     postcodes: gpd.GeoDataFrame,
     localities: gpd.GeoDataFrame,
+    swiss_boundaries: gpd.GeoDataFrame,
     french_gdf: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
     special_locations = _build_special_locations()
     pt_locations = _build_pt_locations(stops)
     subsector_locations = _build_subsector_locations(subsectors)
-    municipality_swiss_locations = _build_municipality_swiss_locations(postcodes, localities)
+    municipality_swiss_locations = _build_municipality_swiss_locations(postcodes, localities, swiss_boundaries)
     municipality_french_locations = _build_municipality_french_locations(french_gdf)
 
     return gpd.GeoDataFrame(
@@ -260,8 +272,27 @@ def _build_subsector_locations(subsectors_gdf: gpd.GeoDataFrame) -> gpd.GeoDataF
 
 
 def _build_municipality_swiss_locations(
-    postcodes_gdf: gpd.GeoDataFrame, localities_gdf: gpd.GeoDataFrame
+    postcodes_gdf: gpd.GeoDataFrame, localities_gdf: gpd.GeoDataFrame, boundaries_gdf: gpd.GeoDataFrame
 ) -> gpd.GeoDataFrame:
+    projected_crs = localities_gdf.estimate_utm_crs()
+    localities_gdf = localities_gdf.copy().to_crs(projected_crs)
+
+    geneva_boundaries_gdf = boundaries_gdf[boundaries_gdf["KANTONSNUM"] == GENEVA_CANTON_CODE]
+    geneva_shape = geneva_boundaries_gdf.geometry.to_crs(projected_crs).union_all()
+    geneva_locality_names = list(geneva_boundaries_gdf["NAME"]) + [
+        "Athenaz (Avusy)",
+        "La Croix-de-Rozon",
+        "Collex",
+        "Grand-Lancy",
+        "Petit-Lancy",
+        "Perly",
+        "Chambésy",
+        "Carouge GE",
+        "Corsier GE",
+    ]
+    localities_gdf["in_geneva"] = localities_gdf["NAME"].isin(geneva_locality_names)
+    localities_gdf["in_geneva"] = localities_gdf["in_geneva"] | localities_gdf.within(geneva_shape)
+
     postcodes_gdf = postcodes_gdf[["FK_LOCALIT", "ZIP_ID", "ZIP4", "geometry"]]
     postcodes_gdf = _add_lon_lat_from_centroid(postcodes_gdf, index_col="ZIP_ID")
     municipality_locations = localities_gdf.drop(columns=["geometry"]).merge(
@@ -272,7 +303,10 @@ def _build_municipality_swiss_locations(
     municipality_locations["loc_id"] = (
         "CH-" + municipality_locations["ZIP4"] + "-" + municipality_locations["INDEXNAME"]
     )
-    municipality_locations["type"] = "municipality_swiss"
+
+    in_geneva = municipality_locations["in_geneva"]
+    municipality_locations.loc[~in_geneva, "type"] = "municipality_swiss"
+    municipality_locations.loc[in_geneva, "type"] = "municipality_geneva"
 
     municipality_locations = municipality_locations.drop_duplicates(subset="loc_id", keep="first").reset_index()
     return municipality_locations[LOCATIONS_COLUMNS]
@@ -408,7 +442,9 @@ def match_loc_id_on_municipality_swiss(
     match_type_col: str,
 ):
     regex = LOCATION_REGEXES["municipality_swiss"]
-    municipalities = all_locations_df.filter(pl.col("type") == "municipality_swiss").select("loc_id", "loc_name")
+    municipalities = all_locations_df.filter(
+        pl.col("type").is_in(["municipality_swiss", "municipality_geneva"])
+    ).select("loc_id", "loc_name")
     does_regex_match_expr = (
         pl.col(loc_id_col).is_null() & ~pl.col("loc_id").is_null() & pl.col(stop_name_col).str.contains(regex)
     )

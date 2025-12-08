@@ -25,6 +25,7 @@ class GenevaBoundaryFiles:
     french_postcodes: str
     swiss_postcodes: str
     swiss_localities: str
+    swiss_boundaries: str
 
 
 @dataclass

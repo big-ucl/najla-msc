@@ -108,6 +108,7 @@ ROUTE_MODE_COLOUR_MAP = defaultdict(lambda: "#1192e8", **ROUTE_MODE_COLOUR_MAP)
 LOCATION_TYPE_COLOR_MAP = {
     "na": "#570408",
     "subsector": "#9f1853",
+    "municipality_geneva": "#8a3ffc",
     "municipality_swiss": "#8a3ffc",
     "municipality_french": "#8a3ffc",
     "public_transport": "#1192e8",
@@ -129,18 +130,22 @@ def build_layer_link_edges(
     lower_locations_gdf: gpd.GeoDataFrame,
     upper_locations_gdf: gpd.GeoDataFrame,
     travel_time_f: TravelTimeFactory,
-    mode: Literal["strict", "nearest"] = "strict",
+    mode: Literal["strict", "centroid_strict", "nearest", "centroid_nearest"] = "strict",
     direction: Literal["both", "ascending", "descending"] = "both",
 ) -> pl.DataFrame:
     check_schema(lower_locations_gdf, LOCATIONS_SCHEMA)
     check_schema(upper_locations_gdf, LOCATIONS_SCHEMA)
 
-    upper = upper_locations_gdf[["loc_id", "geometry"]]
-    lower = lower_locations_gdf[["loc_id", "geometry"]]
+    if mode == "centroid_strict" or mode == "centroid_nearest":
+        upper_locations_gdf = _convert_to_point_geometry(upper_locations_gdf)
 
-    if mode == "strict":
+    projected_crs = upper_locations_gdf.estimate_utm_crs()
+    upper = upper_locations_gdf[["loc_id", "geometry"]].to_crs(projected_crs)
+    lower = lower_locations_gdf[["loc_id", "geometry"]].to_crs(projected_crs)
+
+    if mode == "strict" or mode == "centroid_strict":
         intersection = upper.sjoin(lower, predicate="intersects")
-    elif mode == "nearest":
+    elif mode == "nearest" or mode == "centroid_nearest":
         intersection = upper.sjoin_nearest(lower)
     else:
         raise ValueError(f"Invalid mode {mode}, must be 'strict' or 'nearest'")
