@@ -23,6 +23,7 @@ dependencies = [
     "pandas-stubs==2.3.3.251201",
     "plotly>=6.1.2",
     "polars[pyarrow]>=1.30.0",
+    "pypolyline>=0.5.6",
     "pyproj>=3.7.1",
     "pytest>=9.0.1",
     "pyzmq>=27.1.0",

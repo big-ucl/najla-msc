@@ -25,6 +25,7 @@ dependencies = [
     { name = "pandas-stubs" },
     { name = "plotly" },
     { name = "polars", extra = ["pyarrow"] },
+    { name = "pypolyline" },
     { name = "pyproj" },
     { name = "pytest" },
     { name = "pyzmq" },
@@ -60,6 +61,7 @@ requires-dist = [
     { name = "pandas-stubs", specifier = "==2.3.3.251201" },
     { name = "plotly", specifier = ">=6.1.2" },
     { name = "polars", extras = ["pyarrow"], specifier = ">=1.30.0" },
+    { name = "pypolyline", specifier = ">=0.5.6" },
     { name = "pyproj", specifier = ">=3.7.1" },
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "pyzmq", specifier = ">=27.1.0" },
@@ -2563,6 +2565,32 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f2/a5/181488fc2b9d093e3972d2a472855aae8a03f000592dbfce716a512b3359/pyparsing-3.2.5.tar.gz", hash = "sha256:2df8d5b7b2802ef88e8d016a2eb9c7aeaa923529cd251ed0fe4608275d4105b6", size = 1099274, upload-time = "2025-09-21T04:11:06.277Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/5e/1aa9a93198c6b64513c9d7752de7422c06402de6600a8767da1524f9570b/pyparsing-3.2.5-py3-none-any.whl", hash = "sha256:e38a4f02064cf41fe6593d328d0512495ad1f3d8a91c4f73fc401b3079a59a5e", size = 113890, upload-time = "2025-09-21T04:11:04.117Z" },
+]
+
+[[package]]
+name = "pypolyline"
+version = "0.5.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/e4/b8f7024546253c2d40fba4824e832d5c758d368ccc36e4e97644179b2e65/pypolyline-0.5.6.tar.gz", hash = "sha256:b55dcb921a17517bbba5a697fc9633a9b6ffbbb88bd6212b92e3ebb280756649", size = 19586, upload-time = "2025-10-21T09:48:53.186Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/37/c8/2b8ed5f76628a8559fb36334a85b80de2c01e4aeca4354fe3d9fad00c334/pypolyline-0.5.6-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:cad68e286a3d5025fedc663c1e54b92e4e2bdc4297064cb4b7ffc5ecfc59564d", size = 259446, upload-time = "2025-10-21T09:48:30.59Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/53/d3af6805893a86dcd65369046a7083df78fcece77471230f0dbc97e3ab6e/pypolyline-0.5.6-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:3fcb60db4b867c0ed44d6956dac910cfccd3d68a2332d49c0e137c4eaa991162", size = 247200, upload-time = "2025-10-21T09:48:31.832Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/58/70ce6dcc7474bf091f9da2f8841c76b904e0dab839e7f346e9c487f1d4c3/pypolyline-0.5.6-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e98f924223435400d2c2828fec678da5d99d487a2e796e776a85189a6d00121f", size = 678789, upload-time = "2025-10-21T09:48:33.49Z" },
+    { url = "https://files.pythonhosted.org/packages/70/4a/9ffca63a46b4fc557f566d84070bd983a5528835312ee00ae90edfa9a239/pypolyline-0.5.6-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d50644bfb6802ceee5aa362bcd75c335facc6708cccaff3910a23b4391dfcdce", size = 691399, upload-time = "2025-10-21T09:48:34.794Z" },
+    { url = "https://files.pythonhosted.org/packages/72/c5/abacbcd2f312f783517af1f6a8ee0a2431327892e1474a3ff546057eadc6/pypolyline-0.5.6-cp312-cp312-win_amd64.whl", hash = "sha256:c127dfe81fe324a21b7eda91158f2d88b8f2980f8bbec90009cfa0c4236acdc2", size = 142976, upload-time = "2025-10-21T09:48:35.986Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/5d/7085a7eefdbb67eda9b0b90f601794c41c90687c15d9de3ce3301b7d2b74/pypolyline-0.5.6-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:3e4d4dc61b80a9259f1dbc37078148b2b6ec4a90793cc22821c8eff2a7403ba9", size = 258315, upload-time = "2025-10-21T09:48:37.241Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/94/2de27b7aae1f8b0fb6a92eda5412b38e26988fe2e247262f3a622f4a4114/pypolyline-0.5.6-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:e2e6497ca9bbc23fe39a98bdf8e05825bbd56db688c40d19e3b5152052b4c0ec", size = 246208, upload-time = "2025-10-21T09:48:38.816Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/45/5df89116b0e6a3975e05f694dae51252faf25164dd5b973057f2cdc7c06e/pypolyline-0.5.6-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c5aa577b294d581219a05ef760453aafc0c6287d3fd3a77105c2945bcf8de022", size = 674562, upload-time = "2025-10-21T09:48:40.121Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/ff/85add5e27a0a36d3835d4af289ac3858072b38f6b2502f930690bbef65ac/pypolyline-0.5.6-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:520e58cd36c50d95c69c03fb21a04e2d35031de1e61967b7ef7a165aa4f4a6cb", size = 687507, upload-time = "2025-10-21T09:48:41.541Z" },
+    { url = "https://files.pythonhosted.org/packages/61/85/24440e86ef809ce2065728b40f1ba871f06330b77dd3ef837763c3df9ca7/pypolyline-0.5.6-cp313-cp313-win_amd64.whl", hash = "sha256:4911383ef6970ee53d1e17ab6c10f28c3dee35beb3ec6e788d8914107c5dfa43", size = 142728, upload-time = "2025-10-21T09:48:42.848Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/17/ef4c8da1c285812a6178432bc9c1236c945f589d3fd7b6d0084c7bcc9dad/pypolyline-0.5.6-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:ad710d94ad297f442ca22a4d93712dfcaecea3bc4176b0b09a8cb0cfab167ced", size = 258531, upload-time = "2025-10-21T09:48:44.083Z" },
+    { url = "https://files.pythonhosted.org/packages/14/f9/1063b01cb696c1a195090588d030b001fb46292791fdf5fc71c05deb02bb/pypolyline-0.5.6-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:7d553ce6b957f57ecc644170ca012c9482041ffca4f309618f2c3976c36d702b", size = 247096, upload-time = "2025-10-21T09:48:45.345Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/7e/be04ad224bf316668b39839c7e38a50f97c2334050d1218098755f297088/pypolyline-0.5.6-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0f68e3e9ef21c6b66720e275c3e48597509dac7674ac1d7f5acf2d4037ae684d", size = 673931, upload-time = "2025-10-21T09:48:46.675Z" },
+    { url = "https://files.pythonhosted.org/packages/61/ad/26021f73ebd30717ae00dafea7b8f2ccc388e9bcf3f329e7be5899a53f32/pypolyline-0.5.6-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2035138e30203cf9997d05cba38be808d3440c8e718fba29f41133ac6535779a", size = 683847, upload-time = "2025-10-21T09:48:49.898Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/e4/a9c387b735bfe3411ed5a3aab7d9e702e933ad84d28314b34d848da9040d/pypolyline-0.5.6-cp314-cp314-win_amd64.whl", hash = "sha256:b0ba698778012f931ffa53d64f466ec7c1a14aba8705df5eccca15d76ae9a49f", size = 146684, upload-time = "2025-10-21T09:48:52.098Z" },
 ]
 
 [[package]]

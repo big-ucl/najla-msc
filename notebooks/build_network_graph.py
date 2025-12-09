@@ -235,7 +235,9 @@ def _(non_geneva_municipalities, pt_stops, subsectors):
 
 @app.cell
 def _(build_layer_link_edges, geneva_municipalities, subsectors):
-    municipality_subsector_link_edge_df = build_layer_link_edges(geneva_municipalities, subsectors, 0.0, mode="centroid_nearest")
+    municipality_subsector_link_edge_df = build_layer_link_edges(
+        geneva_municipalities, subsectors, 0.0, mode="centroid_nearest"
+    )
     municipality_subsector_link_edge_df
     return (municipality_subsector_link_edge_df,)
 
@@ -314,10 +316,79 @@ def _(
 def _():
     mo.md(r"""
     TODO:
-    - add a `municipality_geneva` type to avoid the issues with linking PT stops to both munis and subsectors
     - add a travel time calculation method
     - start creating a PyG graph: heterogeneous graph?
     """)
+    return
+
+
+@app.cell
+def _(subsector_walk_edge_df):
+    import networkx as nx
+
+    G = nx.from_pandas_edgelist(subsector_walk_edge_df.to_pandas(), source="orig_loc_id", target="dest_loc_id")
+    set(nx.greedy_color(G, "saturation_largest_first").values())
+    return
+
+
+@app.cell
+def _():
+    import matplotlib.pyplot as plt
+    return
+
+
+@app.cell
+def _(gva_data, subsector_walk_edge_df):
+    walk_loc_ids = pl.concat([
+        subsector_walk_edge_df.select(loc_id="orig_loc_id"),
+        subsector_walk_edge_df.select(loc_id="dest_loc_id"),
+    ]).unique().sort("loc_id").with_row_index()
+    walk_locations_df = (
+        walk_loc_ids.join(gva_data.locations_df, on="loc_id")
+        .sort("loc_id")
+        .with_columns(coords=pl.format("{},{}", pl.col("lon"), pl.col("lat")))
+    )
+    walk_locations_df
+    return (walk_locations_df,)
+
+
+@app.cell
+def _(walk_locations_df):
+    import requests
+    from pypolyline.cutil import encode_coordinates
+
+    mode = "foot"
+    coordinates = walk_locations_df["coords"][:10].str.join("\n").item()
+    polyline = encode_coordinates(list(walk_locations_df.select("lon", "lat").iter_rows()), 5).decode()
+    osrm = f"http://127.0.0.1:5000/table/v1/driving/polyline({polyline})"
+
+    response = requests.get(osrm)
+    return (response,)
+
+
+@app.cell
+def _(response):
+    import numpy as np
+
+    if response.ok and (json := response.json())["code"] == "Ok":
+        durations = np.array(json["durations"]) / 60
+        print(durations)
+    return durations, json
+
+
+@app.cell
+def _(json):
+    json.keys()
+    return
+
+
+@app.cell
+def _(durations, subsector_walk_edge_df, walk_locations_df):
+    edge_indices = subsector_walk_edge_df.join(walk_locations_df.select(orig_index="index", orig_loc_id="loc_id"), on="orig_loc_id").join(walk_locations_df.select(dest_index="index", dest_loc_id="loc_id"), on="dest_loc_id")
+    edge_indices_np = edge_indices.select("orig_index", "dest_index").to_numpy()
+
+    travel_times = durations[edge_indices_np[:, 0], edge_indices_np[:, 1]]
+    subsector_walk_edge_df.with_columns(travel_time_min=travel_times)
     return
 
 
