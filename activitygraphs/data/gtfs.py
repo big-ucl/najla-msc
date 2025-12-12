@@ -3,7 +3,8 @@ from dataclasses import dataclass
 import polars as pl
 import polars.selectors as cs
 
-from activitygraphs.network import PT_EDGE_LIST_SCHEMA, Mode
+from activitygraphs.mode import Mode
+from activitygraphs.network import PT_EDGE_LIST_SCHEMA
 from activitygraphs.utils import check_schema
 
 TRANSFER_ROUTE_ID = "transfer_route"

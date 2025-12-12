@@ -1,8 +1,10 @@
+from typing import Iterator, Self
+
 import exploration.dataprocessing as dp
 import networkx as nx
 import polars as pl
 
-from typing import Self, Iterator
+import activitygraphs.mode
 
 NODELIST_SCHEMA = pl.Schema({
     "hh_id": pl.String,
@@ -184,7 +186,7 @@ def _generate_node_and_edgelist(hh_person_df: pl.DataFrame, trip_df: pl.DataFram
 
 def _generate_hh_graph(nodelist_df: pl.DataFrame, edgelist_df: pl.DataFrame) -> nx.MultiDiGraph:
     edgelist_df = edgelist_df.with_columns(
-        pl.col("mode").map_elements(dp.Mode, return_dtype=pl.Object),
+        pl.col("mode").map_elements(activitygraphs.mode.Mode, return_dtype=pl.Object),
     )
 
     G = nx.from_pandas_edgelist(

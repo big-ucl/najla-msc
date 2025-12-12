@@ -11,6 +11,7 @@ import activitygraphs.exploration.dataprocessing as dp
 from activitygraphs import utils
 from activitygraphs.config import DataConfig, GenevaDataConfig
 from activitygraphs.data.gtfs import GTFSInputs
+from activitygraphs.mode import Mode
 from activitygraphs.network import (
     CRS,
     LOCATIONS_COLUMNS,
@@ -18,7 +19,6 @@ from activitygraphs.network import (
     NA_LAT,
     NA_LON,
     USER_JOURNEY_SCHEMA,
-    Mode,
     NetworkData,
 )
 from activitygraphs.utils import check_schema

@@ -1,5 +1,6 @@
 import abc
 from collections.abc import Iterable
+from typing import Self
 
 import geopandas as gpd
 import numpy as np
@@ -7,7 +8,7 @@ import polars as pl
 import requests
 from pypolyline.cutil import encode_coordinates
 
-from activitygraphs.network import Mode
+from activitygraphs.mode import Mode
 from activitygraphs.utils import check_schema
 
 MAX_COORDS = 10_000
@@ -22,32 +23,55 @@ MODE_TO_OSRM_PROFILE_MAP = {
     Mode.CYCLE: "cycle",
 }
 
+EDGE_COORDS_SCHEMA = pl.Schema({
+    "orig_loc_id": pl.String,
+    "orig_lon": pl.Float64,
+    "orig_lat": pl.Float64,
+    "dest_loc_id": pl.String,
+    "dest_lon": pl.Float64,
+    "dest_lat": pl.Float64,
+})
+
 
 class Router(abc.ABC):
-    def travel_times(self, edge_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame) -> pl.DataFrame:
-        check_schema(edge_df, pl.Schema({"orig_loc_id": pl.String, "dest_loc_id": pl.String}), ignore_extra_cols=True)
+    @abc.abstractmethod
+    def travel_times(self, edge_coords_df: pl.DataFrame) -> pl.DataFrame:
+        pass
+
+    def with_cache(self) -> Self:
+        return CachedRouter(self)
+
+
+class TravelTimeCalculator:
+    def __init__(self, locations_gdf: gpd.GeoDataFrame, router: Router):
         check_schema(locations_gdf, {"loc_id": "object", "lon": "float64", "lat": "float64"}, ignore_extra_cols=True)
 
-        locations_df = pl.DataFrame(locations_gdf[["loc_id", "lon", "lat"]])
-        origins = locations_df.select(pl.all().name.prefix("orig_"))
-        destinations = locations_df.select(pl.all().name.prefix("dest_"))
+        self._locations_gdf = locations_gdf.copy()
+        self._locations_df = pl.DataFrame(locations_gdf[["loc_id", "lon", "lat"]])
+        self._origins = self._locations_df.select(pl.all().name.prefix("orig_"))
+        self._destinations = self._locations_df.select(pl.all().name.prefix("dest_"))
+
+        self._router = router
+
+    def add_travel_times(self, edge_df: pl.DataFrame) -> pl.DataFrame:
+        check_schema(edge_df, pl.Schema({"orig_loc_id": pl.String, "dest_loc_id": pl.String}), ignore_extra_cols=True)
+
+        edge_locations = pl.concat([edge_df["orig_loc_id"], edge_df["dest_loc_id"]]).unique()
+        if not edge_locations.is_in(self._locations_df["loc_id"]).all():
+            raise ValueError("All locations in `edge_df` must exist in the router locations")
 
         edge_coords_df = (
             edge_df.select("orig_loc_id", "dest_loc_id")
-            .join(origins, on="orig_loc_id")
-            .join(destinations, on="dest_loc_id")
+            .join(self._origins, on="orig_loc_id")
+            .join(self._destinations, on="dest_loc_id")
         )
 
-        result = self._travel_times(edge_coords_df)
+        result = self._router.travel_times(edge_coords_df)
         check_schema(
             result, pl.Schema({"orig_loc_id": pl.String, "dest_loc_id": pl.String, "travel_time_min": pl.Float64})
         )
 
         return edge_df.join(result, on=["orig_loc_id", "dest_loc_id"], how="left")
-
-    @abc.abstractmethod
-    def _travel_times(self, edge_coords_df: pl.DataFrame) -> pl.DataFrame:
-        pass
 
 
 class OSRMRouter(Router):
@@ -55,17 +79,19 @@ class OSRMRouter(Router):
         if mode not in MODE_TO_OSRM_PROFILE_MAP.keys():
             raise ValueError(f"Invalid mode: {mode}, accepted: {MODE_TO_OSRM_PROFILE_MAP.keys()}")
 
-        self.url = url
+        self.url = url.rstrip("/")
         self.mode = mode
         self.profile = MODE_TO_OSRM_PROFILE_MAP[mode]
         self.max_coordinates = max_coordinates
         self.precision = precision
 
-    def _travel_times(self, edge_df: pl.DataFrame):
+    def travel_times(self, edge_coords_df: pl.DataFrame):
+        check_schema(edge_coords_df, EDGE_COORDS_SCHEMA)
+
         locations = (
             pl.concat([
-                edge_df.select(loc_id="orig_loc_id", lon="orig_lon", lat="orig_lat"),
-                edge_df.select(loc_id="dest_loc_id", lon="dest_lon", lat="dest_lat"),
+                edge_coords_df.select(loc_id="orig_loc_id", lon="orig_lon", lat="orig_lat"),
+                edge_coords_df.select(loc_id="dest_loc_id", lon="dest_lon", lat="dest_lat"),
             ])
             .unique("loc_id")
             .sort("loc_id")
@@ -75,13 +101,14 @@ class OSRMRouter(Router):
         coordinates = locations.select("lon", "lat").iter_rows()
         durations = self.table(coordinates)
 
-        edge_indices = edge_df.join(locations.select(orig_index="index", orig_loc_id="loc_id"), on="orig_loc_id").join(
-            locations.select(dest_index="index", dest_loc_id="loc_id"), on="dest_loc_id"
-        )
+        edge_indices = edge_coords_df.join(
+            locations.select(orig_index="index", orig_loc_id="loc_id"), on="orig_loc_id"
+        ).join(locations.select(dest_index="index", dest_loc_id="loc_id"), on="dest_loc_id")
+
         edge_indices_np = edge_indices.select("orig_index", "dest_index").to_numpy()
         travel_times = durations[edge_indices_np[:, 0], edge_indices_np[:, 1]]
 
-        return edge_df.select("orig_loc_id", "dest_loc_id").with_columns(travel_time_min=travel_times)
+        return edge_coords_df.select("orig_loc_id", "dest_loc_id").with_columns(travel_time_min=travel_times)
 
     def table(self, coordinates: Iterable[tuple[float, float]]) -> np.ndarray:
         coordinates = list(coordinates)
@@ -90,11 +117,14 @@ class OSRMRouter(Router):
             raise ValueError(f"Too many coordinates: {len(coordinates)}, maximum: {self.max_coordinates}")
 
         polyline = encode_coordinates(coordinates, self.precision)
+        polyline = requests.utils.quote(polyline, safe="")
         full_url = f"{self.url}/table/v1/{self.profile}/polyline({polyline})"
         response = requests.get(full_url)
 
         if not response.ok:
-            raise ConnectionError(f"OSRM routing service error: status code={response.status_code}")
+            raise ConnectionError(
+                f"OSRM routing service error: status code={response.status_code}, content={response.content}"
+            )
 
         json = response.json()
         if json["code"] != "Ok":
@@ -109,11 +139,23 @@ class CachedRouter(Router):
         self.router = router
         self.cache: dict[tuple[str, str], float] = {}
 
-    def _travel_times(self, edge_df) -> pl.DataFrame:
-        # TODO
+    def travel_times(self, edge_coords_df: pl.DataFrame) -> pl.DataFrame:
+        check_schema(edge_coords_df, EDGE_COORDS_SCHEMA)
 
-        return self.router._travel_times(edge_df)
+        cache_keys = pl.Series(self.cache.keys(), dtype=pl.List(pl.String)).implode()
 
+        is_edge_in_cache = pl.concat_list("orig_loc_id", "dest_loc_id").is_in(cache_keys)
+        cache_hits = edge_coords_df.filter(is_edge_in_cache)
+        cache_misses = edge_coords_df.filter(~is_edge_in_cache)
 
-def compute_osrm_travel_times(edge_df: pl.DataFrame, locations_df: gpd.GeoDataFrame | pl.DataFrame):
-    pass
+        cache_misses_tt = self.router.travel_times(cache_misses)
+        cache_hits_tt = cache_hits.select(
+            "orig_loc_id",
+            "dest_loc_id",
+            travel_time_min=pl.concat_list("orig_loc_id", "dest_loc_id")
+            .replace(self.cache)
+            .list.item()
+            .cast(pl.Float64),
+        )
+
+        return pl.concat([cache_hits_tt, cache_misses_tt])

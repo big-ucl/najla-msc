@@ -4,6 +4,8 @@ import exploration.dataprocessing as dp
 import polars as pl
 from config import DataConfig
 
+import activitygraphs.mode
+
 _LTDS_PURPOSES_KEYS = [
     "-2",
     "-1",
@@ -50,30 +52,30 @@ _LTDS_LAND_USES_KEYS = [
 LTDS_LAND_USES = {k: v for k, v in zip(_LTDS_LAND_USES_KEYS, dp.LandUse)}
 
 LTDS_MODES = {
-    "-2": dp.Mode.MISSING,
-    "-1": dp.Mode.NOT_ASKED,
-    "1": dp.Mode.WALK,
-    "2": dp.Mode.CYCLE,
-    "3": dp.Mode.CAR,
-    "4": dp.Mode.VEH_PASS,
-    "5": dp.Mode.MOTORCYCLE,
-    "6": dp.Mode.VEH_PASS,
-    "9": dp.Mode.VAN,
-    "10": dp.Mode.VEH_PASS,
-    "11": dp.Mode.LORRY,
-    "12": dp.Mode.VEH_PASS,
-    "13": dp.Mode.BUS,
-    "14": dp.Mode.BUS,
-    "15": dp.Mode.BUS,
-    "16": dp.Mode.BUS,
-    "17": dp.Mode.METRO,
-    "18": dp.Mode.METRO,
-    "19": dp.Mode.TRAIN,
-    "20": dp.Mode.TRAIN,
-    "21": dp.Mode.TAXI,
-    "22": dp.Mode.TAXI,
-    "23": dp.Mode.OTHER,
-    "24": dp.Mode.TRAIN,
+    "-2": activitygraphs.mode.Mode.MISSING,
+    "-1": activitygraphs.mode.Mode.NOT_ASKED,
+    "1": activitygraphs.mode.Mode.WALK,
+    "2": activitygraphs.mode.Mode.CYCLE,
+    "3": activitygraphs.mode.Mode.CAR,
+    "4": activitygraphs.mode.Mode.VEH_PASS,
+    "5": activitygraphs.mode.Mode.MOTORCYCLE,
+    "6": activitygraphs.mode.Mode.VEH_PASS,
+    "9": activitygraphs.mode.Mode.VAN,
+    "10": activitygraphs.mode.Mode.VEH_PASS,
+    "11": activitygraphs.mode.Mode.LORRY,
+    "12": activitygraphs.mode.Mode.VEH_PASS,
+    "13": activitygraphs.mode.Mode.BUS,
+    "14": activitygraphs.mode.Mode.BUS,
+    "15": activitygraphs.mode.Mode.BUS,
+    "16": activitygraphs.mode.Mode.BUS,
+    "17": activitygraphs.mode.Mode.METRO,
+    "18": activitygraphs.mode.Mode.METRO,
+    "19": activitygraphs.mode.Mode.TRAIN,
+    "20": activitygraphs.mode.Mode.TRAIN,
+    "21": activitygraphs.mode.Mode.TAXI,
+    "22": activitygraphs.mode.Mode.TAXI,
+    "23": activitygraphs.mode.Mode.OTHER,
+    "24": activitygraphs.mode.Mode.TRAIN,
 }
 
 SURVEY_START_YEAR = 2000
@@ -296,7 +298,7 @@ def _create_trip_df(raw_trip_df: pl.DataFrame, filter_null: bool = True) -> pl.D
         trip_id="ttid",
         trip_number="tseqno",
         year=pl.col("tyearid") + SURVEY_START_YEAR,
-        mode=pl.col("tdbmmode").replace(LTDS_MODES).cast(dp.Mode.polars_enum()),
+        mode=pl.col("tdbmmode").replace(LTDS_MODES).cast(activitygraphs.mode.Mode.polars_enum()),
         duration="tdurn",
         distance="tlenn",
         purpose=pl.col("topurpi").replace(LTDS_PURPOSES).cast(dp.Purpose.polars_enum()),

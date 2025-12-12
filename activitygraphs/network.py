@@ -1,7 +1,6 @@
 from abc import ABC
 from collections import defaultdict
 from collections.abc import Callable
-from enum import StrEnum
 from typing import Literal
 
 import folium
@@ -11,6 +10,8 @@ from geopandas.sindex import SpatialIndex
 from shapely.geometry.linestring import LineString
 from shapely.geometry.polygon import Polygon
 
+from activitygraphs.mode import Mode
+from activitygraphs.routing import TravelTimeCalculator
 from activitygraphs.utils import check_geometry_shapes, check_schema
 
 
@@ -76,24 +77,7 @@ TRANSFER_EDGE_LIST_SCHEMA = pl.Schema({
     "travel_time_min": pl.Float64,
 })
 
-TravelTimeFactory = float | pl.Expr | pl.DataFrame | Callable[[str, str], float]
-
-
-class Mode(StrEnum):
-    OTHER = "mode_other"
-    UNKNOWN = "mode_unknown"
-    BOAT = "mode_boat"
-    BUS = "mode_bus"
-    COACH = "mode_coach"
-    WALK = "mode_walk"
-    CYCLE = "mode_cycle"
-    MOTORCYCLE = "mode_motorcycle"
-    TAXI = "mode_taxi"
-    TRAIN = "mode_train"
-    TRAMWAY = "mode_tramway"
-    VEH_PASS = "mode_vehicle_passenger"
-    CAR = "mode_car"
-
+TravelTimeFactory = float | pl.Expr | pl.DataFrame | TravelTimeCalculator | Callable[[str, str], float]
 
 ROUTE_MODE_COLOUR_MAP = {
     Mode.BUS: "#82cfff",
@@ -180,6 +164,8 @@ def _add_travel_time_column(edge_df: pl.DataFrame, travel_time_f: TravelTimeFact
     elif isinstance(travel_time_f, pl.DataFrame):
         check_schema(travel_time_f, WALK_EDGE_LIST_SCHEMA)
         return edge_df.join(travel_time_f, on=["orig_loc_id", "dest_loc_id"], how="left")
+    elif isinstance(travel_time_f, TravelTimeCalculator):
+        return travel_time_f.add_travel_times(edge_df)
     elif callable(travel_time_f):
         return edge_df.with_columns(input=travel_time_f).with_columns(
             travel_time_min=pl.col("input").map_elements(travel_time_f_helper, return_dtype=pl.Float64)
