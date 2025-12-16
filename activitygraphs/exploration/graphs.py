@@ -4,7 +4,7 @@ import exploration.dataprocessing as dp
 import networkx as nx
 import polars as pl
 
-import activitygraphs.mode
+import activitygraphs.base
 
 NODELIST_SCHEMA = pl.Schema({
     "hh_id": pl.String,

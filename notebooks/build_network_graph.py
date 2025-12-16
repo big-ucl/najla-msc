@@ -93,13 +93,14 @@ def _():
 
 @app.cell
 def _(gva_data, pt_edge_df, transfer_edge_df):
-    from activitygraphs.network import (
+    from activitygraphs.mapping import (
         explore_pt_edges_by_mode,
         explore_transfer_edges,
         explore_locations_by_type,
         add_legend_pane_to_map,
+        ROUTE_MODE_COLOUR_MAP,
+        LOCATION_TYPE_COLOR_MAP,
     )
-    from activitygraphs.network import ROUTE_MODE_COLOUR_MAP, LOCATION_TYPE_COLOR_MAP
 
     legends = {
         "Transport modes": ("line", ROUTE_MODE_COLOUR_MAP),
@@ -131,7 +132,7 @@ def _():
 @app.cell
 def _(gva_data):
     from activitygraphs.routing import TravelTimeCalculator, OSRMRouter
-    from activitygraphs.mode import Mode
+    from activitygraphs.base import Mode
 
     _walk_router = OSRMRouter("http://127.0.0.1:5000", Mode.WALK).with_cache()
     walk_travel_time_f = TravelTimeCalculator(gva_data.locations_gdf, _walk_router)
@@ -174,7 +175,7 @@ def _():
 
 @app.cell
 def _(explore_locations_by_type, gva_data, subsector_walk_edge_df):
-    from activitygraphs.network import explore_walk_edges
+    from activitygraphs.mapping import explore_walk_edges
 
     _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector"], as_points=False)
     _m = explore_walk_edges(subsector_walk_edge_df, gva_data.locations_gdf, m=_m)
@@ -290,36 +291,6 @@ def _(
     _m = explore_walk_edges(municipality_subsector_link_edge_df, gva_data.locations_gdf, m=_m)
     _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector", "municipality_geneva"], m=_m)
     _m
-    return
-
-
-@app.cell
-def _():
-    mo.md(r"""
-    TODO:
-    - add a travel time calculation method
-    - start creating a PyG graph: heterogeneous graph?
-    """)
-    return
-
-
-@app.cell
-def _(gva_data, subsector_walk_edge_df):
-    walk_loc_ids = (
-        pl.concat([
-            subsector_walk_edge_df.select(loc_id="orig_loc_id"),
-            subsector_walk_edge_df.select(loc_id="dest_loc_id"),
-        ])
-        .unique()
-        .sort("loc_id")
-        .with_row_index()
-    )
-    walk_locations_df = (
-        walk_loc_ids.join(gva_data.locations_df, on="loc_id")
-        .sort("loc_id")
-        .with_columns(coords=pl.format("{},{}", pl.col("lon"), pl.col("lat")))
-    )
-    walk_locations_df
     return
 
 

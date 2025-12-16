@@ -9,16 +9,12 @@ from rapidfuzz import fuzz, process
 
 import activitygraphs.exploration.dataprocessing as dp
 from activitygraphs import utils
+from activitygraphs.base import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, USER_JOURNEY_SCHEMA, Mode
 from activitygraphs.config import DataConfig, GenevaDataConfig
 from activitygraphs.data.gtfs import GTFSInputs
-from activitygraphs.mode import Mode
 from activitygraphs.network import (
-    CRS,
-    LOCATIONS_COLUMNS,
-    LOCATIONS_SCHEMA,
     NA_LAT,
     NA_LON,
-    USER_JOURNEY_SCHEMA,
     NetworkData,
 )
 from activitygraphs.utils import check_schema

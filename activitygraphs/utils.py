@@ -6,6 +6,8 @@ import pandas as pd
 import polars as pl
 import torch
 
+from activitygraphs.base import CRS, LOCATIONS_SCHEMA
+
 PandasSchema = Mapping[str, str]
 TDataFrame = TypeVar("TDataFrame", gpd.GeoDataFrame, pl.DataFrame)
 TSchema = TypeVar("TSchema", pl.Schema, PandasSchema)
@@ -112,3 +114,12 @@ def check_shape(tensor: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
 
 def gdf_to_polars(gdf: gpd.GeoDataFrame) -> pl.DataFrame:
     return pl.DataFrame(gdf.drop(columns=["geometry"]))
+
+
+def convert_locations_to_point_geometry(locations_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    check_schema(locations_gdf, LOCATIONS_SCHEMA)
+
+    locations_gdf = locations_gdf.copy()
+    locations_gdf.set_geometry(gpd.points_from_xy(locations_gdf["lon"], locations_gdf["lat"], crs=CRS), inplace=True)
+
+    return locations_gdf

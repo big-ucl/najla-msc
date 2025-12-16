@@ -4,7 +4,7 @@ import exploration.dataprocessing as dp
 import polars as pl
 from config import DataConfig
 
-import activitygraphs.mode
+import activitygraphs.base
 
 _LTDS_PURPOSES_KEYS = [
     "-2",

@@ -8,7 +8,7 @@ import polars as pl
 import requests
 from pypolyline.cutil import encode_coordinates
 
-from activitygraphs.mode import Mode
+from activitygraphs.base import Mode
 from activitygraphs.utils import check_schema
 
 MAX_COORDS = 10_000
