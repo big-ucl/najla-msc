@@ -13,19 +13,27 @@ from activitygraphs.base import (
     EDGE_LIST_SCHEMA,
     LINK_EDGE_LIST_SCHEMA,
     LOCATIONS_SCHEMA,
+    PT_EDGE_LIST_SCHEMA,
+    TRANSFER_EDGE_LIST_SCHEMA,
     USER_JOURNEY_SCHEMA,
     WALK_EDGE_LIST_SCHEMA,
 )
 from activitygraphs.routing import TravelTimeCalculator
-from activitygraphs.utils import check_geometry_shapes, check_schema, convert_locations_to_point_geometry
+from activitygraphs.utils import (
+    check_geometry_shapes,
+    check_schema,
+    convert_locations_to_point_geometry,
+    extract_unique_loc_ids,
+)
 
 NA_LON, NA_LAT = 6.1709475192397605, 46.24348817355701
 
+PTNetworkBuilder = Callable[[pl.DataFrame], tuple[pl.DataFrame, pl.DataFrame]]
 TravelTimeFactory = float | pl.Expr | pl.DataFrame | TravelTimeCalculator | Callable[[str, str], float]
 
 
 class NetworkData(ABC):
-    user_journeys: pl.DataFrame
+    user_journeys_df: pl.DataFrame
     locations_gdf: gpd.GeoDataFrame
 
 
@@ -45,21 +53,35 @@ class Layer:
         self.loc_ids = list(loc_ids)
 
         mismatches = edge_list.filter(
-            ~pl.col("orig_loc_id").is_in(self.loc_ids) or ~pl.col("dest_loc_id").is_in(self.loc_ids)
+            ~pl.col("orig_loc_id").is_in(self.loc_ids) | ~pl.col("dest_loc_id").is_in(self.loc_ids)
         )
 
-        if mismatches.count() > 0:
+        if len(mismatches) > 0:
             mismatches_fmt = edge_list.select(pl.format("({}, {})", "orig_loc_id", "dest_loc_id"))
             mismatches_str = ",".join(mismatches_fmt.to_series())
             raise ValueError(f"Found edges that connect outside of layer:\n*******{mismatches_str}\n*********")
 
         self.edge_list = edge_list
 
+    def __repr__(self):
+        return f"Layer({self.name}, type={self.type.name})"
+
+
+class PTLayer(Layer):
+    def __init__(self, name: str, loc_ids: Iterable[str], pt_edge_df: pl.DataFrame, transfer_edge_df: pl.DataFrame):
+        edge_cols = EDGE_LIST_SCHEMA.keys()
+        edge_df = pl.concat([pt_edge_df.select(*edge_cols), transfer_edge_df.select(*edge_cols)])
+
+        super().__init__(name, LayerType.PUBLIC_TRANSPORT, loc_ids, edge_df)
+
+        self.pt_edge_df = check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA)
+        self.transfer_edge_df = check_schema(transfer_edge_df, TRANSFER_EDGE_LIST_SCHEMA)
+
 
 class Network:
     def __init__(self, network_data: NetworkData):
-        self._locations_gdf = check_schema(network_data.locations_gdf, LOCATIONS_SCHEMA).copy()
-        self._user_journeys = check_schema(network_data.user_journeys, USER_JOURNEY_SCHEMA)
+        self._locations_gdf = check_schema(network_data.locations_gdf, LOCATIONS_SCHEMA)
+        self._user_journeys = check_schema(network_data.user_journeys_df, USER_JOURNEY_SCHEMA)
         self._layers: dict[str, Layer] = {}
         self._links: dict[tuple[str, str], pl.DataFrame] = {}
 
@@ -71,41 +93,88 @@ class Network:
     def locations_df(self) -> pl.DataFrame:
         return utils.gdf_to_polars(self._locations_gdf)
 
-    def get_layer_locations(self, name: str) -> gpd.GeoDataFrame:
-        loc_ids = self._layers[name].loc_ids
-        return self._locations_gdf[self.locations_gdf["loc_id"].isin(loc_ids)]
+    @property
+    def layers(self):
+        return {name: layer.type for name, layer in self._layers.items()}
+
+    @property
+    def links(self):
+        return [(name1, name2) for (name1, name2), _ in self._links.items()]
+
+    def __getitem__(self, name: str) -> Layer:
+        if name not in self._layers:
+            raise ValueError(f"Cannot find layer `{name}`")
+
+        return self._layers[name]
+
+    def get_layer_locations(self, layer_name: str) -> gpd.GeoDataFrame:
+        loc_ids = self[layer_name].loc_ids
+        return self._locations_gdf[self._locations_gdf["loc_id"].isin(loc_ids)]
+
+    def get_pt_layer(self, name: str) -> PTLayer:
+        layer = self[name]
+
+        if not isinstance(layer, PTLayer):
+            raise ValueError(f"Layer `{name}` is not a PT layer")
+
+        return layer
+
+    def get_links(self, lower_layer: str, upper_layer: str) -> pl.DataFrame:
+        return self._links[(lower_layer, upper_layer)]
 
     def add_layer(
         self,
         name: str,
         layer_type: LayerType,
-        loc_ids: gpd.GeoDataFrame | Iterable[str],
+        loc_ids: str | gpd.GeoDataFrame | Iterable[str],
         edge_list: pl.DataFrame | None,
     ) -> Self:
         loc_ids = self._check_layer_loc_ids(name, loc_ids)
         self._layers[name] = Layer(name, layer_type, loc_ids, edge_list)
         return self
 
-    def add_pt_layer(self, name: str, pt_edge_df: pl.DataFrame, transfer_edge_df: pl.DataFrame) -> Self:
-        pass
+    def add_pt_layer(
+        self,
+        name: str,
+        loc_ids: str | gpd.GeoDataFrame | Iterable[str] | None = None,
+        pt_network_builder: PTNetworkBuilder | None = None,
+        pt_edge_df: pl.DataFrame | None = None,
+        transfer_edge_df: pl.DataFrame | None = None,
+    ) -> Self:
+        if pt_edge_df is None and transfer_edge_df is None and pt_network_builder is not None:
+            pt_edge_df, transfer_edge_df = pt_network_builder(self.locations_df)
+        elif pt_network_builder is None:
+            raise ValueError("No PTNetworkBuilder provided, cannot build edges.")
+        elif pt_edge_df is None or transfer_edge_df is None:
+            raise ValueError("Arguments `pt_edge_df` and `transfer_edge_df` must be both None or both DataFrames")
+
+        if loc_ids is None:
+            loc_ids = extract_unique_loc_ids(pt_edge_df, transfer_edge_df)
+
+        loc_ids = self._check_layer_loc_ids(name, loc_ids)
+
+        self._layers[name] = PTLayer(name, loc_ids, pt_edge_df, transfer_edge_df)
+        return self
 
     def add_planar_layer(
-        self, name: str, loc_ids: gpd.GeoDataFrame | Iterable[str], travel_time_f: TravelTimeFactory
+        self, name: str, loc_ids: str | gpd.GeoDataFrame | Iterable[str], travel_time_f: TravelTimeFactory | None = None
     ) -> Self:
         if name in self._layers:
             raise ValueError(f"Layer `{name}` is already in the network.")
 
         loc_ids = self._check_layer_loc_ids(name, loc_ids)
         planar_locations_gdf = self._locations_gdf[self.locations_gdf["loc_id"].isin(loc_ids)]
-        planar_edges = build_planar_edges(planar_locations_gdf, travel_time_f)
+        planar_edges = build_planar_edges(planar_locations_gdf, travel_time_f) if travel_time_f is not None else None
 
         return self.add_layer(name, LayerType.PLANAR, loc_ids, planar_edges)
 
-    def _check_layer_loc_ids(self, name: str, loc_ids: gpd.GeoDataFrame | Iterable[str]):
+    def _check_layer_loc_ids(self, name: str, loc_ids: str | gpd.GeoDataFrame | Iterable[str]) -> list[str]:
         if name in self._layers:
             raise ValueError(f"Layer `{name}` is already in the network.")
 
-        if isinstance(loc_ids, gpd.GeoDataFrame):
+        if isinstance(loc_ids, str):
+            loc_ids = self._locations_gdf[self._locations_gdf["type"] == loc_ids]["loc_id"].tolist()
+        elif isinstance(loc_ids, gpd.GeoDataFrame):
             check_schema(loc_ids, LOCATIONS_SCHEMA)
             loc_ids = loc_ids["loc_id"].tolist()
         else:
@@ -132,6 +201,12 @@ class Network:
         self._links[(lower, upper)] = link_edges
 
         return self
+
+    def __repr__(self):
+        layers = "\n".join(f"\t\t{n}: {t}" for n, t in self.layers.items())
+        links = "\n".join(f"\t\t{low} |--> {up}" for low, up in self.links)
+
+        return f"""Network(\n\tlayers=(\n{layers}\n\t), links=(\n{links}\n\t)\n)"""
 
 
 def build_planar_edges(planar_locations_gdf: gpd.GeoDataFrame, travel_time_f: TravelTimeFactory) -> pl.DataFrame:

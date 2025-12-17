@@ -6,7 +6,7 @@ import pandas as pd
 import polars as pl
 import torch
 
-from activitygraphs.base import CRS, LOCATIONS_SCHEMA
+from activitygraphs.base import CRS, EDGE_LIST_SCHEMA, LOCATIONS_SCHEMA
 
 PandasSchema = Mapping[str, str]
 TDataFrame = TypeVar("TDataFrame", gpd.GeoDataFrame, pl.DataFrame)
@@ -123,3 +123,15 @@ def convert_locations_to_point_geometry(locations_gdf: gpd.GeoDataFrame) -> gpd.
     locations_gdf.set_geometry(gpd.points_from_xy(locations_gdf["lon"], locations_gdf["lat"], crs=CRS), inplace=True)
 
     return locations_gdf
+
+
+def extract_unique_loc_ids(*edge_dfs: TDataFrame) -> list[str]:
+    loc_dfs = []
+    for edge_df in edge_dfs:
+        edge_df = edge_df if isinstance(edge_df, pl.DataFrame) else gdf_to_polars(edge_df)
+        edge_df = check_schema(edge_df, EDGE_LIST_SCHEMA, ignore_extra_cols=True)
+
+        loc_dfs.append(edge_df["orig_loc_id"])
+        loc_dfs.append(edge_df["dest_loc_id"])
+
+    return pl.concat(loc_dfs).unique().to_list()
