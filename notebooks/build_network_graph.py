@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.18.4"
+__generated_with = "0.19.2"
 app = marimo.App(width="full")
 
 with app.setup:
@@ -26,14 +26,17 @@ def _():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     from activitygraphs.data.geneva import load_files, build_geneva_data
 
     gva_inputs = load_files(cfg.data, project_root)
     gva_data = build_geneva_data(gva_inputs)
 
-    mo.accordion({"Table: Raw journeys": gva_inputs.raw_journeys_df, "Table: User journeys (cleaned)": gva_data.user_journeys_df})
+    mo.accordion({
+        "Table: Raw journeys": gva_inputs.raw_journeys_df,
+        "Table: User journeys (cleaned)": gva_data.user_journeys_df,
+    })
     return (gva_data,)
 
 
@@ -95,8 +98,10 @@ def _(gva_data):
     from activitygraphs.routing import TravelTimeCalculator, OSRMRouter
     from activitygraphs.base import Mode
 
+
     def build_gva_pt_network(locations_gdf: gpd.GeoDataFrame):
         return build_pt_network_edges(locations_gdf, gva_data.gtfs, drop_null_headways=True)
+
 
     _walk_router = OSRMRouter("http://127.0.0.1:5000", Mode.WALK).with_cache()
     walk_travel_time_f = TravelTimeCalculator(gva_data.locations_gdf, _walk_router)
@@ -108,10 +113,14 @@ def _(gva_data):
         .add_planar_layer("municipality_geneva", loc_ids="municipality_geneva")
         .add_planar_layer("municipality_swiss", loc_ids="municipality_swiss")
         .add_planar_layer("municipality_french", loc_ids="municipality_french")
+        .add_na_layer(separate_in_out_nodes=True)
         .connect_layers("subsector", "public_transport", 0.0)
         .connect_layers("municipality_swiss", "public_transport", 0.0)
         .connect_layers("municipality_french", "public_transport", 0.0)
         .connect_layers("municipality_geneva", "subsector", 0.0, mode="centroid_nearest")
+        .connect_na_layer(
+            ["public_transport", "subsector", "municipality_geneva", "municipality_swiss", "municipality_french"], 10000.0
+        )
     )
 
     network
@@ -128,7 +137,10 @@ def _():
 
 @app.cell(hide_code=True)
 def _(network):
-    mo.accordion({"Table: PT Route edges": network["public_transport"].pt_edge_df, "Table: PT Transfer edges": network["public_transport"].transfer_edge_df})
+    mo.accordion({
+        "Table: PT Route edges": network["public_transport"].pt_edge_df,
+        "Table: PT Transfer edges": network["public_transport"].transfer_edge_df,
+    })
     return
 
 
@@ -156,7 +168,12 @@ def _(gva_data, network):
     _m = explore_locations_by_type(gva_data.locations_gdf, types=["public_transport", "na"], m=_m)
     add_legend_pane_to_map(_m, legends)
 
-    mo.vstack([mo.md("PT edges (bus / tram / train / boat) between stops, as well as (official) walking transfers between stops. Geneva subsectors and french municipalities in the background."), _m])
+    mo.vstack([
+        mo.md(
+            "PT edges (bus / tram / train / boat) between stops, as well as (official) walking transfers between stops. Geneva subsectors and french municipalities in the background."
+        ),
+        _m,
+    ])
     return (explore_locations_by_type,)
 
 
@@ -205,8 +222,12 @@ def _():
 def _(network):
     mo.accordion({
         "Table: Links between subsectors and PT stops": network.get_links("subsector", "public_transport"),
-        "Table: Links between Swiss municipalities and PT stops": network.get_links("municipality_swiss", "public_transport"),
-        "Table: Links between French municipalities and PT stops": network.get_links("municipality_french", "public_transport"),
+        "Table: Links between Swiss municipalities and PT stops": network.get_links(
+            "municipality_swiss", "public_transport"
+        ),
+        "Table: Links between French municipalities and PT stops": network.get_links(
+            "municipality_french", "public_transport"
+        ),
         "Table: Links between Geneva municipalities and subsectors": network.get_links("municipality_geneva", "subsector"),
     })
     return
@@ -247,6 +268,26 @@ def _(explore_locations_by_type, explore_walk_edges, gva_data, network):
     _m = explore_locations_by_type(gva_data.locations_gdf, types=["subsector", "municipality_geneva"], m=_m)
 
     mo.vstack([mo.md("Links between municipalities and subsectors"), _m])
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    na_dropdown = mo.ui.dropdown(
+        ["public_transport", "subsector", "municipality_geneva", "municipality_swiss", "municipality_french"],
+        value="subsector",
+    )
+
+    mo.hstack([mo.md("Links between NA and "), na_dropdown], justify="start")
+    return (na_dropdown,)
+
+
+@app.cell
+def _(explore_locations_by_type, explore_walk_edges, na_dropdown, network):
+    _m = explore_walk_edges(network.get_links("na", na_dropdown.value), network.locations_gdf, m=_m)
+    _m = explore_locations_by_type(network.locations_gdf, types=["na", na_dropdown.value], as_points=True)
+
+    _m
     return
 
 

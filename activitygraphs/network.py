@@ -4,12 +4,14 @@ from enum import Enum, auto
 from typing import Literal, Self
 
 import geopandas as gpd
+import pandas as pd
 import polars as pl
 from geopandas.sindex import SpatialIndex
 from shapely.geometry.polygon import Polygon
 
 from activitygraphs import utils
 from activitygraphs.base import (
+    CRS,
     EDGE_LIST_SCHEMA,
     LINK_EDGE_LIST_SCHEMA,
     LOCATIONS_SCHEMA,
@@ -27,6 +29,7 @@ from activitygraphs.utils import (
 )
 
 NA_LON, NA_LAT = 6.1709475192397605, 46.24348817355701
+NA, NA_SOURCE, NA_SINK = "NA", "NA_SOURCE", "NA_SINK"
 
 PTNetworkBuilder = Callable[[pl.DataFrame], tuple[pl.DataFrame, pl.DataFrame]]
 TravelTimeFactory = float | pl.Expr | pl.DataFrame | TravelTimeCalculator | Callable[[str, str], float]
@@ -41,6 +44,7 @@ class LayerType(Enum):
     PUBLIC_TRANSPORT = auto()
     POINT = auto()
     PLANAR = auto()
+    NA = auto()
 
 
 class Layer:
@@ -101,6 +105,15 @@ class Network:
     def links(self):
         return [(name1, name2) for (name1, name2), _ in self._links.items()]
 
+    @property
+    def has_separate_na_source_sink(self):
+        num_na_locations = len(self._locations_gdf.query("type == 'na'"))
+
+        if num_na_locations not in [1, 2]:
+            raise ValueError(f"Invalid number of NA locaitons {num_na_locations}")
+
+        return num_na_locations == 2
+
     def __getitem__(self, name: str) -> Layer:
         if name not in self._layers:
             raise ValueError(f"Cannot find layer `{name}`")
@@ -159,14 +172,40 @@ class Network:
     def add_planar_layer(
         self, name: str, loc_ids: str | gpd.GeoDataFrame | Iterable[str], travel_time_f: TravelTimeFactory | None = None
     ) -> Self:
-        if name in self._layers:
-            raise ValueError(f"Layer `{name}` is already in the network.")
-
         loc_ids = self._check_layer_loc_ids(name, loc_ids)
         planar_locations_gdf = self._locations_gdf[self.locations_gdf["loc_id"].isin(loc_ids)]
         planar_edges = build_planar_edges(planar_locations_gdf, travel_time_f) if travel_time_f is not None else None
 
         return self.add_layer(name, LayerType.PLANAR, loc_ids, planar_edges)
+
+    def add_na_layer(self, separate_in_out_nodes: bool = False, na_coords: tuple[float, float] | None = None) -> Self:
+        if "na" in self._layers:
+            raise ValueError("NA Layer is already in the network. Connect it using `connect_na_layer`")
+
+        na_coords = (NA_LON, NA_LAT) if na_coords is None else na_coords
+
+        n_duplicates = 2 if separate_in_out_nodes else 1
+        loc_ids = [NA_SOURCE, NA_SINK] if separate_in_out_nodes else NA
+        empty_edge_list = pl.DataFrame(schema=EDGE_LIST_SCHEMA)
+
+        na_locations = gpd.GeoDataFrame(
+            {
+                "loc_id": loc_ids,
+                "loc_name": loc_ids,
+                "type": ["na"] * n_duplicates,
+                "lon": [na_coords[0]] * n_duplicates,
+                "lat": [na_coords[1]] * n_duplicates,
+            },
+            crs=CRS,
+            geometry=gpd.points_from_xy([na_coords[0]] * n_duplicates, [na_coords[1]] * n_duplicates, crs=CRS),
+        )
+
+        self._locations_gdf = pd.concat([
+            na_locations,
+            self._locations_gdf.query("type != 'na'"),
+        ])
+
+        return self.add_layer("na", LayerType.NA, na_locations, empty_edge_list)
 
     def _check_layer_loc_ids(self, name: str, loc_ids: str | gpd.GeoDataFrame | Iterable[str]) -> list[str]:
         if name in self._layers:
@@ -199,6 +238,21 @@ class Network:
 
         link_edges = build_layer_link_edges(lower_locations_gdf, upper_locations_gdf, travel_time_f, mode, direction)
         self._links[(lower, upper)] = link_edges
+
+        return self
+
+    def connect_na_layer(self, others: str | list[str], travel_time_f: TravelTimeFactory):
+        others = [others] if isinstance(others, str) else others
+
+        for layer in others:
+            na_source = NA_SOURCE if self.has_separate_na_source_sink else NA
+            na_sink = NA_SINK if self.has_separate_na_source_sink else NA
+
+            layer_locations = self.get_layer_locations(layer)
+            na_source_link_edges = build_na_link_edges(na_source, layer_locations, travel_time_f, "na_to_loc")
+            na_sink_link_edges = build_na_link_edges(na_sink, layer_locations, travel_time_f, "loc_to_na")
+
+            self._links[("na", layer)] = pl.concat([na_source_link_edges, na_sink_link_edges])
 
         return self
 
@@ -258,6 +312,27 @@ def build_layer_link_edges(
 
     edges = _add_travel_time_column(edges, travel_time_f)
 
+    return check_schema(edges, LINK_EDGE_LIST_SCHEMA)
+
+
+def build_na_link_edges(
+    na_loc_id: str,
+    locations_gdf: gpd.GeoDataFrame,
+    travel_time_f: TravelTimeFactory,
+    direction: Literal["na_to_loc", "loc_to_na"],
+) -> pl.DataFrame:
+    if direction not in ["na_to_loc", "loc_to_na"]:
+        raise ValueError(f"Invalid direction {direction}, must be 'na_to_loc' or 'loc_to_na'")
+
+    origins = na_loc_id if direction == "na_to_loc" else locations_gdf["loc_id"]
+    destinations = locations_gdf["loc_id"] if direction == "na_to_loc" else na_loc_id
+
+    edges = pl.DataFrame({
+        "orig_loc_id": origins,
+        "dest_loc_id": destinations,
+    })
+
+    edges = _add_travel_time_column(edges, travel_time_f)
     return check_schema(edges, LINK_EDGE_LIST_SCHEMA)
 
 
