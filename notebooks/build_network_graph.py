@@ -91,7 +91,7 @@ def _():
 
 
 @app.cell
-def _(gva_data):
+def _(gva_data, name):
     from activitygraphs.network import Network
     from activitygraphs.data.gtfs import build_pt_network_edges
     from activitygraphs.routing import TravelTimeCalculator, OSRMRouter
@@ -102,27 +102,33 @@ def _(gva_data):
         return build_pt_network_edges(locations_gdf, gva_data.gtfs, drop_null_headways=True)
 
 
-    _walk_router = OSRMRouter("http://127.0.0.1:5000", Mode.WALK).with_cache()
-    walk_travel_time_f = TravelTimeCalculator(gva_data.locations_gdf, _walk_router)
+    def build_gva_network():
+        walk_router = OSRMRouter("http://127.0.0.1:5000", Mode.WALK).with_cache()
+        walk_travel_time_f = TravelTimeCalculator(gva_data.locations_gdf, walk_router)
 
-    network = (
-        Network(gva_data)
-        .add_pt_layer("public_transport", loc_ids="public_transport", pt_network_builder=build_gva_pt_network)
-        .add_planar_layer("subsector", loc_ids="subsector", travel_time_f=walk_travel_time_f)
-        .add_planar_layer("municipality_geneva", loc_ids="municipality_geneva")
-        .add_planar_layer("municipality_swiss", loc_ids="municipality_swiss")
-        .add_planar_layer("municipality_french", loc_ids="municipality_french")
-        .add_na_layer(separate_in_out_nodes=True)
-        .connect_layers("subsector", "public_transport", 0.0)
-        .connect_layers("municipality_swiss", "public_transport", 0.0)
-        .connect_layers("municipality_french", "public_transport", 0.0)
-        .connect_layers("municipality_geneva", "subsector", 0.0, mode="centroid_nearest")
-        .connect_na_layer(
-            ["public_transport", "subsector", "municipality_geneva", "municipality_swiss", "municipality_french"], 10000.0
+        network = (
+            Network
+            .empty_network(gva_data)
+            .add_pt_layer("public_transport", loc_ids="public_transport", pt_network_builder=build_gva_pt_network)
+            .add_planar_layer("subsector", loc_ids="subsector", travel_time_f=walk_travel_time_f)
+            .add_planar_layer("municipality_geneva", loc_ids="municipality_geneva")
+            .add_planar_layer("municipality_swiss", loc_ids="municipality_swiss")
+            .add_planar_layer("municipality_french", loc_ids="municipality_french")
+            .add_na_layer(separate_in_out_nodes=True)
+            .connect_layers("subsector", "public_transport", 0.0)
+            .connect_layers("municipality_swiss", "public_transport", 0.0)
+            .connect_layers("municipality_french", "public_transport", 0.0)
+            .connect_layers("municipality_geneva", "subsector", 0.0, mode="centroid_nearest")
+            .connect_na_layer(
+                ["public_transport", "subsector", "municipality_geneva", "municipality_swiss", "municipality_french"],
+                10000.0,
+            )
         )
-    )
 
-    network
+        network.save(cfg.data, project_root, name)
+        return network
+
+    network = Network.load(cfg.data, project_root) if Network.exists_on_disk(cfg.data, project_root) else build_gva_network()
     return (network,)
 
 
@@ -283,8 +289,11 @@ def _():
 
 @app.cell
 def _(explore_locations_by_type, explore_walk_edges, na_dropdown, network):
-    _m = explore_walk_edges(network.get_links("na", na_dropdown.value), network.locations_gdf, m=_m)
-    _m = explore_locations_by_type(network.locations_gdf, types=["na", na_dropdown.value], as_points=True)
+    _m = explore_walk_edges(
+        network.get_links("na", na_dropdown.value),
+        network.locations_gdf,
+    )
+    _m = explore_locations_by_type(network.locations_gdf, types=["na", na_dropdown.value], as_points=True, m=_m)
 
     _m
     return

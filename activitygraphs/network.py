@@ -1,6 +1,9 @@
+import pickle
+import shutil
 from abc import ABC
 from collections.abc import Callable, Iterable
 from enum import Enum, auto
+from pathlib import Path
 from typing import Literal, Self
 
 import geopandas as gpd
@@ -20,6 +23,7 @@ from activitygraphs.base import (
     USER_JOURNEY_SCHEMA,
     WALK_EDGE_LIST_SCHEMA,
 )
+from activitygraphs.config import GenevaDataConfig
 from activitygraphs.routing import TravelTimeCalculator
 from activitygraphs.utils import (
     check_geometry_shapes,
@@ -70,6 +74,30 @@ class Layer:
     def __repr__(self):
         return f"Layer({self.name}, type={self.type.name})"
 
+    @classmethod
+    def load(cls, layer_dir: Path) -> Self:
+        with open(layer_dir / "attrs.pickle", "rb") as f:
+            attrs = pickle.load(f)
+
+        edge_list = pl.read_parquet(layer_dir / "edge_df.parquet")
+
+        return cls(attrs["name"], attrs["type"], attrs["loc_ids"], edge_list)
+
+    def save(self, layers_dir: Path):
+        layer_dir = self._dir(layers_dir)
+        layer_dir.mkdir(parents=True, exist_ok=True)
+
+        attrs = {"name": self.name, "type": self.type, "loc_ids": self.loc_ids}
+
+        with open(layer_dir / "attrs.pickle", "wb") as f:
+            # noinspection PyTypeChecker
+            pickle.dump(attrs, f)
+
+        self.edge_list.write_parquet(layer_dir / "edge_df.parquet")
+
+    def _dir(self, layers_dir: Path) -> Path:
+        return layers_dir / f"{self.type.name}-{self.name}"
+
 
 class PTLayer(Layer):
     def __init__(self, name: str, loc_ids: Iterable[str], pt_edge_df: pl.DataFrame, transfer_edge_df: pl.DataFrame):
@@ -81,13 +109,53 @@ class PTLayer(Layer):
         self.pt_edge_df = check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA)
         self.transfer_edge_df = check_schema(transfer_edge_df, TRANSFER_EDGE_LIST_SCHEMA)
 
+    @classmethod
+    def load(cls, layer_dir) -> Self:
+        with open(layer_dir / "attrs.pickle", "rb") as f:
+            attrs = pickle.load(f)
+
+        pt_edge_df = pl.read_parquet(layer_dir / "pt_edge_df.parquet", schema=PT_EDGE_LIST_SCHEMA)
+        transfer_edge_df = pl.read_parquet(layer_dir / "transfer_edge_df.parquet", schema=TRANSFER_EDGE_LIST_SCHEMA)
+
+        return cls(attrs["name"], attrs["loc_ids"], pt_edge_df, transfer_edge_df)
+
+    def save(self, layers_dir: Path):
+        super().save(layers_dir)
+        layer_dir = self._dir(layers_dir)
+
+        self.pt_edge_df.write_parquet(layer_dir / "pt_edge_df.parquet")
+        self.transfer_edge_df.write_parquet(layer_dir / "transfer_edge_df.parquet")
+
+
+def load_layer(layer_dir: Path) -> Layer:
+    with open(layer_dir / "attrs.pickle", "rb") as f:
+        attrs = pickle.load(f)
+
+    layer_type: LayerType = attrs["type"]
+
+    match layer_type:
+        case LayerType.PUBLIC_TRANSPORT:
+            return PTLayer.load(layer_dir)
+        case LayerType.NA | LayerType.PLANAR | LayerType.POINT:
+            return Layer.load(layer_dir)
+
 
 class Network:
-    def __init__(self, network_data: NetworkData):
-        self._locations_gdf = check_schema(network_data.locations_gdf, LOCATIONS_SCHEMA)
-        self._user_journeys = check_schema(network_data.user_journeys_df, USER_JOURNEY_SCHEMA)
-        self._layers: dict[str, Layer] = {}
-        self._links: dict[tuple[str, str], pl.DataFrame] = {}
+    def __init__(
+        self,
+        locations_gdf: gpd.GeoDataFrame,
+        user_journeys_df: pl.DataFrame,
+        layers: dict[str, Layer],
+        links: dict[tuple[str, str], pl.DataFrame],
+    ):
+        self._locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
+        self._user_journeys = check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)
+        self._layers = layers.copy()
+        self._links = links.copy()
+
+    @classmethod
+    def empty_network(cls, network_data: NetworkData) -> Self:
+        return cls(network_data.locations_gdf, network_data.user_journeys_df, {}, {})
 
     @property
     def locations_gdf(self) -> gpd.GeoDataFrame:
@@ -262,6 +330,92 @@ class Network:
 
         return f"""Network(\n\tlayers=(\n{layers}\n\t), links=(\n{links}\n\t)\n)"""
 
+    @classmethod
+    def _dir(cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None) -> Path:
+        project_root = project_root if project_root is not None else Path(".")
+        suffix = "" if name is None else f"-{name}"
+        data_dir = project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
+
+        return data_dir
+
+    @classmethod
+    def exists_on_disk(cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None):
+        return cls._dir(cfg, project_root, name).exists()
+
+    @classmethod
+    def load(cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None) -> Self:
+        data_dir = cls._dir(cfg, project_root, name)
+
+        if data_dir.exists():
+            layers = cls._load_layers(data_dir / "layers")
+            links = cls._load_links(data_dir / "links")
+
+            user_journeys_df = pl.read_parquet(data_dir / "user_journeys_df.parquet")
+            locations_gdf = gpd.read_parquet(data_dir / "locations_gdf.parquet")
+
+            return cls(locations_gdf, user_journeys_df, layers, links)
+        else:
+            raise ValueError(f"Data directory does not exist: {data_dir}")
+
+    @classmethod
+    def _load_layers(cls, layers_dir: Path) -> dict[str, Layer]:
+        layers = {}
+        for layer_dir in layers_dir.iterdir():
+            layer = load_layer(layer_dir)
+            layers[layer.name] = layer
+
+        return layers
+
+    @classmethod
+    def _load_links(cls, links_dir: Path) -> dict[tuple[str, str], pl.DataFrame]:
+        links = {}
+        for link_dir in links_dir.iterdir():
+            with open(link_dir / "attrs.pickle", "rb") as f:
+                attrs = pickle.load(f)
+
+            link_edge_df = pl.read_parquet(link_dir / "link_edges.parquet", schema=LINK_EDGE_LIST_SCHEMA)
+            links[(attrs["lower"], attrs["upper"])] = link_edge_df
+
+        return links
+
+    def save(
+        self,
+        cfg: GenevaDataConfig,
+        project_root: Path | None = None,
+        name: str | None = None,
+        can_overwrite: bool = False,
+    ):
+        data_dir = self._dir(cfg, project_root, name)
+        layers_dir = data_dir / "layers"
+        links_dir = data_dir / "links"
+
+        data_dir.mkdir(parents=True, exist_ok=can_overwrite)
+
+        if can_overwrite and layers_dir.exists():
+            shutil.rmtree(layers_dir)
+
+        if can_overwrite and links_dir.exists():
+            shutil.rmtree(links_dir)
+
+        layers_dir.mkdir(parents=True, exist_ok=can_overwrite)
+        links_dir.mkdir(parents=True, exist_ok=can_overwrite)
+
+        for _, layer in self._layers.items():
+            layer.save(layers_dir)
+
+        for (lower, upper), link_edge_df in self._links.items():
+            link_dir = links_dir / f"{lower}-{upper}"
+            link_dir.mkdir(parents=True, exist_ok=True)
+
+            attrs = {"lower": lower, "upper": upper}
+            with open(link_dir / "attrs.pickle", "wb") as f:
+                pickle.dump(attrs, f)
+
+            link_edge_df.write_parquet(link_dir / "link_edges.parquet")
+
+        self._user_journeys.write_parquet(data_dir / "user_journeys_df.parquet")
+        self._locations_gdf.to_parquet(data_dir / "locations_gdf.parquet")
+
 
 def build_planar_edges(planar_locations_gdf: gpd.GeoDataFrame, travel_time_f: TravelTimeFactory) -> pl.DataFrame:
     check_schema(planar_locations_gdf, LOCATIONS_SCHEMA)
@@ -374,7 +528,8 @@ def _compute_neighbour_loc_ids(planar_locations_gdf: gpd.GeoDataFrame, exclude_s
     geometries = planar_locations_gdf.set_index("loc_id").geometry
 
     neighbours = (
-        geometries.apply(_find_neighbours, sindex=sindex, geometries=geometries)
+        geometries
+        .apply(_find_neighbours, sindex=sindex, geometries=geometries)
         .rename("neighbour")
         .explode()
         .reset_index()
