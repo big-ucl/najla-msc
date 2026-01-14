@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
 import geopandas as gpd
 import pandas as pd
@@ -97,6 +98,36 @@ class GenevaData(NetworkData):
         self.locations_df = utils.gdf_to_polars(self.locations_gdf)
         self.gtfs = self.inputs.gtfs
 
+    @classmethod
+    def _dirs(
+        cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None
+    ) -> tuple[Path, Path]:
+        project_root = project_root if project_root is not None else Path(".")
+        suffix = "" if name is None else f"-{name}"
+        data_dir = project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
+
+        return project_root, data_dir
+
+    @classmethod
+    def load(cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None) -> Self:
+        project_root, data_dir = cls._dirs(cfg, project_root, name)
+        gva_inputs = load_files(cfg, project_root)
+
+        if data_dir.exists():
+            locations_gdf = gpd.read_parquet(data_dir / "locations_gdf.parquet")
+            user_journeys_df = pl.read_parquet(data_dir / "user_journeys_df.parquet", schema=USER_JOURNEY_SCHEMA)
+
+            return cls(gva_inputs, locations_gdf, user_journeys_df)
+        else:
+            return build_geneva_data(gva_inputs)
+
+    def save(self, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None):
+        project_root, data_dir = self._dirs(cfg, project_root, name)
+
+        data_dir.mkdir(parents=True, exist_ok=True)
+        self.locations_gdf.to_parquet(data_dir / "locations_gdf.parquet")
+        self.user_journeys_df.write_parquet(data_dir / "user_journeys_df.parquet")
+
 
 def load_files(cfg: GenevaDataConfig, project_root: Path | None = None) -> GenevaInputs:
     def parse_gtfs_date(*cols: str) -> pl.Expr:
@@ -191,7 +222,8 @@ def build_geneva_data(inputs: GenevaInputs) -> GenevaData:
 
     # Filter out locations not in user journeys
     user_loc_ids = (
-        pl.concat([user_journeys_df["dep_loc_id"], user_journeys_df["arr_loc_id"]])
+        pl
+        .concat([user_journeys_df["dep_loc_id"], user_journeys_df["arr_loc_id"]])
         .unique()
         .rename("loc_id")
         .to_pandas()
@@ -335,14 +367,16 @@ def _add_lon_lat_from_centroid(
 
 def build_stop_names_to_loc_id_mapping(stops_df: pl.DataFrame) -> pl.DataFrame:
     df = stops_df.with_columns(
-        pl.when(pl.col("stop_id").str.starts_with("Parent"))
+        pl
+        .when(pl.col("stop_id").str.starts_with("Parent"))
         .then("stop_id")
         .otherwise("parent_station")
         .alias("parent_station")
     )
 
     with_parents = (
-        df.filter(pl.col("parent_station") != "")
+        df
+        .filter(pl.col("parent_station") != "")
         .group_by("parent_station")
         .agg(pl.col("stop_name").first().alias("loc_name"))
         .rename({"parent_station": "loc_id"})
@@ -370,7 +404,8 @@ def match_loc_ids(user_journeys_df: pl.DataFrame, locations_df: pl.DataFrame, st
 
     for loc_id_col, stop_name_col, match_type_col in columns:
         matched_df = (
-            matched_df.pipe(match_loc_id_on_subsector, locations_df, loc_id_col, stop_name_col, match_type_col)
+            matched_df
+            .pipe(match_loc_id_on_subsector, locations_df, loc_id_col, stop_name_col, match_type_col)
             .pipe(match_loc_id_on_municipality_swiss, locations_df, loc_id_col, stop_name_col, match_type_col)
             .pipe(match_loc_id_on_municipality_french, locations_df, loc_id_col, stop_name_col, match_type_col)
             .pipe(match_loc_id_on_na, locations_df, loc_id_col, stop_name_col, match_type_col)
@@ -387,7 +422,8 @@ def manual_patch_stop_names(user_journeys_df: pl.DataFrame, *stop_name_cols: str
 
 def match_loc_id_on_strict_stop_name(user_journeys_df: pl.DataFrame, stop_names_to_id_df: pl.DataFrame) -> pl.DataFrame:
     return (
-        user_journeys_df.join(
+        user_journeys_df
+        .join(
             stop_names_to_id_df.select(pl.all().name.prefix("dep_"), dep_match_type=pl.lit("strict_stop_name")),
             left_on=pl.col("lieu_depart_trajet").str.to_lowercase(),
             right_on=pl.col("dep_loc_name").str.to_lowercase(),
@@ -415,7 +451,8 @@ def match_loc_id_on_subsector(
     does_regex_match_expr = pl.col(loc_id_col).is_null() & ~pl.col("loc_id").is_null()
 
     return (
-        user_journeys_df.with_columns(pl.col(stop_name_col).str.extract(regex, 1).alias("match"))
+        user_journeys_df
+        .with_columns(pl.col(stop_name_col).str.extract(regex, 1).alias("match"))
         .join(
             subsectors,
             left_on=pl.col("match").str.strip_chars().str.to_lowercase(),
@@ -446,7 +483,8 @@ def match_loc_id_on_municipality_swiss(
     )
 
     return (
-        user_journeys_df.join(
+        user_journeys_df
+        .join(
             municipalities,
             left_on=stop_name_col,
             right_on="loc_name",
@@ -454,7 +492,8 @@ def match_loc_id_on_municipality_swiss(
         )
         .with_columns(
             pl.when(does_regex_match_expr).then("loc_id").otherwise(loc_id_col).alias(loc_id_col),
-            pl.when(does_regex_match_expr)
+            pl
+            .when(does_regex_match_expr)
             .then(pl.lit("municipality_swiss"))
             .otherwise(match_type_col)
             .alias(match_type_col),
@@ -475,7 +514,8 @@ def match_loc_id_on_municipality_french(
     does_regex_match_expr = pl.col(loc_id_col).is_null() & ~pl.col("loc_id").is_null()
 
     return (
-        user_journeys_df.join(
+        user_journeys_df
+        .join(
             municipalities,
             left_on=pl.col(stop_name_col).str.extract(regex, 2),
             right_on=pl.col("loc_id").str.strip_prefix("FR-"),
@@ -483,7 +523,8 @@ def match_loc_id_on_municipality_french(
         )
         .with_columns(
             pl.when(does_regex_match_expr).then("loc_id").otherwise(loc_id_col).alias(loc_id_col),
-            pl.when(does_regex_match_expr)
+            pl
+            .when(does_regex_match_expr)
             .then(pl.lit("municipality_french"))
             .otherwise(match_type_col)
             .alias(match_type_col),
@@ -506,7 +547,8 @@ def match_loc_id_on_na(
     )
 
     return (
-        user_journeys_df.join(
+        user_journeys_df
+        .join(
             municipalities,
             left_on=pl.col(stop_name_col),
             right_on=pl.col("loc_name"),
@@ -548,7 +590,8 @@ def match_loc_id_on_fuzzy_stop_names(
 
     stripped_stop_names = pl.col("stop_name").str.to_lowercase().str.strip_chars("0123456789- ")
     matched_stop_names = (
-        unmatched_stop_names.with_columns(stripped_stop_names.map_elements(fuzzy_match).alias("result"))
+        unmatched_stop_names
+        .with_columns(stripped_stop_names.map_elements(fuzzy_match).alias("result"))
         .unnest("result")
         .filter(pl.col("score") > FUZZY_MATCH_THRESHOLD)
         .select("stop_name", pl.col("closest_stop_id").alias("loc_id"))
@@ -557,10 +600,12 @@ def match_loc_id_on_fuzzy_stop_names(
     is_fuzzy_match_success = pl.col(loc_id_col).is_null() & pl.col("loc_id").is_not_null()
 
     return (
-        user_journeys_df.join(matched_stop_names, left_on=stop_name_col, right_on="stop_name", how="left")
+        user_journeys_df
+        .join(matched_stop_names, left_on=stop_name_col, right_on="stop_name", how="left")
         .with_columns(
             pl.when(is_fuzzy_match_success).then("loc_id").otherwise(loc_id_col).alias(loc_id_col),
-            pl.when(is_fuzzy_match_success)
+            pl
+            .when(is_fuzzy_match_success)
             .then(pl.lit("fuzzy_stop_name"))
             .otherwise(match_type_col)
             .alias(match_type_col),
@@ -626,7 +671,8 @@ def _handle_null_values(raw_geneva_df: pl.DataFrame) -> pl.DataFrame:
     # Impute empty values of `ligne_trajet` to UNKNOWN or NA for ligne column depending on if mode is applicable
     applicable_modes = ["mode_bus", "mode_tramway", "mode_bateau_navette"]
     imputed_line_df = imputed_unknown_rows_df.with_columns(
-        pl.when((pl.col("ligne_trajet") == "") & pl.col("mode").is_in(applicable_modes))
+        pl
+        .when((pl.col("ligne_trajet") == "") & pl.col("mode").is_in(applicable_modes))
         .then(pl.lit("UNKNOWN"))
         .otherwise("ligne_trajet")
         .alias("ligne_trajet")

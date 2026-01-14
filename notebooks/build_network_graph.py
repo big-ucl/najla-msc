@@ -28,13 +28,12 @@ def _():
 
 @app.cell(hide_code=True)
 def _():
-    from activitygraphs.data.geneva import load_files, build_geneva_data
+    from activitygraphs.data.geneva import GenevaData
 
-    gva_inputs = load_files(cfg.data, project_root)
-    gva_data = build_geneva_data(gva_inputs)
+    gva_data = GenevaData.load(cfg.data, project_root)
 
     mo.accordion({
-        "Table: Raw journeys": gva_inputs.raw_journeys_df,
+        "Table: Raw journeys": gva_data.inputs.raw_journeys_df,
         "Table: User journeys (cleaned)": gva_data.user_journeys_df,
     })
     return (gva_data,)
