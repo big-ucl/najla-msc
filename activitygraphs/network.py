@@ -510,8 +510,6 @@ def build_na_link_edges(
 
 
 def _check_only_one_route_per_node(pt_edge_df: pl.DataFrame, transfer_edge_df: pl.DataFrame):
-    print("BINGBONG")
-
     def check_df(name: str, df: pl.DataFrame, loc_id_col: str, route_id_col: str):
         counts = (
             df

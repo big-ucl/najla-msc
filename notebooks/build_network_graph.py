@@ -119,7 +119,7 @@ def _(gva_data, walk_travel_time_f):
                 "public_transport",
                 loc_ids="public_transport",
                 pt_network_builder=build_gva_pt_network,
-                pt_node_type=PTNodeType.ONE_PER_STOP,
+                pt_node_type=PTNodeType.ONE_PER_ROUTE,
             )
             .add_planar_layer("subsector", loc_ids="subsector", travel_time_f=walk_travel_time_f)
             .add_planar_layer("municipality_geneva", loc_ids="municipality_geneva")
