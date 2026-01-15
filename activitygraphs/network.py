@@ -36,7 +36,7 @@ from activitygraphs.utils import (
 NA_LON, NA_LAT = 6.1709475192397605, 46.24348817355701
 NA, NA_SOURCE, NA_SINK = "NA", "NA_SOURCE", "NA_SINK"
 
-type PTNetworkBuilder = Callable[[pl.DataFrame, PTNodeType], tuple[pl.DataFrame, pl.DataFrame]]
+type PTLayerBuilder = Callable[[pl.DataFrame, PTNodeType], tuple[pl.DataFrame, pl.DataFrame]]
 type TravelTimeFactory = float | pl.Expr | pl.DataFrame | TravelTimeCalculator | Callable[[str, str], float]
 
 
@@ -233,15 +233,15 @@ class Network:
         self,
         name: str,
         loc_ids: str | gpd.GeoDataFrame | Iterable[str] | None = None,
-        pt_network_builder: PTNetworkBuilder | None = None,
+        pt_layer_builder: PTLayerBuilder | None = None,
         pt_edge_df: pl.DataFrame | None = None,
         transfer_edge_df: pl.DataFrame | None = None,
         pt_node_type: PTNodeType = PTNodeType.ONE_PER_ROUTE,
     ) -> Self:
-        if pt_edge_df is None and transfer_edge_df is None and pt_network_builder is not None:
-            pt_edge_df, transfer_edge_df = pt_network_builder(self.locations_df, pt_node_type)
-        elif pt_network_builder is None:
-            raise ValueError("No PTNetworkBuilder provided, cannot build edges.")
+        if pt_edge_df is None and transfer_edge_df is None and pt_layer_builder is not None:
+            pt_edge_df, transfer_edge_df = pt_layer_builder(self.locations_df, pt_node_type)
+        elif pt_layer_builder is None:
+            raise ValueError("No PTLayerBuilder provided, cannot build edges.")
         elif pt_edge_df is None or transfer_edge_df is None:
             raise ValueError("Arguments `pt_edge_df` and `transfer_edge_df` must be both None or both DataFrames")
 

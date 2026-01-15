@@ -3,10 +3,11 @@ from dataclasses import dataclass
 import polars as pl
 import polars.selectors as cs
 
-from activitygraphs.base import PT_EDGE_LIST_SCHEMA, Mode, PTNodeType
+from activitygraphs.base import PT_EDGE_LIST_SCHEMA, TRANSFER_EDGE_LIST_SCHEMA, Mode, PTNodeType
 from activitygraphs.utils import check_schema
 
 TRANSFER_ROUTE_ID = "transfer_route"
+ONE_PER_STOP_ROUTE_ID = "ALL"
 DEFAULT_TRANSFER_TIME_MIN = 2
 
 
@@ -57,39 +58,42 @@ SAMPLE_DAY_START = pl.time(6, 0, 0)
 SAMPLE_DAY_END = pl.time(21, 0, 0)
 
 
-def build_pt_network_edges(
+def build_pt_layer_edges(
     locations_df: pl.DataFrame,
     gtfs: GTFSInputs,
     pt_node_type: PTNodeType,
     drop_null_headways: bool = False,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    edge_ids = ["route_id", "orig_loc_id", "dest_loc_id"]
+    edge_ids = (
+        ["route_id", "orig_loc_id", "dest_loc_id"]
+        if pt_node_type == PTNodeType.ONE_PER_ROUTE
+        else ["orig_loc_id", "dest_loc_id"]
+    )
 
     active_stop_times = filter_active_stop_times(locations_df, gtfs)
     pt_trips = create_pt_trip_df(active_stop_times)
     headways_df = compute_avg_headways(pt_trips, gtfs, edge_ids)
 
-    pt_edge_df = (
-        pt_trips
-        .group_by(edge_ids)
-        .agg(
-            first_departure_time=pl.col("orig_departure_time").min(),
-            last_departure_time=pl.col("orig_departure_time").max(),
-            avg_dwell_time_min=pl.col("orig_dwell_time_min").mean(),
-            travel_time_min=pl.col("travel_time_min").mean(),
-        )
-        .join(headways_df, on=edge_ids, how="left")
-    ).collect()
+    pt_edge_df = pt_trips.group_by(edge_ids).agg(
+        first_departure_time=pl.col("orig_departure_time").min(),
+        last_departure_time=pl.col("orig_departure_time").max(),
+        avg_dwell_time_min=pl.col("orig_dwell_time_min").mean(),
+        travel_time_min=pl.col("travel_time_min").mean(),
+    )
 
-    pt_edge_df = add_route_attributes_to_edges(pt_edge_df, gtfs)
+    if pt_node_type == PTNodeType.ONE_PER_STOP:
+        pt_edge_df = pt_edge_df.with_columns(route_id=pl.lit(ONE_PER_STOP_ROUTE_ID))
+
+    pt_edge_df = pt_edge_df.join(headways_df, on=edge_ids, how="left").collect()
+    pt_edge_df = add_route_attributes_to_edges(pt_edge_df, gtfs, pt_node_type)
     pt_edge_df = pt_edge_df.select(PT_EDGE_LIST_SCHEMA.keys())
 
     if drop_null_headways:
         pt_edge_df = pt_edge_df.drop_nulls("avg_headway_min")
 
-    transfer_edge_df = create_transfer_edges(pt_edge_df, locations_df, gtfs)
+    transfer_edge_df = create_transfer_edges(pt_edge_df, locations_df, gtfs, pt_node_type)
 
-    return check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA), transfer_edge_df
+    return check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA), check_schema(transfer_edge_df, TRANSFER_EDGE_LIST_SCHEMA)
 
 
 def filter_active_stop_times(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.LazyFrame:
@@ -160,7 +164,12 @@ def compute_avg_headways(pt_trips: pl.LazyFrame, gtfs: GTFSInputs, edge_id: list
     )
 
 
-def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.DataFrame:
+def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs, pt_node_type: PTNodeType) -> pl.DataFrame:
+    if pt_node_type == PTNodeType.ONE_PER_STOP:
+        return edge_df.with_columns(
+            route_mode=pl.lit(Mode.UNKNOWN).cast(pl.Categorical), route_name=pl.lit(ONE_PER_STOP_ROUTE_ID)
+        )
+
     agencies = gtfs.agency_df.select("agency_id", "agency_name")
 
     route_mode = pl.col("route_type").replace_strict(
@@ -181,7 +190,11 @@ def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl
     return edge_df.join(active_routes_df, on="route_id")
 
 
-def create_transfer_edges(pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.DataFrame:
+def create_transfer_edges(
+    pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, gtfs: GTFSInputs, pt_node_type: PTNodeType
+) -> pl.DataFrame:
+    transfer_route_id = TRANSFER_ROUTE_ID if pt_node_type == PTNodeType.ONE_PER_ROUTE else ONE_PER_STOP_ROUTE_ID
+
     # Include only stops appearing in the edge list
     loc_ids = locations_df.select("loc_id")
     stops = gtfs.stops_df.join(loc_ids, on="loc_id")
@@ -197,7 +210,7 @@ def create_transfer_edges(pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, 
         .select("orig_loc_id", "dest_loc_id", "travel_time_min")
     )
 
-    # For every (route_id, loc_id) pair, add an incoming edge from the pair to the central (TRANSFER_ROUTE_ID, loc_id) node
+    # For every (route_id, loc_id) pair, add an incoming edge from the pair to the central (transfer_route_id, loc_id) node
     # The incoming edge has a transfer time defined in the GTFS or the default transfer time if not defined
     pt_nodes_df = pl.concat([
         pt_edge_df.select("route_id", loc_id="orig_loc_id"),
@@ -205,16 +218,16 @@ def create_transfer_edges(pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, 
     ]).unique()
 
     incoming_transfers = pt_nodes_df.select(
-        orig_loc_id="loc_id", orig_route_id="route_id", dest_loc_id="loc_id", dest_route_id=pl.lit(TRANSFER_ROUTE_ID)
+        orig_loc_id="loc_id", orig_route_id="route_id", dest_loc_id="loc_id", dest_route_id=pl.lit(transfer_route_id)
     )
     incoming_transfers = incoming_transfers.join(
         gtfs_transfers, on=["orig_loc_id", "dest_loc_id"], how="left"
     ).with_columns(pl.col("travel_time_min").fill_null(DEFAULT_TRANSFER_TIME_MIN))
 
-    # Similarly, an outgoing edge from the central (TRANSFER_ROUTE_ID, loc_id) node to the (route_id, loc_id) pair, with no travel time
+    # Similarly, an outgoing edge from the central (transfer_route_id, loc_id) node to the (route_id, loc_id) pair, with no travel time
     outgoing_transfers = pt_nodes_df.select(
         orig_loc_id="loc_id",
-        orig_route_id=pl.lit(TRANSFER_ROUTE_ID),
+        orig_route_id=pl.lit(transfer_route_id),
         dest_loc_id="loc_id",
         dest_route_id="route_id",
         travel_time_min=0.0,
@@ -224,7 +237,7 @@ def create_transfer_edges(pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, 
     inter_loc_transfers = (
         gtfs_transfers
         .filter(pl.col("orig_loc_id") != pl.col("dest_loc_id"))
-        .with_columns(orig_route_id=pl.lit(TRANSFER_ROUTE_ID), dest_route_id=pl.lit(TRANSFER_ROUTE_ID))
+        .with_columns(orig_route_id=pl.lit(transfer_route_id), dest_route_id=pl.lit(transfer_route_id))
         .select(incoming_transfers.columns)
     )
 
