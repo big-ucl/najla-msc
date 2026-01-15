@@ -92,24 +92,35 @@ def _():
 
 @app.cell
 def _(gva_data):
+    from activitygraphs.base import Mode
+    from activitygraphs.routing import TravelTimeCalculator, OSRMRouter
+
+    walk_router = OSRMRouter("http://127.0.0.1:5000", Mode.WALK).with_cache()
+    walk_travel_time_f = TravelTimeCalculator(gva_data.locations_gdf, walk_router)
+    return (walk_travel_time_f,)
+
+
+@app.cell
+def _(gva_data, walk_travel_time_f):
     from activitygraphs.network import Network
     from activitygraphs.data.gtfs import build_pt_network_edges
-    from activitygraphs.routing import TravelTimeCalculator, OSRMRouter
-    from activitygraphs.base import Mode
+    from activitygraphs.base import PTNodeType
 
 
-    def build_gva_pt_network(locations_gdf: gpd.GeoDataFrame):
-        return build_pt_network_edges(locations_gdf, gva_data.gtfs, drop_null_headways=True)
+    def build_gva_pt_network(locations_gdf: gpd.GeoDataFrame, pt_node_type: PTNodeType):
+        return build_pt_network_edges(locations_gdf, gva_data.gtfs, pt_node_type, drop_null_headways=True)
 
 
     def build_gva_network():
-        walk_router = OSRMRouter("http://127.0.0.1:5000", Mode.WALK).with_cache()
-        walk_travel_time_f = TravelTimeCalculator(gva_data.locations_gdf, walk_router)
-
         network = (
             Network
             .empty_network(gva_data)
-            .add_pt_layer("public_transport", loc_ids="public_transport", pt_network_builder=build_gva_pt_network)
+            .add_pt_layer(
+                "public_transport",
+                loc_ids="public_transport",
+                pt_network_builder=build_gva_pt_network,
+                pt_node_type=PTNodeType.ONE_PER_STOP,
+            )
             .add_planar_layer("subsector", loc_ids="subsector", travel_time_f=walk_travel_time_f)
             .add_planar_layer("municipality_geneva", loc_ids="municipality_geneva")
             .add_planar_layer("municipality_swiss", loc_ids="municipality_swiss")
@@ -128,7 +139,10 @@ def _(gva_data):
         network.save(cfg.data, project_root)
         return network
 
-    network = Network.load(cfg.data, project_root) if Network.exists_on_disk(cfg.data, project_root) else build_gva_network()
+
+    network = (
+        Network.load(cfg.data, project_root) if Network.exists_on_disk(cfg.data, project_root) else build_gva_network()
+    )
     return (network,)
 
 

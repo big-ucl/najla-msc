@@ -22,6 +22,7 @@ from activitygraphs.base import (
     TRANSFER_EDGE_LIST_SCHEMA,
     USER_JOURNEY_SCHEMA,
     WALK_EDGE_LIST_SCHEMA,
+    PTNodeType,
 )
 from activitygraphs.config import GenevaDataConfig
 from activitygraphs.routing import TravelTimeCalculator
@@ -35,8 +36,8 @@ from activitygraphs.utils import (
 NA_LON, NA_LAT = 6.1709475192397605, 46.24348817355701
 NA, NA_SOURCE, NA_SINK = "NA", "NA_SOURCE", "NA_SINK"
 
-PTNetworkBuilder = Callable[[pl.DataFrame], tuple[pl.DataFrame, pl.DataFrame]]
-TravelTimeFactory = float | pl.Expr | pl.DataFrame | TravelTimeCalculator | Callable[[str, str], float]
+type PTNetworkBuilder = Callable[[pl.DataFrame, PTNodeType], tuple[pl.DataFrame, pl.DataFrame]]
+type TravelTimeFactory = float | pl.Expr | pl.DataFrame | TravelTimeCalculator | Callable[[str, str], float]
 
 
 class NetworkData(ABC):
@@ -100,12 +101,20 @@ class Layer:
 
 
 class PTLayer(Layer):
-    def __init__(self, name: str, loc_ids: Iterable[str], pt_edge_df: pl.DataFrame, transfer_edge_df: pl.DataFrame):
+    def __init__(
+        self,
+        name: str,
+        loc_ids: Iterable[str],
+        node_type: PTNodeType,
+        pt_edge_df: pl.DataFrame,
+        transfer_edge_df: pl.DataFrame,
+    ):
         edge_cols = EDGE_LIST_SCHEMA.keys()
         edge_df = pl.concat([pt_edge_df.select(*edge_cols), transfer_edge_df.select(*edge_cols)])
 
         super().__init__(name, LayerType.PUBLIC_TRANSPORT, loc_ids, edge_df)
 
+        self.node_type = node_type
         self.pt_edge_df = check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA)
         self.transfer_edge_df = check_schema(transfer_edge_df, TRANSFER_EDGE_LIST_SCHEMA)
 
@@ -114,14 +123,20 @@ class PTLayer(Layer):
         with open(layer_dir / "attrs.pickle", "rb") as f:
             attrs = pickle.load(f)
 
+        with open(layer_dir / "pt_attrs.pickle", "rb") as f:
+            pt_attrs = pickle.load(f)
+
         pt_edge_df = pl.read_parquet(layer_dir / "pt_edge_df.parquet", schema=PT_EDGE_LIST_SCHEMA)
         transfer_edge_df = pl.read_parquet(layer_dir / "transfer_edge_df.parquet", schema=TRANSFER_EDGE_LIST_SCHEMA)
 
-        return cls(attrs["name"], attrs["loc_ids"], pt_edge_df, transfer_edge_df)
+        return cls(attrs["name"], attrs["loc_ids"], pt_attrs["node_type"], pt_edge_df, transfer_edge_df)
 
     def save(self, layers_dir: Path):
         super().save(layers_dir)
         layer_dir = self._dir(layers_dir)
+
+        with open(layer_dir / "pt_attrs.pickle", "wb") as f:
+            pickle.dump({"node_type": self.node_type}, f)
 
         self.pt_edge_df.write_parquet(layer_dir / "pt_edge_df.parquet")
         self.transfer_edge_df.write_parquet(layer_dir / "transfer_edge_df.parquet")
@@ -221,20 +236,24 @@ class Network:
         pt_network_builder: PTNetworkBuilder | None = None,
         pt_edge_df: pl.DataFrame | None = None,
         transfer_edge_df: pl.DataFrame | None = None,
+        pt_node_type: PTNodeType = PTNodeType.ONE_PER_ROUTE,
     ) -> Self:
         if pt_edge_df is None and transfer_edge_df is None and pt_network_builder is not None:
-            pt_edge_df, transfer_edge_df = pt_network_builder(self.locations_df)
+            pt_edge_df, transfer_edge_df = pt_network_builder(self.locations_df, pt_node_type)
         elif pt_network_builder is None:
             raise ValueError("No PTNetworkBuilder provided, cannot build edges.")
         elif pt_edge_df is None or transfer_edge_df is None:
             raise ValueError("Arguments `pt_edge_df` and `transfer_edge_df` must be both None or both DataFrames")
+
+        if pt_node_type == PTNodeType.ONE_PER_STOP:
+            _check_only_one_route_per_node(pt_edge_df, transfer_edge_df)
 
         if loc_ids is None:
             loc_ids = extract_unique_loc_ids(pt_edge_df, transfer_edge_df)
 
         loc_ids = self._check_layer_loc_ids(name, loc_ids)
 
-        self._layers[name] = PTLayer(name, loc_ids, pt_edge_df, transfer_edge_df)
+        self._layers[name] = PTLayer(name, loc_ids, pt_node_type, pt_edge_df, transfer_edge_df)
         return self
 
     def add_planar_layer(
@@ -488,6 +507,30 @@ def build_na_link_edges(
 
     edges = _add_travel_time_column(edges, travel_time_f)
     return check_schema(edges, LINK_EDGE_LIST_SCHEMA)
+
+
+def _check_only_one_route_per_node(pt_edge_df: pl.DataFrame, transfer_edge_df: pl.DataFrame):
+    print("BINGBONG")
+
+    def check_df(name: str, df: pl.DataFrame, loc_id_col: str, route_id_col: str):
+        counts = (
+            df
+            .select(loc_id_col, route_id_col)
+            .unique()
+            .group_by(loc_id_col)
+            .agg(count=pl.len(), route_id=pl.col(route_id_col))
+        )
+        mismatches = counts.filter(pl.col("count") != 1)
+
+        if len(mismatches) > 0:
+            raise ValueError(
+                f"Some nodes ({loc_id_col}, {route_id_col}) in {name} have more than one route: \n{mismatches}"
+            )
+
+    check_df("pt_edge_df", pt_edge_df, "orig_loc_id", "route_id")
+    check_df("pt_edge_df", pt_edge_df, "dest_loc_id", "route_id")
+    check_df("transfer_edge_df", transfer_edge_df, "orig_loc_id", "orig_route_id")
+    check_df("transfer_edge_df", transfer_edge_df, "dest_loc_id", "dest_route_id")
 
 
 def _add_travel_time_column(edge_df: pl.DataFrame, travel_time_f: TravelTimeFactory) -> pl.DataFrame:

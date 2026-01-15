@@ -3,6 +3,11 @@ from enum import StrEnum
 import polars as pl
 
 
+class PTNodeType(StrEnum):
+    ONE_PER_ROUTE = "ONE_PER_ROUTE"
+    ONE_PER_STOP = "ONE_PER_STOP"
+
+
 class Mode(StrEnum):
     OTHER = "mode_other"
     UNKNOWN = "mode_unknown"

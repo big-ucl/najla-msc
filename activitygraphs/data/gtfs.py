@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import polars as pl
 import polars.selectors as cs
 
-from activitygraphs.base import PT_EDGE_LIST_SCHEMA, Mode
+from activitygraphs.base import PT_EDGE_LIST_SCHEMA, Mode, PTNodeType
 from activitygraphs.utils import check_schema
 
 TRANSFER_ROUTE_ID = "transfer_route"
@@ -58,7 +58,10 @@ SAMPLE_DAY_END = pl.time(21, 0, 0)
 
 
 def build_pt_network_edges(
-    locations_df: pl.DataFrame, gtfs: GTFSInputs, drop_null_headways: bool = False
+    locations_df: pl.DataFrame,
+    gtfs: GTFSInputs,
+    pt_node_type: PTNodeType,
+    drop_null_headways: bool = False,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     edge_ids = ["route_id", "orig_loc_id", "dest_loc_id"]
 
