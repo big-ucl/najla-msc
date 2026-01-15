@@ -67,7 +67,8 @@ def build_pt_network_edges(
     headways_df = compute_avg_headways(pt_trips, gtfs, edge_ids)
 
     pt_edge_df = (
-        pt_trips.group_by(edge_ids)
+        pt_trips
+        .group_by(edge_ids)
         .agg(
             first_departure_time=pl.col("orig_departure_time").min(),
             last_departure_time=pl.col("orig_departure_time").max(),
@@ -91,9 +92,9 @@ def build_pt_network_edges(
 def filter_active_stop_times(locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.LazyFrame:
     # Filter out all stops not in the list of active locations
     # Only keep trips that connect at least 2 active locations
-
     return (
-        gtfs.stop_times_df.filter(pl.col("loc_id").is_in(locations_df["loc_id"].implode()))
+        gtfs.stop_times_df
+        .filter(pl.col("loc_id").is_in(locations_df["loc_id"].implode()))
         .filter((pl.len() >= 2).over("trip_id"))
         .with_columns(pl.col("stop_sequence").rank("dense").over("trip_id", order_by="stop_sequence"))
         .join(gtfs.trips_df.select("route_id", "service_id", "trip_id"), on="trip_id")
@@ -106,7 +107,8 @@ def create_pt_trip_df(active_stop_times: pl.LazyFrame) -> pl.LazyFrame:
     arrivals = active_stop_times.select(*join_cols, pl.exclude(join_cols).name.prefix("dest_"))
 
     return (
-        departures.join(
+        departures
+        .join(
             arrivals,
             left_on=[*join_cols, pl.col("orig_stop_sequence")],
             right_on=[*join_cols, pl.col("dest_stop_sequence") - 1],
@@ -131,22 +133,26 @@ def compute_avg_headways(pt_trips: pl.LazyFrame, gtfs: GTFSInputs, edge_id: list
     services_removed = exceptions.filter(exception_type=2).select("service_id")
 
     sample_services = (
-        gtfs.calendar_df.filter(pl.col(SAMPLE_WEEKDAY) == 1)
+        gtfs.calendar_df
+        .filter(pl.col(SAMPLE_WEEKDAY) == 1)
         .select("service_id")
         .join(services_added, on="service_id", how="left")
         .join(services_removed, on="service_id", how="anti")
     )
 
     return (
-        pt_trips.join(sample_services.lazy(), on="service_id")
+        pt_trips
+        .join(sample_services.lazy(), on="service_id")
         .filter((SAMPLE_DAY_START <= pl.col("orig_departure_time")) & (pl.col("orig_departure_time") <= SAMPLE_DAY_END))
         .group_by(edge_id)
         .agg(
-            avg_headway_min=pl.col("orig_departure_time")
+            daily_trip_count=pl.len(),
+            avg_headway_min=pl
+            .col("orig_departure_time")
             .sort()
             .diff(null_behavior="drop")
             .dt.total_minutes(fractional=True)
-            .mean()
+            .mean(),
         )
     )
 
@@ -162,7 +168,8 @@ def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs) -> pl
     route_name = pl.col("route_mode_desc") + pl.col("route_short_name") + agency_name
 
     active_routes_df = (
-        gtfs.routes_df.join(agencies, on="agency_id")
+        gtfs.routes_df
+        .join(agencies, on="agency_id")
         .with_columns(route_mode=route_mode)
         .with_columns(route_mode_desc=route_mode_desc)
         .select("route_id", "route_mode", route_name=route_name)
@@ -178,9 +185,8 @@ def create_transfer_edges(pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, 
 
     # Compute average transfer time in minutes between loc_ids
     gtfs_transfers = (
-        gtfs.transfers_df.join(
-            stops.select("stop_id", orig_loc_id="loc_id"), left_on="from_stop_id", right_on="stop_id"
-        )
+        gtfs.transfers_df
+        .join(stops.select("stop_id", orig_loc_id="loc_id"), left_on="from_stop_id", right_on="stop_id")
         .join(stops.select("stop_id", dest_loc_id="loc_id"), left_on="to_stop_id", right_on="stop_id")
         .group_by("orig_loc_id", "dest_loc_id")
         .agg(pl.col("min_transfer_time").unique())
@@ -213,7 +219,8 @@ def create_transfer_edges(pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, 
 
     # Add the GTFS transfers between different loc_ids
     inter_loc_transfers = (
-        gtfs_transfers.filter(pl.col("orig_loc_id") != pl.col("dest_loc_id"))
+        gtfs_transfers
+        .filter(pl.col("orig_loc_id") != pl.col("dest_loc_id"))
         .with_columns(orig_route_id=pl.lit(TRANSFER_ROUTE_ID), dest_route_id=pl.lit(TRANSFER_ROUTE_ID))
         .select(incoming_transfers.columns)
     )

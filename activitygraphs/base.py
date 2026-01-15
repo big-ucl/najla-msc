@@ -60,6 +60,7 @@ PT_EDGE_LIST_SCHEMA = pl.Schema({
     "last_departure_time": pl.Time,
     "avg_dwell_time_min": pl.Float64,
     "travel_time_min": pl.Float64,
+    "daily_trip_count": pl.UInt32,
     "avg_headway_min": pl.Float64,
     "route_mode": pl.Categorical(),
     "route_name": pl.String,

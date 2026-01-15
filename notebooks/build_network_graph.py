@@ -91,7 +91,7 @@ def _():
 
 
 @app.cell
-def _(gva_data, name):
+def _(gva_data):
     from activitygraphs.network import Network
     from activitygraphs.data.gtfs import build_pt_network_edges
     from activitygraphs.routing import TravelTimeCalculator, OSRMRouter
@@ -125,7 +125,7 @@ def _(gva_data, name):
             )
         )
 
-        network.save(cfg.data, project_root, name)
+        network.save(cfg.data, project_root)
         return network
 
     network = Network.load(cfg.data, project_root) if Network.exists_on_disk(cfg.data, project_root) else build_gva_network()

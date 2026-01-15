@@ -108,18 +108,26 @@ def explore_pt_edges_by_mode(
     locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
 
     formatted_routes_expr = pl.format(
-        "{} (T={} min / H={} min) - {}",
+        "{} (T={} min / N={} / H={} min) - {}",
         pl.element().struct.field("route_name"),
         pl.element().struct.field("travel_time_min").round(1),
+        pl.element().struct.field("daily_trip_count"),
         pl.element().struct.field("avg_headway_min").round(1),
         pl.element().struct.field("route_id"),
     )
 
     _map_edges = (
-        pt_edge_df.group_by("orig_loc_id", "dest_loc_id", "route_mode")
+        pt_edge_df
+        .group_by("orig_loc_id", "dest_loc_id", "route_mode")
         .agg(
             travel_time_min=pl.col("travel_time_min").mean(),
-            route_attrs=pl.struct(["route_id", "route_name", "travel_time_min", "avg_headway_min"]).unique(),
+            route_attrs=pl.struct([
+                "route_id",
+                "route_name",
+                "travel_time_min",
+                "daily_trip_count",
+                "avg_headway_min",
+            ]).unique(),
         )
         .with_columns(pl.col("route_attrs").list.eval(formatted_routes_expr).list.join("<br />"))
     )
@@ -189,7 +197,8 @@ def explore_transfer_edges(
     )
 
     route_transfer_locs_df = (
-        internal_transfers.rename({"orig_loc_id": "loc_id"})
+        internal_transfers
+        .rename({"orig_loc_id": "loc_id"})
         .group_by("loc_id")
         .agg(pl.col("travel_time_min").first(), num_transfers=pl.len())
     )
