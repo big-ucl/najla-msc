@@ -2,7 +2,7 @@ import pickle
 import shutil
 from abc import ABC
 from collections.abc import Callable, Iterable
-from enum import Enum, auto
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Self
 
@@ -45,11 +45,11 @@ class NetworkData(ABC):
     locations_gdf: gpd.GeoDataFrame
 
 
-class LayerType(Enum):
-    PUBLIC_TRANSPORT = auto()
-    POINT = auto()
-    PLANAR = auto()
-    NA = auto()
+class LayerType(StrEnum):
+    PUBLIC_TRANSPORT = "public_transport"
+    POINT = "point"
+    PLANAR = "planar"
+    NA = "na"
 
 
 class Layer:
@@ -181,6 +181,10 @@ class Network:
         return utils.gdf_to_polars(self._locations_gdf)
 
     @property
+    def location_types(self) -> list[str]:
+        return self._locations_gdf["type"].unique().tolist()
+
+    @property
     def layers(self):
         return {name: layer.type for name, layer in self._layers.items()}
 
@@ -290,7 +294,7 @@ class Network:
         self._locations_gdf = pd.concat([
             na_locations,
             self._locations_gdf.query("type != 'na'"),
-        ])
+        ]).reset_index(drop=True)
 
         return self.add_layer("na", LayerType.NA, na_locations, empty_edge_list)
 
