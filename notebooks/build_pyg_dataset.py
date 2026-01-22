@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.4"
 app = marimo.App(width="full")
 
 with app.setup:
@@ -39,49 +39,40 @@ def _():
 
 @app.cell
 def _(gva_network):
-    gva_network
-    return
-
-
-@app.cell
-def _(gva_network):
-    gva_network
-    return
-
-
-@app.cell
-def _(gva_network):
     import torch
 
     from torch_geometric.data import HeteroData
-    from activitygraphs.geometric import EnumEncoder, _process_layer_nodes, _process_layer_edges
-
-    layer_name = "subsector"
+    from activitygraphs.geometric import EnumEncoder, _process_layers_by_type
 
     data = HeteroData()
-    layer = gva_network[layer_name]
-    layer_locations_gdf = gva_network.get_layer_locations(layer_name)
 
+    layer_name_encoder = EnumEncoder(gva_network.layers.keys(), 3)
     loc_type_encoder = EnumEncoder(gva_network.location_types, 3)
-    encoders = {"type": loc_type_encoder}
-    return data, layer, layer_locations_gdf, loc_type_encoder
+    encoders = {"type": loc_type_encoder, "layer_name": layer_name_encoder}
+    return data, encoders
 
 
 @app.cell
-def _(data, layer, layer_locations_gdf, loc_type_encoder):
-    node_mapping, node_x = _process_layer_nodes(layer_locations_gdf, {"type": loc_type_encoder})
-    edge_list, edge_attrs = _process_layer_edges(layer, node_mapping)
-
-    data[layer.type].x = node_x
-    data[layer.type].edge_list = edge_list
-    data[layer.type].edge_attrs = edge_attrs
-    data[layer.type].num_nodes = len(node_mapping)
+def _(data, encoders, gva_network):
+    _process_layers_by_type(data, gva_network, gva_network["subsector"].type, encoders)
+    _process_layers_by_type(data, gva_network, gva_network["na"].type, encoders)
     return
 
 
 @app.cell
-def _(data):
-    data
+def _(gva_network):
+    from activitygraphs.geometric import network_to_pyg
+
+    d = network_to_pyg(gva_network)
+    d
+    return (d,)
+
+
+@app.cell
+def _(d):
+    from torch_geometric.utils import to_networkx
+
+    G = to_networkx(d)
     return
 
 
