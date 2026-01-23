@@ -49,11 +49,7 @@ def _(gva_network):
     layer_name_encoder = EnumEncoder(gva_network.layers.keys(), 3)
     loc_type_encoder = EnumEncoder(gva_network.location_types, 3)
     encoders = {"type": loc_type_encoder, "layer_name": layer_name_encoder}
-    return data, encoders
 
-
-@app.cell
-def _(data, encoders, gva_network):
     _process_layers_by_type(data, gva_network, gva_network["subsector"].type, encoders)
     _process_layers_by_type(data, gva_network, gva_network["na"].type, encoders)
     return

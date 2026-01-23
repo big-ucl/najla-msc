@@ -1,21 +1,24 @@
 from collections.abc import Hashable, Sequence
 from enum import Enum
-from typing import Callable, Mapping, Type
+from typing import Any, Callable, Mapping, Type
 
 import geopandas as gpd
 import pandas as pd
 import polars as pl
 import torch
 import torch.nn as nn
+from geopandas import GeoDataFrame
 from torch_geometric.data import HeteroData
 
-from activitygraphs.network import Layer, LayerType, Network
+from activitygraphs.network import LayerType, Network
 
 type Encoder = Callable[[pd.Series | pl.Series], torch.Tensor]
 type NodeProcessor = Callable[
-    [Mapping[str, gpd.GeoDataFrame], Mapping[str, Encoder] | None], tuple[dict[str, int], torch.Tensor | None]
+    [Network, Sequence[str], Mapping[str, Encoder] | None], tuple[dict[str, int], torch.Tensor | None]
 ]
-type EdgeProcessor = Callable[[Sequence[Layer], Mapping[str, int]], tuple[torch.Tensor, torch.Tensor]]
+type EdgeProcessor = Callable[
+    [Network, Sequence[str], Mapping[str, int], Mapping[str, Encoder] | None], tuple[torch.Tensor, torch.Tensor]
+]
 
 EMBEDDING_DIM = 3
 LAYER_NAME_COL = "layer_name"
@@ -41,6 +44,18 @@ class EnumEncoder:
         return self.embedding(indices)
 
 
+class PTStopEncoder:
+    pass
+
+
+class RouteEncoder:
+    pass
+
+
+class TimeOfDayEncoder:
+    pass
+
+
 class GeometryEncoder:
     pass
 
@@ -53,14 +68,17 @@ def network_to_pyg(network: Network, embedding_dim=EMBEDDING_DIM) -> HeteroData:
     encoders = {"type": loc_type_encoder, LAYER_NAME_COL: layer_name_encoder}
 
     for layer_type in set(network.layers.values()):
-        if layer_type != LayerType.PUBLIC_TRANSPORT:
-            _process_layers_by_type(data, network, layer_type, encoders)
+        _process_layers_by_type(data, network, layer_type, encoders)
 
     return data
 
 
 def _process_layers_by_type(
-    data: HeteroData, network: Network, layer_type: LayerType, encoders: Mapping[str, Encoder] | None = None
+    data: HeteroData,
+    network: Network,
+    layer_type: LayerType,
+    node_encoders: Mapping[str, Encoder] | None = None,
+    edge_encoders: Mapping[str, Encoder] | None = None,
 ):
     assert not data[layer_type]
 
@@ -68,11 +86,8 @@ def _process_layers_by_type(
     edge_processor = _select_edge_processor(layer_type)
 
     layer_names = [name for name, l_type in network.layers.items() if l_type == layer_type]
-    layer_locations = {name: network.get_layer_locations(name) for name in layer_names}
-    layers = [network[name] for name in layer_names]
-
-    node_mapping, node_x = node_processor(layer_locations, encoders)
-    edge_list, edge_attrs = edge_processor(layers, node_mapping)
+    node_mapping, node_x = node_processor(network, layer_names, node_encoders)
+    edge_list, edge_attrs = edge_processor(network, layer_names, node_mapping, edge_encoders)
 
     data[layer_type].x = node_x
     data[layer_type].edge_list = edge_list
@@ -97,47 +112,111 @@ def _select_edge_processor(layer_type: LayerType) -> EdgeProcessor:
 
 
 def _process_base_layer_nodes(
-    layer_locations: Mapping[str, gpd.GeoDataFrame], encoders: Mapping[str, Encoder] | None = None
+    network: Network, layer_names: Sequence[str], encoders: Mapping[str, Encoder] | None = None
 ) -> tuple[dict[str, int], torch.Tensor | None]:
-    # Combine layer locations together and add a column identifying each layer by name
-    layer_names = pd.concat(
-        (pd.Series(name).repeat(len(gdf)) for name, gdf in layer_locations.items()), ignore_index=True
-    )
+    layer_locations_gdf = _combine_layer_locations(network, layer_names)
 
-    layer_locations_gdf = pd.concat(layer_locations.values(), ignore_index=True)
-    layer_locations_gdf[LAYER_NAME_COL] = layer_names
-
-    # Map `loc_id` to indices in PyG graph
+    # Map `loc_id` to indices in PyG graph and create node features
     node_mapping = layer_locations_gdf.reset_index(drop=True).reset_index().set_index("loc_id")["index"].to_dict()
-
-    # Encode location features (if they exist)
-    x = None
-    if encoders is not None:
-        xs = [encoder(layer_locations_gdf[col]) for col, encoder in encoders.items()]
-        x = torch.cat(xs, dim=-1)
+    x = _encode_node_features(layer_locations_gdf, encoders)
 
     return node_mapping, x
 
 
 def _process_pt_layer_nodes(
-    layer_locations: Mapping[str, gpd.GeoDataFrame], encoders: Mapping[str, Encoder] | None = None
-) -> tuple[dict[str, int], torch.Tensor | None]:
-    raise NotImplementedError()
+    network: Network, layer_names: Sequence[str], encoders: Mapping[str, Encoder] | None = None
+) -> tuple[dict[tuple[str, str], int], torch.Tensor | None]:
+    layer_locations_gdf = _combine_layer_locations(network, layer_names)
+    pt_layers = [network.get_pt_layer(name) for name in layer_names]
+
+    # Find all unique (loc_id, route_id) pairs and create a dataframe with their info.
+    # By construction, every loc_id has a (loc_id, `parent`) node, plus perhaps additional (loc_id, route_id) nodes
+    # TODO: add check for presence of (loc_id, `parent`) at every stop
+    pt_origins = pl.concat(layer.pt_edge_df.select(loc_id="orig_loc_id", route_id="route_id") for layer in pt_layers)
+    tr_origins = pl.concat(
+        layer.transfer_edge_df.select(loc_id="orig_loc_id", route_id="orig_route_id") for layer in pt_layers
+    )
+    pt_destinations = pl.concat(
+        layer.pt_edge_df.select(loc_id="dest_loc_id", route_id="route_id") for layer in pt_layers
+    )
+    tr_destinations = pl.concat(
+        layer.transfer_edge_df.select(loc_id="dest_loc_id", route_id="dest_route_id") for layer in pt_layers
+    )
+
+    pt_locations = pl.concat([pt_origins, tr_origins, pt_destinations, tr_destinations]).unique()
+    pt_locations_gdf = pt_locations.to_pandas().merge(layer_locations_gdf, on="loc_id")
+
+    # Create mapping from (loc_id, route_id) to node index and encode node features
+    node_mapping = (
+        pt_locations_gdf.reset_index(drop=True).reset_index().set_index(["loc_id", "route_id"])["index"].to_dict()
+    )
+    x = _encode_node_features(pt_locations_gdf, encoders)
+
+    return node_mapping, x
+
+
+def _combine_layer_locations(network: Network, layer_names: Sequence[str]) -> gpd.GeoDataFrame:
+    layer_locations = {name: network.get_layer_locations(name) for name in layer_names}
+
+    # Combine layer locations together and add a column identifying each layer by name
+    layer_names_series = pd.concat(
+        (pd.Series(name).repeat(len(gdf)) for name, gdf in layer_locations.items()), ignore_index=True
+    )
+
+    layer_locations_gdf = pd.concat(layer_locations.values(), ignore_index=True)
+    layer_locations_gdf[LAYER_NAME_COL] = layer_names_series
+
+    return layer_locations_gdf
+
+
+def _encode_node_features(
+    layer_locations_gdf: GeoDataFrame, encoders: Mapping[str, Encoder] | None
+) -> torch.Tensor | None:
+    if encoders is None:
+        return None
+
+    xs = [encoder(layer_locations_gdf[col]) for col, encoder in encoders.items() if col in layer_locations_gdf]
+    x = torch.cat(xs, dim=-1)
+
+    return x
 
 
 def _process_base_layer_edges(
-    layers: Sequence[Layer], node_mapping: Mapping[str, int]
+    network: Network,
+    layer_names: Sequence[str],
+    node_mapping: Mapping[str, int],
+    encoders: Mapping[str, Encoder] | None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    layers = [network[name] for name in layer_names]
+
     orig_index_expr = pl.col("orig_loc_id").replace_strict(node_mapping)
     dest_index_expr = pl.col("dest_loc_id").replace_strict(node_mapping)
 
     edge_lists = [layer.edge_list.select(orig_index_expr, dest_index_expr).to_torch().T for layer in layers]
     edge_attrs = [layer.edge_list.select("travel_time_min").to_torch() for layer in layers]
 
+    # TODO Add encoders for edge attributes
+
     return torch.cat(edge_lists, dim=1), torch.cat(edge_attrs)
 
 
 def _process_pt_layer_edges(
-    layers: Sequence[Layer], node_mapping: Mapping[str, int]
+    network: Network,
+    layer_names: Sequence[str],
+    node_mapping: Mapping[str, int],
+    encoders: Mapping[str, Encoder] | None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    raise NotImplementedError()
+    layers = [network.get_pt_layer(name) for name in layer_names]
+
+    pt_orig_idx_expr = pl.concat_list("orig_loc_id", "route_id").replace_strict(node_mapping)
+    pt_dest_idx_expr = pl.concat_list("dest_loc_id", "route_id").replace_strict(node_mapping)
+    tr_orig_idx_expr = pl.concat_list("orig_loc_id", "orig_route_id").replace_strict(node_mapping)
+    tr_dest_idx_expr = pl.concat_list("dest_loc_id", "dest_route_id").replace_strict(node_mapping)
+
+    pt_edge_lists = [layer.pt_edge_df.select(pt_orig_idx_expr, pt_dest_idx_expr).to_torch().T for layer in layers]
+    tr_edge_lists = [layer.transfer_edge_df.select(tr_orig_idx_expr, tr_dest_idx_expr).to_torch().T for layer in layers]
+    edge_lists = pt_edge_lists + tr_edge_lists
+
+    edge_attrs = [layer.edge_list.select("travel_time_min").to_torch() for layer in layers]
+
+    return torch.cat(edge_lists, dim=1), torch.cat(edge_attrs)

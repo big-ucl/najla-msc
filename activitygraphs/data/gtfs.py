@@ -189,10 +189,8 @@ def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs, pt_no
     return edge_df.join(active_routes_df, on="route_id")
 
 
-def create_transfer_edges(
-    pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, gtfs: GTFSInputs, pt_node_type: PTNodeType
-) -> pl.DataFrame:
-    transfer_route_id = PARENT_STOP_ROUTE_ID if pt_node_type == PTNodeType.ONE_PER_ROUTE else PARENT_STOP_ROUTE_ID
+def create_transfer_edges(pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, gtfs: GTFSInputs) -> pl.DataFrame:
+    transfer_route_id = PARENT_STOP_ROUTE_ID
 
     # Include only stops appearing in the edge list
     loc_ids = locations_df.select("loc_id")
