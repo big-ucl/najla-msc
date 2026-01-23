@@ -6,8 +6,7 @@ import polars.selectors as cs
 from activitygraphs.base import PT_EDGE_LIST_SCHEMA, TRANSFER_EDGE_LIST_SCHEMA, Mode, PTNodeType
 from activitygraphs.utils import check_schema
 
-TRANSFER_ROUTE_ID = "transfer_route"
-ONE_PER_STOP_ROUTE_ID = "ALL"
+PARENT_STOP_ROUTE_ID = "parent"
 DEFAULT_TRANSFER_TIME_MIN = 2
 
 
@@ -82,7 +81,7 @@ def build_pt_layer_edges(
     )
 
     if pt_node_type == PTNodeType.ONE_PER_STOP:
-        pt_edge_df = pt_edge_df.with_columns(route_id=pl.lit(ONE_PER_STOP_ROUTE_ID))
+        pt_edge_df = pt_edge_df.with_columns(route_id=pl.lit(PARENT_STOP_ROUTE_ID))
 
     pt_edge_df = pt_edge_df.join(headways_df, on=edge_ids, how="left").collect()
     pt_edge_df = add_route_attributes_to_edges(pt_edge_df, gtfs, pt_node_type)
@@ -167,7 +166,7 @@ def compute_avg_headways(pt_trips: pl.LazyFrame, gtfs: GTFSInputs, edge_id: list
 def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs, pt_node_type: PTNodeType) -> pl.DataFrame:
     if pt_node_type == PTNodeType.ONE_PER_STOP:
         return edge_df.with_columns(
-            route_mode=pl.lit(Mode.UNKNOWN).cast(pl.Categorical), route_name=pl.lit(ONE_PER_STOP_ROUTE_ID)
+            route_mode=pl.lit(Mode.UNKNOWN).cast(pl.Categorical), route_name=pl.lit(PARENT_STOP_ROUTE_ID)
         )
 
     agencies = gtfs.agency_df.select("agency_id", "agency_name")
@@ -193,7 +192,7 @@ def add_route_attributes_to_edges(edge_df: pl.DataFrame, gtfs: GTFSInputs, pt_no
 def create_transfer_edges(
     pt_edge_df: pl.DataFrame, locations_df: pl.DataFrame, gtfs: GTFSInputs, pt_node_type: PTNodeType
 ) -> pl.DataFrame:
-    transfer_route_id = TRANSFER_ROUTE_ID if pt_node_type == PTNodeType.ONE_PER_ROUTE else ONE_PER_STOP_ROUTE_ID
+    transfer_route_id = PARENT_STOP_ROUTE_ID if pt_node_type == PTNodeType.ONE_PER_ROUTE else PARENT_STOP_ROUTE_ID
 
     # Include only stops appearing in the edge list
     loc_ids = locations_df.select("loc_id")
