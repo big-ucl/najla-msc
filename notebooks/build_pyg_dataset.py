@@ -39,24 +39,6 @@ def _():
 
 @app.cell
 def _(gva_network):
-    import torch
-
-    from torch_geometric.data import HeteroData
-    from activitygraphs.geometric import EnumEncoder, _process_layers_by_type
-
-    data = HeteroData()
-
-    layer_name_encoder = EnumEncoder(gva_network.layers.keys(), 3)
-    loc_type_encoder = EnumEncoder(gva_network.location_types, 3)
-    encoders = {"type": loc_type_encoder, "layer_name": layer_name_encoder}
-
-    _process_layers_by_type(data, gva_network, gva_network["subsector"].type, encoders)
-    _process_layers_by_type(data, gva_network, gva_network["na"].type, encoders)
-    return
-
-
-@app.cell
-def _(gva_network):
     from activitygraphs.geometric import network_to_pyg
 
     d = network_to_pyg(gva_network)

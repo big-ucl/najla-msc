@@ -54,6 +54,9 @@ def check_polars_schema(df: pl.DataFrame, schema: pl.Schema, ignore_extra_cols: 
 
 
 def check_geopandas_schema(gdf: gpd.GeoDataFrame, schema: PandasSchema, ignore_extra_cols: bool) -> gpd.GeoDataFrame:
+    def dtypes_match(dtype: str, expected: str) -> bool:
+        return (dtype == "str" and expected == "object") or dtype == expected
+
     if not ignore_extra_cols and set(schema.keys()) != set(gdf.columns):
         raise ValueError(
             f"Columns do not match schema. \nGot: {sorted(gdf.columns)}\nExpected: {sorted(schema.keys())}"
@@ -66,7 +69,7 @@ def check_geopandas_schema(gdf: gpd.GeoDataFrame, schema: PandasSchema, ignore_e
 
     # noinspection PyTypeChecker
     mismatches = [
-        (col, dtype, schema[col]) for col, dtype in gdf.dtypes.items() if col in schema and dtype != schema[col]
+        (col, dtype, schema[col]) for col, dtype in gdf.dtypes.items() if col in schema and dtypes_match(dtype, schema)
     ]
     if mismatches:
         errors = [f"\n\t`{col}`: got {dtype}, expected {expected}" for col, dtype, expected in mismatches]
