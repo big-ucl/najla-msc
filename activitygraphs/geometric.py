@@ -1,3 +1,4 @@
+import math
 from collections.abc import Hashable, Sequence
 from enum import Enum
 from typing import Callable, Mapping, Type
@@ -59,11 +60,35 @@ class RouteEncoder:
 
 
 class TimeOfDayEncoder:
-    pass
+    # noinspection PyUnresolvedReferences
+    def __call__(self, tod_series: pd.Series | pl.Series) -> torch.Tensor:
+        tod_series = tod_series if isinstance(tod_series, pl.Series) else pl.from_pandas(tod_series)
+        total_seconds = (
+            3600 * tod_series.dt.hour().cast(pl.UInt32)
+            + 60 * tod_series.dt.minute().cast(pl.UInt32)
+            + tod_series.dt.second().cast(pl.UInt32)
+        )
+
+        seconds_in_day = 24 * 60 * 60
+        sines = (2 * math.pi * total_seconds / seconds_in_day).sin()
+        cosines = (2 * math.pi * total_seconds / seconds_in_day).cos()
+
+        return torch.stack([sines.to_torch(), cosines.to_torch()], dim=1)
 
 
 class GeometryEncoder:
-    pass
+    def __call__(self, geometry_series: pd.Series | pl.Series) -> torch.Tensor:
+        if not isinstance(geometry_series, pd.Series) or geometry_series.dtype != "geometry":
+            raise ValueError(
+                f"Geometry must be of type gpd.Series with dtype=geometry,"
+                f"found {type(geometry_series)} with dtype={geometry_series.dtype}"
+            )
+
+        geometry_series = gpd.GeoSeries(geometry_series)
+        planar_crs = geometry_series.estimate_utm_crs()
+        area = torch.tensor(geometry_series.to_crs(planar_crs).area.to_numpy())
+
+        return torch.stack([area], dim=1)
 
 
 def network_to_pyg(network: Network, embedding_dim=EMBEDDING_DIM) -> HeteroData:
@@ -71,10 +96,16 @@ def network_to_pyg(network: Network, embedding_dim=EMBEDDING_DIM) -> HeteroData:
 
     layer_name_encoder = EnumEncoder(network.layers.keys(), embedding_dim)
     loc_type_encoder = EnumEncoder(network.location_types, embedding_dim)
-    node_encoders = {"type": loc_type_encoder, LAYER_NAME_COL: layer_name_encoder}
+    geometry_encoder = GeometryEncoder()
+    node_encoders = {"type": loc_type_encoder, LAYER_NAME_COL: layer_name_encoder, "geometry": geometry_encoder}
 
     route_mode_encoder = EnumEncoder(Mode, embedding_dim)
-    edge_encoders = {"route_mode": route_mode_encoder}
+    time_of_day_encoder = TimeOfDayEncoder()
+    edge_encoders = {
+        "route_mode": route_mode_encoder,
+        "first_departure_time": time_of_day_encoder,
+        "last_departure_time": time_of_day_encoder,
+    }
 
     node_mappings: dict[str, NodeMapping] = {}
     for layer_type in set(network.layers.values()):
