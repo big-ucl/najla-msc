@@ -51,6 +51,9 @@ class LayerType(StrEnum):
     PLANAR = "planar"
     NA = "na"
 
+    def __repr__(self):
+        return self.name
+
 
 class Layer:
     def __init__(self, name: str, layer_type: LayerType, loc_ids: Iterable[str], edge_list: pl.DataFrame | None):
