@@ -1,5 +1,5 @@
 import math
-from collections.abc import Hashable, Sequence
+from collections.abc import Generator, Hashable, Sequence
 from enum import Enum
 from typing import Callable, Mapping, Type
 
@@ -11,12 +11,17 @@ import torch.nn as nn
 from geopandas import GeoDataFrame
 from torch_geometric.data import HeteroData
 
-from activitygraphs.base import Mode
+from activitygraphs.base import USER_JOURNEY_SCHEMA, Mode
 from activitygraphs.data.gtfs import PARENT_STOP_ROUTE_ID
 from activitygraphs.network import LayerType, Network
+from activitygraphs.utils import check_schema
 
 type Encoder = Callable[[pd.Series | pl.Series], torch.Tensor]
-type NodeMapping = Mapping[str | tuple[str, str], int]
+
+type LocID = str | tuple[str, str]
+type NodeMapping = Mapping[LocID, int]
+type LocIDMapping = Mapping[LocID, tuple[LayerType, int]]
+
 type NodeProcessor = Callable[
     [Network, Sequence[str], Mapping[str, Encoder] | None], tuple[NodeMapping, torch.Tensor | None]
 ]
@@ -119,6 +124,116 @@ def network_to_pyg(network: Network, embedding_dim=EMBEDDING_DIM) -> HeteroData:
         for (lower, relation_name, upper), (edge_index, edge_attrs) in relations.items():
             data[lower, relation_name, upper].edge_index = edge_index
             data[lower, relation_name, upper].edge_attrs = edge_attrs
+
+    data.graph_metadata = _create_graph_metadata(node_mappings)
+
+    return data
+
+
+def _create_graph_metadata(
+    node_mappings: dict[LayerType, NodeMapping],
+) -> dict[str, LocIDMapping]:
+    full_loc_id_mapping = {}
+
+    for layer_type, mapping in node_mappings.items():
+        for loc_id, node_index in mapping.items():
+            full_loc_id_mapping[loc_id] = (layer_type, node_index)
+
+            # If PT `parent` node, add a direct loc_id -> node mapping
+            if isinstance(loc_id, tuple) and loc_id[1] == PARENT_STOP_ROUTE_ID:
+                full_loc_id_mapping[loc_id[0]] = (layer_type, node_index)
+
+    loc_id_mapping = {k: v for k, v in full_loc_id_mapping.items() if isinstance(k, str)}
+
+    return {"full_loc_id_mapping": full_loc_id_mapping, "loc_id_mapping": loc_id_mapping}
+
+
+def add_labels_to_pyg(
+    data: HeteroData, user_journeys_df: pl.DataFrame, separate_na_source_sink: bool
+) -> Generator[HeteroData]:
+    check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)
+
+    loc_id_mapping: LocIDMapping = data.graph_metadata["loc_id_mapping"]
+    loc_id_to_layer_type = {k: t for k, (t, _) in loc_id_mapping.items()}
+    loc_id_to_node_index = {k: i for k, (_, i) in loc_id_mapping.items()}
+
+    visited_locations = _build_visited_locations(user_journeys_df, separate_na_source_sink)
+
+    for (user_id,), user_visited_locations in visited_locations.group_by("user_id"):
+        labeled_data = _label_user_visited_locations(
+            data, user_visited_locations, loc_id_to_layer_type, loc_id_to_node_index
+        )
+
+        labeled_data.graph_metadata["user_id"] = user_id
+        yield labeled_data
+
+
+def _build_visited_locations(user_journeys_df: pl.DataFrame, separate_na_source_sink: bool) -> pl.DataFrame:
+    def replace_na_with(col: str, value: str):
+        return pl.col(col).replace({"NA": value}) if separate_na_source_sink else pl.col(col)
+
+    origin_and_intermediate = user_journeys_df.select(
+        "user_id",
+        "journey_id",
+        "leg_id",
+        loc_id=replace_na_with("dep_loc_id", "NA_SOURCE"),
+        is_origin=pl.col("leg_id") == 0,
+        is_destination=False,
+        is_endpoint=pl.col("leg_id") == 0,
+    )
+
+    destinations = (
+        user_journeys_df
+        .group_by("user_id", "journey_id")
+        .agg(pl.all().last())
+        .select(
+            "user_id",
+            "journey_id",
+            "leg_id",
+            loc_id=replace_na_with("arr_loc_id", "NA_SINK"),
+            is_origin=False,
+            is_destination=True,
+            is_endpoint=True,
+        )
+    )
+
+    visited_locations = (
+        pl
+        .concat([origin_and_intermediate, destinations])
+        .unique(maintain_order=True)
+        .sort("user_id", "journey_id", "leg_id", "is_destination", ~pl.col("is_origin"))
+        .with_columns(pl.col("leg_id").rank(method="ordinal").over("user_id", "journey_id") - 1)
+        .rename({"leg_id": "seq_num"})
+    )
+
+    return visited_locations
+
+
+def _label_user_visited_locations(
+    data: HeteroData,
+    user_visited_locations: pl.DataFrame,
+    loc_id_to_layer_type: dict[str, LayerType],
+    loc_id_to_node_index: dict[str, int],
+) -> HeteroData:
+    user_ids = user_visited_locations["user_id"].unique()
+    assert len(user_ids) == 1, f"Only a single user ID is allowed per graph, found {user_ids}"
+
+    data = data.clone()
+
+    visited_indices = user_visited_locations.select(
+        "user_id",
+        "loc_id",
+        layer_type=pl.col("loc_id").replace_strict(loc_id_to_layer_type),
+        node_index=pl.col("loc_id").replace_strict(loc_id_to_node_index),
+    )
+
+    for layer_type in data.node_types:
+        df = visited_indices.filter(layer_type=layer_type)
+
+        y = torch.zeros(data[layer_type].num_nodes)
+        y[df["node_index"]] = 1
+
+        data[layer_type].y = y
 
     return data
 
