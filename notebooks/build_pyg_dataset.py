@@ -28,12 +28,6 @@ def _():
 
 
 @app.cell
-def _(gva_data):
-    gva_data.user_journeys_df
-    return
-
-
-@app.cell
 def _():
     from activitygraphs.network import Network
 
@@ -96,13 +90,44 @@ def _(gva_data):
 
 
 @app.cell
-def _(d, user_journeys_df):
+def _():
     from activitygraphs.geometric import add_labels_to_pyg
     from tqdm import tqdm
+    return add_labels_to_pyg, tqdm
+
+
+@app.cell
+def _(add_labels_to_pyg, d, user_journeys_df):
+    next(iter(add_labels_to_pyg(d, user_journeys_df, True)))
+    return
+
+
+@app.cell
+def _(add_labels_to_pyg, d, tqdm, user_journeys_df):
+
+    mo.stop(True)
 
     gs = []
     for g in tqdm(add_labels_to_pyg(d, user_journeys_df, True), total=len(user_journeys_df["user_id"].unique())):
         gs.append(g)
+    return
+
+
+@app.cell
+def _(d):
+    from torch_geometric.transforms import AddMetaPaths
+
+    metapaths = [
+        [
+            ("planar", "contains", "public_transport"),
+            ("public_transport", "transfer", "public_transport"),
+            ("public_transport", "pt", "public_transport"),
+            ("public_transport", "transfer", "public_transport"),
+            ("public_transport", "is_contained_by", "planar"),
+        ]
+    ]
+
+    AddMetaPaths(metapaths)(d)
     return
 
 

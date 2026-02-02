@@ -157,15 +157,66 @@ def add_labels_to_pyg(
     loc_id_to_layer_type = {k: t for k, (t, _) in loc_id_mapping.items()}
     loc_id_to_node_index = {k: i for k, (_, i) in loc_id_mapping.items()}
 
+    user_attributes = _build_user_attributes(user_journeys_df, separate_na_source_sink)
     visited_locations = _build_visited_locations(user_journeys_df, separate_na_source_sink)
+    visited_locations = visited_locations.filter(pl.col("user_id").is_in(user_attributes["user_id"].implode()))
 
     for (user_id,), user_visited_locations in visited_locations.group_by("user_id"):
-        labeled_data = _label_user_visited_locations(
-            data, user_visited_locations, loc_id_to_layer_type, loc_id_to_node_index
-        )
+        user_attrs = user_attributes.filter(user_id=user_id)
 
-        labeled_data.graph_metadata["user_id"] = user_id
-        yield labeled_data
+        data = data.clone()
+        data.graph_metadata["user_id"] = user_id
+
+        _add_location_indicator_features(data, user_attrs, "home_loc_id", loc_id_to_layer_type, loc_id_to_node_index)
+        _add_visited_location_labels(data, user_visited_locations, loc_id_to_layer_type, loc_id_to_node_index)
+
+        yield data
+
+
+def _build_user_attributes(user_journeys_df: pl.DataFrame, separate_na_source_sink: bool) -> pl.DataFrame:
+    home_locations = _extract_locations(
+        user_journeys_df, "od_lieu_domicile", separate_na_source_sink, is_unique=True, loc_col="home_loc_id"
+    )
+    work_locations = _extract_locations(
+        user_journeys_df, "od_lieu_travail", separate_na_source_sink, is_unique=False, loc_col="work_loc_ids"
+    )
+    study_locations = _extract_locations(
+        user_journeys_df, "od_lieu_etude", separate_na_source_sink, is_unique=False, loc_col="study_loc_ids"
+    )
+
+    return (
+        user_journeys_df
+        .select(pl.col("user_id").unique())
+        .join(home_locations, on="user_id", how="inner")
+        .join(work_locations, on="user_id", how="left")
+        .join(study_locations, on="user_id", how="left")
+    )
+
+
+def _extract_locations(
+    user_journeys_df: pl.DataFrame,
+    purpose: str,
+    separate_na_source_sink: bool,
+    is_unique: bool = True,
+    loc_col: str = "loc_id",
+) -> pl.DataFrame:
+    departure_locs = user_journeys_df.filter(
+        pl.col("dep_purpose") == purpose, pl.col("leg_id") == pl.col("leg_id").min().over("journey_id")
+    ).select("user_id", pl.col("dep_loc_id").alias(loc_col))
+    arrival_locs = user_journeys_df.filter(
+        pl.col("arr_purpose") == purpose, pl.col("leg_id") == pl.col("leg_id").max().over("journey_id")
+    ).select("user_id", pl.col("arr_loc_id").alias(loc_col))
+
+    if separate_na_source_sink:
+        departure_locs = departure_locs.with_columns(pl.col(loc_col).replace({"NA": "NA_SOURCE"}))
+        arrival_locs = arrival_locs.with_columns(pl.col(loc_col).replace({"NA": "NA_SINK"}))
+
+    locations = pl.concat([departure_locs, arrival_locs]).group_by("user_id").agg(pl.col(loc_col).unique())
+
+    if is_unique:
+        locations = locations.filter(pl.col(loc_col).list.len() <= 1).with_columns(pl.col(loc_col).list.item())
+
+    return locations
 
 
 def _build_visited_locations(user_journeys_df: pl.DataFrame, separate_na_source_sink: bool) -> pl.DataFrame:
@@ -209,16 +260,40 @@ def _build_visited_locations(user_journeys_df: pl.DataFrame, separate_na_source_
     return visited_locations
 
 
-def _label_user_visited_locations(
+def _add_location_indicator_features(
+    data: HeteroData,
+    user_attributes: pl.DataFrame,
+    loc_id_column: str,
+    loc_id_to_layer_type: dict[str, LayerType],
+    loc_id_to_node_index: dict[str, int],
+) -> None:
+    user_ids = user_attributes["user_id"].unique()
+    assert len(user_ids) == 1, f"Only a single user ID is allowed per graph, found {user_ids}"
+
+    visited_locations = user_attributes.select(pl.col(loc_id_column).explode())
+    visited_indices = visited_locations.select(
+        loc_id_column,
+        layer_type=pl.col(loc_id_column).replace_strict(loc_id_to_layer_type),
+        node_index=pl.col(loc_id_column).replace_strict(loc_id_to_node_index),
+    )
+
+    for layer_type in data.node_types:
+        df = visited_indices.filter(layer_type=layer_type)
+
+        x = torch.zeros(data[layer_type].num_nodes)
+        x[df["node_index"]] = 1
+
+        data[layer_type].x = torch.cat([data[layer_type].x, x.unsqueeze(1)], dim=1)
+
+
+def _add_visited_location_labels(
     data: HeteroData,
     user_visited_locations: pl.DataFrame,
     loc_id_to_layer_type: dict[str, LayerType],
     loc_id_to_node_index: dict[str, int],
-) -> HeteroData:
+) -> None:
     user_ids = user_visited_locations["user_id"].unique()
     assert len(user_ids) == 1, f"Only a single user ID is allowed per graph, found {user_ids}"
-
-    data = data.clone()
 
     visited_indices = user_visited_locations.select(
         "user_id",
@@ -234,8 +309,6 @@ def _label_user_visited_locations(
         y[df["node_index"]] = 1
 
         data[layer_type].y = y
-
-    return data
 
 
 # =====================================
