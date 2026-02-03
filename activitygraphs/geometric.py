@@ -112,7 +112,7 @@ def network_to_pyg(network: Network, embedding_dim=EMBEDDING_DIM) -> HeteroData:
         "last_departure_time": time_of_day_encoder,
     }
 
-    node_mappings: dict[str, NodeMapping] = {}
+    node_mappings: dict[LayerType, NodeMapping] = {}
     for layer_type in set(network.layers.values()):
         layer_mapping = _process_layers_by_type(data, network, layer_type, node_encoders, edge_encoders)
         node_mappings[layer_type] = layer_mapping
@@ -281,7 +281,7 @@ def _add_location_indicator_features(
         df = visited_indices.filter(layer_type=layer_type)
 
         x = torch.zeros(data[layer_type].num_nodes)
-        x[df["node_index"]] = 1
+        x[df["node_index"].to_numpy()] = 1
 
         data[layer_type].x = torch.cat([data[layer_type].x, x.unsqueeze(1)], dim=1)
 
@@ -306,7 +306,7 @@ def _add_visited_location_labels(
         df = visited_indices.filter(layer_type=layer_type)
 
         y = torch.zeros(data[layer_type].num_nodes)
-        y[df["node_index"]] = 1
+        y[df["node_index"].to_numpy()] = 1
 
         data[layer_type].y = y
 
@@ -322,7 +322,7 @@ def _process_layers_by_type(
     layer_type: LayerType,
     node_encoders: Mapping[str, Encoder] | None = None,
     edge_encoders: Mapping[str, Encoder] | None = None,
-) -> dict[str | tuple[str, str], int]:
+) -> Mapping[LayerType | tuple[str, str], int]:
     assert not data[layer_type]
 
     node_processor = _select_node_processor(layer_type)
@@ -396,6 +396,7 @@ def _process_pt_layer_nodes(
     pt_locations = pl.concat([pt_origins, tr_origins, pt_destinations, tr_destinations]).unique()
 
     # Make sure stops without routes going through them still have a (loc_id, `parent`) node
+    # noinspection PyTypeChecker
     pt_locations_gdf: gpd.GeoDataFrame = pt_locations.to_pandas().merge(layer_locations_gdf, on="loc_id", how="right")
     pt_locations_gdf["route_id"] = pt_locations_gdf["route_id"].fillna(PARENT_STOP_ROUTE_ID)
 
@@ -416,7 +417,8 @@ def _combine_layer_locations(network: Network, layer_names: Sequence[str]) -> gp
         (pd.Series(name).repeat(len(gdf)) for name, gdf in layer_locations.items()), ignore_index=True
     )
 
-    layer_locations_gdf = pd.concat(layer_locations.values(), ignore_index=True)
+    # noinspection PyTypeChecker
+    layer_locations_gdf: gpd.GeoDataFrame = pd.concat(layer_locations.values(), ignore_index=True)
     layer_locations_gdf[LAYER_NAME_COL] = layer_names_series
 
     return layer_locations_gdf
@@ -461,9 +463,9 @@ def _process_base_layer_edges(
 def _process_pt_layer_edges(
     network: Network,
     layer_names: Sequence[str],
-    node_mapping: Mapping[str, int],
+    node_mapping: Mapping[LocID, int],
     edge_encoders: Mapping[str, Encoder] | None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
     layers = [network.get_pt_layer(name) for name in layer_names]
 
     pt_orig_idx_expr = pl.concat_list("orig_loc_id", "route_id").replace_strict(node_mapping)
@@ -548,6 +550,6 @@ def _process_layer_links(
 
 def _node_mapping_to_dict(node_mapping: NodeMapping, parent_key: str = PARENT_STOP_ROUTE_ID) -> dict[str, int]:
     if all(isinstance(key, str) for key in node_mapping.keys()):
-        return node_mapping
+        return dict(node_mapping.items())
 
     return {key[0]: item for key, item in node_mapping.items() if key[1] == parent_key}
