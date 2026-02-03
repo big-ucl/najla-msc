@@ -90,7 +90,7 @@ def build_pt_layer_edges(
     if drop_null_headways:
         pt_edge_df = pt_edge_df.drop_nulls("avg_headway_min")
 
-    transfer_edge_df = create_transfer_edges(pt_edge_df, locations_df, gtfs, pt_node_type)
+    transfer_edge_df = create_transfer_edges(pt_edge_df, locations_df, gtfs)
 
     return check_schema(pt_edge_df, PT_EDGE_LIST_SCHEMA), check_schema(transfer_edge_df, TRANSFER_EDGE_LIST_SCHEMA)
 

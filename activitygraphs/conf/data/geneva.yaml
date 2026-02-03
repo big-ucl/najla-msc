@@ -5,8 +5,8 @@ files:
   raw_journeys: tpg_od.parquet
 
   boundaries:
-    geneva_subsectors: GEO_GIREC-SHP.shp
-    french_postcodes: code_postaux_V5.shp
+    geneva_subsectors: GEO_GIREC-SHP/GEO_GIREC.shp
+    french_postcodes: code_postaux_V5/codes_postaux_region.shp
     swiss_postcodes: ortschaftenverzeichnis_plz_2056.shp/AMTOVZ_SHP_LV95/AMTOVZ_ZIP.shp
     swiss_localities: ortschaftenverzeichnis_plz_2056.shp/AMTOVZ_SHP_LV95/AMTOVZ_LOCALITY.shp
     swiss_boundaries: swissboundaries3d_2025-04_2056_5728.shp/swissBOUNDARIES3D_1_5_TLM_HOHEITSGEBIET.shp
