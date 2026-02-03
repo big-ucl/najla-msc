@@ -31,7 +31,7 @@ def _():
 def _():
     from activitygraphs.network import Network
 
-    network_name = "routes"
+    network_name = "stops"
     gva_network = Network.load(cfg.data, project_root, network_name)
     gva_network
     return (gva_network,)
@@ -50,13 +50,20 @@ def _(gva_network):
 def _(d):
     from torch_geometric.utils import to_networkx
 
-    G = to_networkx(d)
-    return
+    G = to_networkx(d, to_multi=True)
+    G
+    return (G,)
 
 
 @app.cell
-def _(gva_network):
-    gva_network.location_types
+def _(G):
+    import networkx as nx
+
+    # Exclude isolated nodes and NA source and sink, all other nodes are strongly connected
+    main_subgraph =  max(nx.strongly_connected_components(G), key=lambda x: len(x))
+    diameter = nx.diameter(G.subgraph(main_subgraph))
+
+    mo.md(f"Main graph diameter: {diameter}")
     return
 
 
@@ -91,25 +98,17 @@ def _(gva_data):
 
 @app.cell
 def _():
-    from activitygraphs.geometric import add_labels_to_pyg
+    from activitygraphs.geometric import ActivityGraphBuilder, ActivityDataset
     from tqdm import tqdm
-    return add_labels_to_pyg, tqdm
+    return ActivityDataset, ActivityGraphBuilder
 
 
 @app.cell
-def _(add_labels_to_pyg, d, user_journeys_df):
-    next(iter(add_labels_to_pyg(d, user_journeys_df, True)))
-    return
+def _(ActivityDataset, ActivityGraphBuilder, d, user_journeys_df):
+    builder = ActivityGraphBuilder(d, user_journeys_df, separate_na_source_sink=True)
+    dataset = ActivityDataset.from_cfg(builder, cfg.data, project_root)
 
-
-@app.cell
-def _(add_labels_to_pyg, d, tqdm, user_journeys_df):
-
-    mo.stop(True)
-
-    gs = []
-    for g in tqdm(add_labels_to_pyg(d, user_journeys_df, True), total=len(user_journeys_df["user_id"].unique())):
-        gs.append(g)
+    dataset
     return
 
 

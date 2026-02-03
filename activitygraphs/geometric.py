@@ -1,7 +1,8 @@
 import math
-from collections.abc import Generator, Hashable, Sequence
+from collections.abc import Generator, Hashable, Sequence, Mapping
 from enum import Enum
-from typing import Callable, Mapping, Type
+from pathlib import Path
+from typing import Callable, Type, Optional, Self
 
 import geopandas as gpd
 import pandas as pd
@@ -9,9 +10,10 @@ import polars as pl
 import torch
 import torch.nn as nn
 from geopandas import GeoDataFrame
-from torch_geometric.data import HeteroData
+from torch_geometric.data import HeteroData, Dataset
 
 from activitygraphs.base import USER_JOURNEY_SCHEMA, Mode
+from activitygraphs.config import DataConfig
 from activitygraphs.data.gtfs import PARENT_STOP_ROUTE_ID
 from activitygraphs.network import LayerType, Network
 from activitygraphs.utils import check_schema
@@ -32,6 +34,124 @@ type EdgeProcessor = Callable[
 
 EMBEDDING_DIM = 3
 LAYER_NAME_COL = "layer_name"
+
+
+class ActivityGraphBuilder:
+    def __init__(self, base_data: HeteroData, user_journeys_df: pl.DataFrame, separate_na_source_sink: bool):
+        check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)
+
+        self.base_data = base_data.clone()
+
+        loc_id_mapping: LocIDMapping = base_data.graph_metadata["loc_id_mapping"]
+        self._loc_id_to_layer_type = {k: t for k, (t, _) in loc_id_mapping.items()}
+        self._loc_id_to_node_index = {k: i for k, (_, i) in loc_id_mapping.items()}
+
+        self._user_attributes = _build_user_attributes(user_journeys_df, separate_na_source_sink)
+        self._visited_locations = _build_visited_locations(user_journeys_df, separate_na_source_sink)
+        self._visited_locations = self._visited_locations.filter(
+            pl.col("user_id").is_in(self._user_attributes["user_id"].implode())
+        )
+
+        self._user_ids: list[str] = self._visited_locations["user_id"].unique().to_list()
+
+    @property
+    def user_ids(self) -> list[str]:
+        return self._user_ids.copy()
+
+    def num_users(self):
+        return len(self._user_ids)
+
+    def __len__(self) -> int:
+        return self.num_users()
+
+    def annotated_graphs(self) -> Generator[HeteroData]:
+        for (user_id,), user_visited_locations in self._visited_locations.group_by("user_id"):
+            user_attrs = self._user_attributes.filter(user_id=user_id)
+
+            data = self.base_data.clone()
+            data.graph_metadata["user_id"] = user_id
+
+            _add_location_indicator_features(
+                data, user_attrs, "home_loc_id", self._loc_id_to_layer_type, self._loc_id_to_node_index
+            )
+            _add_visited_location_labels(
+                data, user_visited_locations, self._loc_id_to_layer_type, self._loc_id_to_node_index
+            )
+
+            yield data
+
+
+class ActivityDataset(Dataset):
+    def __init__(
+        self,
+        graph_builder: ActivityGraphBuilder,
+        root: Optional[str] = None,
+        transform: Optional[Callable] = None,
+        pre_transform: Optional[Callable] = None,
+        log: bool = True,
+        force_reload: bool = False,
+    ) -> None:
+        self._graph_builder = graph_builder
+        self._set_user_ids(graph_builder.user_ids)
+
+        super().__init__(root, transform, pre_transform, pre_filter=None, log=log, force_reload=force_reload)
+
+
+    def get(self, idx: int) -> HeteroData:
+        path = Path(self.processed_dir) / self._index_filename(idx)
+        return torch.load(path)
+
+    def len(self) -> int:
+        return len(self._processed_file_names)
+
+    def process(self) -> None:
+        user_ids = []
+
+        for data in self._graph_builder.annotated_graphs():
+            user_id = data.graph_metadata["user_id"]
+
+            if self.pre_transform is not None:
+                data = self.pre_transform(data)
+
+            path = Path(self.processed_dir) / self._user_filename(user_id)
+            torch.save(data, path)
+            user_ids.append(user_id)
+
+        self._set_user_ids(user_ids)
+
+    @classmethod
+    def from_cfg(
+        cls,
+        graph_builder: ActivityGraphBuilder,
+        cfg: DataConfig,
+        project_root: Path | None = None,
+        name: str | None = None,
+        transform: Optional[Callable] = None,
+        pre_transform: Optional[Callable] = None,
+        log: bool = True,
+        force_reload: bool = False,
+    ) -> Self:
+        project_root = project_root if project_root is not None else Path(".")
+        suffix = "" if name is None else f"-{name}"
+        root_dir = project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
+
+        return cls(graph_builder, str(root_dir), transform, pre_transform, log, force_reload)
+
+    @property
+    def processed_file_names(self) -> str | list[str] | tuple[str, ...]:
+        return self._processed_file_names
+
+    @staticmethod
+    def _user_filename(user_id: str) -> str:
+        return f"data_{user_id}.pt"
+
+    def _index_filename(self, idx: int) -> str:
+        return f"data_{self._user_indices[idx]}.pt"
+
+    def _set_user_ids(self, user_ids: list[str]) -> None:
+        self._user_ids = user_ids
+        self._user_indices = {i: user_id for i, user_id in enumerate(self._user_ids)}
+        self._processed_file_names = [self._user_filename(user_id) for user_id in self._user_ids]
 
 
 class EnumEncoder:
