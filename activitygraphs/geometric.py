@@ -1,16 +1,18 @@
 import math
-from collections.abc import Generator, Hashable, Sequence, Mapping
+from collections.abc import Generator, Hashable, Iterable, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Type, Optional, Self
+from typing import Callable, Optional, Self, Type
 
 import geopandas as gpd
 import pandas as pd
 import polars as pl
 import torch
 import torch.nn as nn
-from geopandas import GeoDataFrame
-from torch_geometric.data import HeteroData, Dataset
+import torch_geometric as pyg
+from torch_geometric.data import Dataset, HeteroData
+from torch_geometric.data.storage import BaseStorage, EdgeStorage, NodeStorage
+from tqdm import tqdm
 
 from activitygraphs.base import USER_JOURNEY_SCHEMA, Mode
 from activitygraphs.config import DataConfig
@@ -84,22 +86,24 @@ class ActivityGraphBuilder:
 class ActivityDataset(Dataset):
     def __init__(
         self,
-        graph_builder: ActivityGraphBuilder,
+        user_ids: list[str],
+        graphs: Optional[Iterable[HeteroData]] = None,
         root: Optional[str] = None,
         transform: Optional[Callable] = None,
         pre_transform: Optional[Callable] = None,
         log: bool = True,
         force_reload: bool = False,
     ) -> None:
-        self._graph_builder = graph_builder
-        self._set_user_ids(graph_builder.user_ids)
+        self._set_user_ids(user_ids)
+        self._graphs = graphs
 
         super().__init__(root, transform, pre_transform, pre_filter=None, log=log, force_reload=force_reload)
 
-
     def get(self, idx: int) -> HeteroData:
         path = Path(self.processed_dir) / self._index_filename(idx)
-        return torch.load(path)
+
+        with torch.serialization.safe_globals([BaseStorage, EdgeStorage, NodeStorage, LayerType]):
+            return torch.load(path)
 
     def len(self) -> int:
         return len(self._processed_file_names)
@@ -107,7 +111,10 @@ class ActivityDataset(Dataset):
     def process(self) -> None:
         user_ids = []
 
-        for data in self._graph_builder.annotated_graphs():
+        if self._graphs is None:
+            raise ValueError("No iterable of Graphs provided, cannot process graphs.")
+
+        for data in tqdm(self._graphs, total=self.len()):
             user_id = data.graph_metadata["user_id"]
 
             if self.pre_transform is not None:
@@ -119,10 +126,40 @@ class ActivityDataset(Dataset):
 
         self._set_user_ids(user_ids)
 
+    @property
+    def processed_file_names(self) -> str | list[str] | tuple[str, ...]:
+        return self._processed_file_names
+
+    def _set_user_ids(self, user_ids: list[str]) -> None:
+        self._user_ids = user_ids
+        self._user_indices = {i: user_id for i, user_id in enumerate(self._user_ids)}
+        self._processed_file_names = [self._user_filename(user_id) for user_id in self._user_ids]
+
     @classmethod
-    def from_cfg(
+    def from_builder(
         cls,
         graph_builder: ActivityGraphBuilder,
+        cfg: DataConfig,
+        project_root: Path | None = None,
+        name: str | None = None,
+        transform: Optional[Callable] = None,
+        log: bool = True,
+    ) -> Self:
+        root = cls._dir(cfg, project_root, name)
+
+        return cls(
+            graph_builder.user_ids,
+            graph_builder.annotated_graphs(),
+            root=root,
+            transform=transform,
+            pre_transform=None,
+            log=log,
+            force_reload=False,
+        )
+
+    @classmethod
+    def from_files(
+        cls,
         cfg: DataConfig,
         project_root: Path | None = None,
         name: str | None = None,
@@ -131,15 +168,26 @@ class ActivityDataset(Dataset):
         log: bool = True,
         force_reload: bool = False,
     ) -> Self:
+        root_dir = cls._dir(cfg, project_root, name)
+        processed_graphs_dir = root_dir / "processed"
+
+        non_user_ids = ["pre_filter.pt", "pre_transform.pt"]
+
+        filenames = (file.name for file in processed_graphs_dir.iterdir())
+        filtered_names = (f for f in filenames if f not in non_user_ids)
+        user_ids = [cls._filename_to_user_id(f) for f in filtered_names]
+
+        return cls(user_ids, None, str(root_dir), transform, pre_transform, log, force_reload)
+
+    @classmethod
+    def _dir(cls, cfg: DataConfig, project_root: Path | None = None, name: str | None = None):
         project_root = project_root if project_root is not None else Path(".")
         suffix = "" if name is None else f"-{name}"
-        root_dir = project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
+        return project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
 
-        return cls(graph_builder, str(root_dir), transform, pre_transform, log, force_reload)
-
-    @property
-    def processed_file_names(self) -> str | list[str] | tuple[str, ...]:
-        return self._processed_file_names
+    @staticmethod
+    def _filename_to_user_id(filename: str) -> str:
+        return filename.removeprefix("data_").removesuffix(".pt")
 
     @staticmethod
     def _user_filename(user_id: str) -> str:
@@ -147,11 +195,6 @@ class ActivityDataset(Dataset):
 
     def _index_filename(self, idx: int) -> str:
         return f"data_{self._user_indices[idx]}.pt"
-
-    def _set_user_ids(self, user_ids: list[str]) -> None:
-        self._user_ids = user_ids
-        self._user_indices = {i: user_id for i, user_id in enumerate(self._user_ids)}
-        self._processed_file_names = [self._user_filename(user_id) for user_id in self._user_ids]
 
 
 class EnumEncoder:
@@ -545,7 +588,7 @@ def _combine_layer_locations(network: Network, layer_names: Sequence[str]) -> gp
 
 
 def _encode_node_features(
-    layer_locations_gdf: GeoDataFrame, encoders: Mapping[str, Encoder] | None
+    layer_locations_gdf: gpd.GeoDataFrame, encoders: Mapping[str, Encoder] | None
 ) -> torch.Tensor | None:
     if encoders is None:
         return None
