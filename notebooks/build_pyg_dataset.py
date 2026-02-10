@@ -51,10 +51,10 @@ def _():
 def _():
     from activitygraphs.network import Network
 
-    network_name = "stops"
+    network_name = "routes"
     gva_network = Network.load(cfg.data, project_root, network_name)
     gva_network
-    return (gva_network,)
+    return gva_network, network_name
 
 
 @app.cell(hide_code=True)
@@ -87,14 +87,14 @@ def _():
 
 
 @app.cell
-def _(base_data, gva_data):
+def _(base_data, gva_data, network_name):
     from activitygraphs.geometric import ActivityGraphBuilder, ActivityDataset
 
     try:
-        dataset = ActivityDataset.from_files(cfg.data, project_root)
-    except ValueError:
+        dataset = ActivityDataset.from_files(cfg.data, project_root, name=network_name)
+    except FileNotFoundError:
         builder = ActivityGraphBuilder(base_data, gva_data.user_journeys_df, separate_na_source_sink=True)
-        dataset = ActivityDataset.from_builder(builder, cfg.data, project_root)
+        dataset = ActivityDataset.from_builder(builder, cfg.data, project_root, name=network_name)
 
     dataset
     return

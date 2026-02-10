@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.8"
+__generated_with = "0.19.9"
 app = marimo.App(width="full")
 
 with app.setup:
@@ -19,7 +19,9 @@ with app.setup:
 def _():
     from activitygraphs.geometric import ActivityDataset
 
-    dataset = ActivityDataset.from_files(cfg.data, project_root)
+    network_name = "stops"
+
+    dataset = ActivityDataset.from_files(cfg.data, project_root, name=network_name)
     dataset
     return (dataset,)
 
@@ -27,63 +29,119 @@ def _():
 @app.cell
 def _():
     import torch.nn.functional as F
-    from torch_geometric.nn import HeteroConv, Linear, SAGEConv
+    from torch_geometric.nn import HeteroConv, Linear, GATConv
 
 
     class HeteroGNN(torch.nn.Module):
-        def __init__(self, metadata, hidden_channels, out_channels, num_layers, targets=None):
+        def __init__(self, metadata, hidden_channels, out_channels, num_layers, output_types=None):
             super().__init__()
 
-            edge_types = metadata[1]
+            node_types, edge_types = metadata
 
             self.convs = torch.nn.ModuleList()
             for _ in range(num_layers):
-                conv = HeteroConv({edge_type: SAGEConv((-1, -1), hidden_channels) for edge_type in edge_types})
+                conv = HeteroConv({edge_type: GATConv((-1, -1), hidden_channels, add_self_loops=False) for edge_type in edge_types})
                 self.convs.append(conv)
 
             self.lin = Linear(hidden_channels, out_channels)
+            self.output_types = output_types if output_types is not None else node_types
 
-            self._targets = targets
-
-        def forward(self, x_dict, edge_index_dict):
+        def forward(self, x_dict, edge_index_dict, edge_attr_dict):  
             for conv in self.convs:
-                x_dict = {key: x.float() for key, x in x_dict.items()}
-                x_dict = conv(x_dict, edge_index_dict)
+                x_dict = conv(x_dict, edge_index_dict, edge_attr_dict=edge_attr_dict)
                 x_dict = {key: F.leaky_relu(x) for key, x in x_dict.items()}
 
-            target_layers = x_dict.keys() if self._targets is None else self._targets
-            hs = torch.cat([x_dict[l] for l in target_layers], dim=0)
+            splits = [x_dict[t].shape[0] for t in self.output_types]
+            hs = torch.cat([x_dict[t] for t in self.output_types], dim=0)
 
-            return self.lin(hs)
+            out = self.lin(hs)
+            out = torch.split(out, splits)
+            out = {t: o for t, o in zip(self.output_types, out)}
 
-    return (HeteroGNN,)
+            return out
+
+    return F, HeteroGNN
 
 
 @app.cell
-def _(HeteroGNN, dataset):
+def _(F, HeteroGNN, dataset):
+    from tqdm import tqdm
     from torch_geometric.loader import DataLoader
 
-    device = torch.device('cpu')
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-    loader = DataLoader(dataset, batch_size=1)
+    loader = DataLoader(dataset, batch_size=32)
     data = next(iter(loader)).to(device)
     model = HeteroGNN(data.metadata(), hidden_channels=64, out_channels=1, num_layers=2).to(device)
 
     with torch.no_grad():  # Initialize lazy modules.
-        out = model(data.x_dict, data.edge_index_dict)
+        x_dict = {k: x.float() for k, x in data.x_dict.items()}
+        _ = model(x_dict, data.edge_index_dict, data.edge_attr_dict)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.001)
-    return data, model, optimizer
 
-
-@app.cell
-def _(data, model, optimizer):
-    def train():
+    def train(model, optimizer, loader):
         model.train()
         optimizer.zero_grad()
 
-        out = model(data.x_dict, data.edge_index_dict)
+        losses = []
 
+        for batch in tqdm(loader):
+            batch = batch.to(device)
+
+            x_dict = {k: x.float() for k, x in batch.x_dict.items()}
+            y_dict = {k: y for k, y in batch.y_dict.items()}
+            out = model(x_dict, batch.edge_index_dict, batch.edge_attr_dict)
+
+            out_cat = torch.cat([out[t] for t in model.output_types])
+            y_cat = torch.cat([y_dict[t] for t in model.output_types])
+
+            loss = F.binary_cross_entropy_with_logits(out_cat.squeeze(), y_cat)
+            loss.backward()
+            optimizer.step()
+
+            losses.append(float(loss.detach()))
+
+        return losses
+
+    losses = train(model, optimizer, loader)
+    return data, losses, model
+
+
+@app.cell
+def _(losses):
+    sum(losses)
+    return
+
+
+@app.cell
+def _():
+    import matplotlib.pyplot as plt
+
+
+
+    return
+
+
+@app.cell
+def _():
+    import torch_geometric.transforms as T
+
+    data = T.AddSelfLoops()(data)
+    return (data,)
+
+
+@app.cell
+def _(data, model):
+    _x_dict = {k: x.float() for k, x in data.x_dict.items()}
+
+
+    model(_x_dict, data.edge_index_dict, data.edge_attr_dict)
+    return
+
+
+@app.cell
+def _():
     return
 
 
