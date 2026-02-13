@@ -14,9 +14,12 @@ def _():
     import matplotlib.cm as cm
     import matplotlib.colors as mcolors
 
+    import torch
+    import torch_geometric as pyg
 
-    def sigmoid(z):
-        return 1 / (1 + np.exp(-z))
+
+    def sigmoid(z, s=1.0):
+        return 1 / (1 + np.exp(-z / s))
 
 
     SEED = 11
@@ -27,11 +30,20 @@ def _():
 def _(mo):
     slider_I = mo.ui.slider(start=0, stop=10000, step=100, value=1000, show_value=True, label="Number of individuals $I=$")
     slider_N = mo.ui.slider(steps=[i**2 for i in range(10)], value=5**2, show_value=True, label="Number of nodes $N =$")
-    slider_B = mo.ui.slider(start=-20, stop=20, step=0.1, value=1, show_value=True, label="Home node penalty $\\beta=$")
-    md_utility = mo.md("Utility: $\\;\\eta_n^i = X^i X_n - \\beta X^i X^i_h$")
+    slider_B = mo.ui.slider(start=-20, stop=20, step=0.1, value=10, show_value=True, label="Home node penalty $\\beta=$")
+    slider_s = mo.ui.slider(start=0, stop=5, step=0.1, value=1, show_value=True, label="Scale of noise distribution $s=$")
 
-    mo.vstack([slider_I, slider_N, slider_B, md_utility])
-    return slider_B, slider_I, slider_N
+    md_utility = mo.md("Utility: $\\;\\eta_n^i = X^i X_n - \\beta X^i X^i_h$")
+    md_noise = mo.md("Noise: $\\varepsilon^i_n \\sim \\text{Logistic}(0, s)$")
+    return md_noise, md_utility, slider_B, slider_I, slider_N, slider_s
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## Data generation process
+    """)
+    return
 
 
 @app.cell
@@ -55,24 +67,24 @@ def _(I, N, SEED, np):
 
 
 @app.cell
-def _(I, N, SEED, beta_home, home_feature, indi_feature, mo, node_feature, np):
+def _(
+    I,
+    N,
+    SEED,
+    beta_home,
+    home_feature,
+    indi_feature,
+    node_feature,
+    np,
+    slider_s,
+):
     _rng = np.random.default_rng(seed=SEED)
 
     utility = indi_feature @ node_feature.T - beta_home * indi_feature * home_feature
-    noise = _rng.logistic(0, 1, size=(I, N))
+    noise = _rng.logistic(0, slider_s.value, size=(I, N))
     score = utility + noise
-    visited_nodes = np.where(score > 0, 1, 0)
-
-    num_visits = visited_nodes.sum(axis=1).mean()
-    mo.md(f"Mean number of visits per individual: $\\sum_{{i = 1}}^{{I}}N^i_v = {num_visits:.2f}$")
+    visited_nodes = np.where(score >= 0, 1, 0)
     return utility, visited_nodes
-
-
-@app.cell
-def _(mo, sigmoid, utility):
-    expected_num_visits = sigmoid(utility).sum(axis=1).mean()
-    mo.md(f"Expected number of visits per individual: $\\mathbb{{E}}[N^i_v] = {expected_num_visits:.2f}$")
-    return
 
 
 @app.cell
@@ -102,7 +114,7 @@ def _(G, cm, cmap, node_feature, norm, nx, plt, pos):
     _sm = cm.ScalarMappable(cmap=cmap, norm=norm)
     _sm.set_array(node_feature)
     _cbar = fig_base.colorbar(_sm, ax=_ax)
-    _cbar.set_label("$X^i$")
+    _cbar.set_label("$X_n$")
 
     _ax.set_axis_off()
     _ax.set_title("Base network")
@@ -142,6 +154,8 @@ def _(
         nodelist=[_home_node],
         pos=pos,
         node_color="LightBlue",
+        edgecolors="red" if visited_nodes[_i, _home_node].item() else None,
+        linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
     nx.draw_networkx_nodes(
@@ -162,7 +176,7 @@ def _(
     _sm = cm.ScalarMappable(cmap=cmap, norm=norm)
     _sm.set_array(node_feature)
     _cbar = fig_indiv.colorbar(_sm, ax=_ax)
-    _cbar.set_label("$X^i$")
+    _cbar.set_label("$X_n$")
 
     _ax.set_axis_off()
     _ax.set_title(f"Network for individual $i = {_i}$")
@@ -173,19 +187,68 @@ def _(
 
 @app.cell
 def _(I, mo):
-    slider_indiv = mo.ui.slider(start=0, stop=I, label="Selected individual $i =$", show_value=True)
+    slider_indiv = mo.ui.dropdown(range(I), value=0, searchable=True, label="Selected individual $i =$")
     return (slider_indiv,)
 
 
-@app.cell
-def _(fig_base, fig_indiv, mo, slider_indiv):
-    mo.vstack([slider_indiv, mo.hstack([fig_base, fig_indiv])])
+@app.cell(hide_code=True)
+def _(md_noise, md_utility, mo, slider_B, slider_I, slider_N, slider_s):
+    mo.vstack([slider_I, slider_N, slider_B, slider_s, md_utility, md_noise])
     return
 
 
 @app.cell
-def _(visted):
-    visted
+def _(fig_base, fig_indiv, mo, slider_indiv):
+    mo.vstack([slider_indiv, mo.hstack([fig_base, fig_indiv], justify="start")])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo, visited_nodes):
+    num_visits = visited_nodes.sum(axis=1).mean()
+    mo.md(f"Mean number of visits per individual: $\\sum_{{i = 1}}^{{I}}N^i_v = {num_visits:.2f}$")
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo, sigmoid, slider_s, utility):
+    expected_num_visits = sigmoid(utility, s=slider_s.value).sum(axis=1).mean()
+    mo.md(f"Expected number of visits per individual: $\\mathbb{{E}}[N^i_v] = {expected_num_visits:.2f}$")
+    return
+
+
+@app.cell
+def _(plt, sigmoid, slider_s, utility, visited_nodes):
+    _x = sigmoid(utility, s=slider_s.value).sum(axis=1)
+    _y = visited_nodes.sum(axis=1)
+
+    plt.scatter(_x, _y, s=5)
+    plt.plot([0, _x.max()], [0, _x.max()], c="red")
+
+    plt.yticks(range(0, _y.max() + 2, 2))
+    plt.xlabel("Expected number of visits")
+    plt.ylabel("Actual number of visits")
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## PyG Dataset generation
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Machine learning
+    """)
+    return
+
+
+@app.cell
+def _():
     return
 
 
