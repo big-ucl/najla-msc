@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.9"
+__generated_with = "0.19.11"
 app = marimo.App(width="full")
 
 
@@ -22,19 +22,23 @@ def _():
     def sigmoid(z, s=1.0):
         return 1 / (1 + np.exp(-z / s))
 
+    def torch_sigmoid(z, s=1.0):
+        return 1 / (1 + np.exp(-z / s))
 
-    SEED = 11
+    SEED = 42
     return F, SEED, cm, mcolors, mo, np, nx, pl, plt, sigmoid, torch
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    slider_I = mo.ui.slider(start=0, stop=10000, step=100, value=1000, show_value=True, label="Number of individuals $I=$")
+    slider_I = mo.ui.slider(start=0, stop=10000, step=100, value=2500, show_value=True, label="Number of individuals $I=$")
     slider_N = mo.ui.slider(steps=[i**2 for i in range(10)], value=5**2, show_value=True, label="Number of nodes $N =$")
-    slider_B = mo.ui.slider(start=-20, stop=20, step=0.1, value=10, show_value=True, label="Home node penalty $\\beta=$")
-    slider_s = mo.ui.slider(start=0, stop=5, step=0.1, value=1, show_value=True, label="Scale of noise distribution $s=$")
+    slider_B = mo.ui.slider(start=0, stop=5, step=0.05, value=1.5, show_value=True, label="Home node penalty $\\beta=$")
+    slider_s = mo.ui.slider(
+        start=0, stop=1, step=0.01, value=0.2, show_value=True, label="Scale of noise distribution $s=$"
+    )
 
-    md_utility = mo.md("Utility: $\\;\\eta_n^i = X^i X_n - \\beta X^i X^i_h$")
+    md_utility = mo.md("Utility: $\\;\\eta_n^i = X^i X_n - \\beta X^i_h$")
     md_noise = mo.md("Noise: $\\varepsilon^i_n \\sim \\text{Logistic}(0, s)$")
     return md_noise, md_utility, slider_B, slider_I, slider_N, slider_s
 
@@ -57,13 +61,23 @@ def _(slider_B, slider_I, slider_N):
 
 
 @app.cell
-def _(I, N, SEED, np):
+def _(I, N, SEED, beta_home, mo, np):
     _rng = np.random.default_rng(seed=SEED)
 
+    min_node_feature, max_node_feature = (-0.9, 0.1)
+    min_indi_feature, max_indi_feature = (0.2, 0.8)
+
     home_locations = _rng.choice(N, I)
-    node_feature = _rng.uniform(0, 1, size=(N, 1))
-    indi_feature = _rng.uniform(0, 1, size=(I, 1))
+    node_feature = _rng.uniform(min_node_feature, max_node_feature, size=(N, 1))
+    indi_feature = _rng.uniform(min_indi_feature, max_indi_feature, size=(I, 1))
     home_feature = node_feature[home_locations]
+
+    _exp_node_feature = min_node_feature + (max_node_feature - min_node_feature) / 2
+    _exp_indi_feature = min_indi_feature + (max_indi_feature - min_indi_feature) / 2
+    _exp_home_feature = _exp_node_feature
+
+    expected_utility = _exp_node_feature - beta_home * _exp_home_feature * _exp_indi_feature
+    mo.md(f"Expected utility: $\\mathbb{{E}}[\\eta_n^i] = {expected_utility:.4f}$")
     return home_feature, home_locations, indi_feature, node_feature
 
 
@@ -81,16 +95,16 @@ def _(
 ):
     _rng = np.random.default_rng(seed=SEED)
 
-    utility = indi_feature @ node_feature.T - beta_home * indi_feature * home_feature
+    utility = node_feature.T - beta_home * home_feature * indi_feature
     noise = _rng.logistic(0, slider_s.value, size=(I, N))
     score = utility + noise
     visited_nodes = np.where(score >= 0, 1, 0)
-    return utility, visited_nodes
+    return score, utility, visited_nodes
 
 
 @app.cell
-def _(N_sqrt, SEED, node_feature, nx):
-    G = nx.navigable_small_world_graph(N_sqrt, seed=SEED)
+def _(N_sqrt, node_feature, nx):
+    G = nx.navigable_small_world_graph(N_sqrt, seed=11)
     G = nx.convert_node_labels_to_integers(G)
     nx.set_node_attributes(G, {i: f.item() for i, f in enumerate(node_feature)}, "node_feature")
     pos = nx.kamada_kawai_layout(G)
@@ -98,21 +112,18 @@ def _(N_sqrt, SEED, node_feature, nx):
 
 
 @app.cell(hide_code=True)
-def _(cm, mcolors, np):
-    _base_cmap = cm.Greys
-
-    norm = mcolors.Normalize(vmin=0, vmax=1)
-    cmap = mcolors.LinearSegmentedColormap.from_list("trunc_Reds", _base_cmap(np.linspace(0, 0.7, 256)))
-    return cmap, norm
-
-
-@app.cell(hide_code=True)
-def _(G, cm, cmap, node_feature, norm, nx, plt, pos):
+def _(G, cm, mcolors, node_feature, np, nx, plt, pos):
     fig_base, _ax = plt.subplots()
 
-    nx.draw_networkx(G, pos=pos, node_color=node_feature, cmap=cmap, ax=_ax)
+    _base_cmap = cm.BrBG
 
-    _sm = cm.ScalarMappable(cmap=cmap, norm=norm)
+    _vmax = np.max(np.abs(node_feature))
+    _norm = mcolors.Normalize(vmin=-_vmax, vmax=_vmax)
+    _cmap = mcolors.LinearSegmentedColormap.from_list("trunc_Reds", _base_cmap(np.linspace(0, 0.7, 256)))
+
+    nx.draw_networkx(G, pos=pos, node_color=node_feature, cmap=_cmap, ax=_ax, vmin=-_vmax, vmax=_vmax)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=_norm)
     _sm.set_array(node_feature)
     _cbar = fig_base.colorbar(_sm, ax=_ax)
     _cbar.set_label("$X_n$")
@@ -128,14 +139,13 @@ def _(G, cm, cmap, node_feature, norm, nx, plt, pos):
 def _(
     G,
     cm,
-    cmap,
     home_locations,
-    node_feature,
-    norm,
+    mcolors,
     np,
     nx,
     plt,
     pos,
+    score,
     slider_indiv,
     visited_nodes,
 ):
@@ -144,18 +154,23 @@ def _(
     _i = slider_indiv.value
     _home_node = home_locations[_i].item()
 
-    _unvisited_nodes = [i for i in np.nonzero(1 - visited_nodes[_i])[0].tolist() if i != _home_node]
-    _visited_nodes = [i for i in np.nonzero(visited_nodes[_i])[0].tolist() if i != _home_node]
+    _score_nodes = np.where(score[_i] >= 0, 1, 0)
+
+    _unvisited_nodes = [i for i in np.nonzero(1 - _score_nodes)[0].tolist() if i != _home_node]
+    _visited_nodes = [i for i in np.nonzero(_score_nodes)[0].tolist() if i != _home_node]
+
+    _cmap = cm.RdBu
+
 
     nx.draw_networkx_nodes(
-        G, nodelist=_unvisited_nodes, pos=pos, node_color=node_feature[_unvisited_nodes], cmap=cmap, ax=_ax, vmax=1
+        G, nodelist=_unvisited_nodes, pos=pos, node_color=score[_i, _unvisited_nodes], cmap=_cmap, ax=_ax, vmin=-1, vmax=1
     )
     nx.draw_networkx_nodes(
         G,
         nodelist=[_home_node],
         pos=pos,
-        node_color="LightBlue",
-        edgecolors="red" if visited_nodes[_i, _home_node].item() else None,
+        node_color="ForestGreen",
+        edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
         linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
@@ -163,27 +178,101 @@ def _(
         G,
         nodelist=_visited_nodes,
         pos=pos,
-        node_color=node_feature[_visited_nodes],
-        cmap=cmap,
+        node_color=score[_i, _visited_nodes],
+        cmap=_cmap,
         ax=_ax,
+        vmin=-1,
         vmax=1,
-        edgecolors="red",
+        edgecolors="green",
         linewidths=1.5,
     )
 
     nx.draw_networkx_labels(G, pos, ax=_ax)
     nx.draw_networkx_edges(G, pos=pos, ax=_ax)
 
-    _sm = cm.ScalarMappable(cmap=cmap, norm=norm)
-    _sm.set_array(node_feature)
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
+    _sm.set_array(score[_i])
     _cbar = fig_indiv.colorbar(_sm, ax=_ax)
-    _cbar.set_label("$X_n$")
+    _cbar.set_label("$Z^i_n$")
 
     _ax.set_axis_off()
     _ax.set_title(f"Network for individual $i = {_i}$")
 
     None
     return (fig_indiv,)
+
+
+@app.cell(hide_code=True)
+def _(
+    G,
+    cm,
+    home_locations,
+    mcolors,
+    np,
+    nx,
+    plt,
+    pos,
+    slider_indiv,
+    utility,
+    visited_nodes,
+):
+    fig_indiv_util, _ax = plt.subplots()
+
+    _i = slider_indiv.value
+    _home_node = home_locations[_i].item()
+
+    _utility_nodes = np.where(utility[_i] >= 0, 1, 0)
+
+    _unvisited_nodes = [i for i in np.nonzero(1 - _utility_nodes)[0].tolist() if i != _home_node]
+    _visited_nodes = [i for i in np.nonzero(_utility_nodes)[0].tolist() if i != _home_node]
+
+    _cmap = cm.RdBu
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_unvisited_nodes,
+        pos=pos,
+        node_color=utility[_i, _unvisited_nodes],
+        cmap=_cmap,
+        ax=_ax,
+        vmin=-1,
+        vmax=1,
+    )
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=[_home_node],
+        pos=pos,
+        node_color="ForestGreen",
+        edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        ax=_ax,
+    )
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_visited_nodes,
+        pos=pos,
+        node_color=utility[_i, _visited_nodes],
+        cmap=_cmap,
+        ax=_ax,
+        vmin=-1,
+        vmax=1,
+        edgecolors="green",
+        linewidths=1.5,
+    )
+
+    nx.draw_networkx_labels(G, pos, ax=_ax)
+    nx.draw_networkx_edges(G, pos=pos, ax=_ax)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
+    _sm.set_array(utility[_i])
+    _cbar = fig_indiv_util.colorbar(_sm, ax=_ax)
+    _cbar.set_label("$\\eta_n^i$")
+
+    _ax.set_axis_off()
+    _ax.set_title(f"Network for individual $i = {_i}$ without noise $\\varepsilon^i_n$")
+
+    None
+    return (fig_indiv_util,)
 
 
 @app.cell(hide_code=True)
@@ -198,9 +287,26 @@ def _(md_noise, md_utility, mo, slider_B, slider_I, slider_N, slider_s):
     return
 
 
-@app.cell
-def _(fig_base, fig_indiv, mo, slider_indiv):
-    mo.vstack([slider_indiv, mo.hstack([fig_base, fig_indiv], justify="start")])
+@app.cell(hide_code=True)
+def _(
+    fig_base,
+    fig_indiv,
+    fig_indiv_util,
+    home_locations,
+    indi_feature,
+    mo,
+    node_feature,
+    slider_indiv,
+):
+    _x_i = indi_feature[slider_indiv.value].item()
+    _x_h = node_feature[home_locations[slider_indiv.value]].item()
+
+    mo.vstack([
+        slider_indiv,
+        mo.md(f"Value of individual feature: $X^i={_x_i:.4f}$"),
+        mo.md(f"Value of home node feature: $X^i_h={_x_h:.4f}$"),
+        mo.hstack([fig_base, fig_indiv, fig_indiv_util], justify="start"),
+    ])
     return
 
 
@@ -257,7 +363,7 @@ def _(G, home_locations, indi_feature, np, torch, visited_nodes):
             self._base_data = base_data.clone()
             self._indi_feature = indi_feature.copy()
             self._home_locations = home_locations.copy()
-            self._visited_nodes = visited_nodes.copy()
+            self._visited_nodes = torch.tensor(visited_nodes, dtype=int)
 
         @property
         def num_classes(self):
@@ -276,25 +382,20 @@ def _(G, home_locations, indi_feature, np, torch, visited_nodes):
             indi_feature = self._indi_feature[idx].item()
             indi_node_feature = torch.full_like(base_x, indi_feature)
 
-            visited_nodes = torch.zeros_like(base_x)
-            visited_nodes[self._visited_nodes[idx], :] = 1
+            home_feature = base_x[self._home_locations[idx]]
 
             x = torch.cat([base_x, is_home, indi_node_feature], dim=1)
-            y = visited_nodes
+            x_aug = torch.cat
+            y = self._visited_nodes[idx].unsqueeze(1)
 
-            return Data(x=x, y=y, edge_index=base_edge_index, indi_feature=indi_feature, user_id=idx)
+            return Data(
+                x=x, y=y, edge_index=base_edge_index, indi_feature=indi_feature, home_feature=home_feature, user_id=idx
+            )
 
 
     dataset = SyntheticDataset(base_data, indi_feature, home_locations, visited_nodes)
     dataset
     return (dataset,)
-
-
-@app.cell
-def _(dataset):
-    data = dataset[0]
-    data
-    return (data,)
 
 
 @app.cell
@@ -316,13 +417,13 @@ def _(SEED, batch_size, dataset, test_size):
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    return test_loader, train_loader
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Machine learning
+    ## Finding a good GCN for this task
     """)
     return
 
@@ -348,10 +449,10 @@ def _(F, torch):
 
         def forward(self, x, edge_index):
             for conv in self.convs[:-1]:
-                x = F.dropout(x, p=0.5, training=self.training)
+                # x = F.dropout(x, p=0.5, training=self.training)
                 x = conv(x, edge_index).relu()
 
-            x = F.dropout(x, p=0.5, training=self.training)
+            # x = F.dropout(x, p=0.5, training=self.training)
             x = self.convs[-1](x, edge_index)
 
             return x
@@ -379,7 +480,7 @@ def _(F, torch):
 
 
 @app.cell
-def _(F, data, torch):
+def _(F, torch):
     def compute_training_weights(loader):
         num_neg = 0
         num_pos = 0
@@ -402,8 +503,8 @@ def _(F, data, torch):
             batch = batch.to(device)
 
             optimizer.zero_grad()
-            out = model(data.x, data.edge_index)
-            loss = F.binary_cross_entropy_with_logits(out, data.y)
+            out = model(batch.x, batch.edge_index)
+            loss = F.binary_cross_entropy_with_logits(out, batch.y.float())
             loss.backward()
             optimizer.step()
 
@@ -423,23 +524,23 @@ def _(F, data, torch):
         for batch in loader:
             batch = batch.to(device)
 
-            out = model(data.x, data.edge_index)
-            loss = F.binary_cross_entropy_with_logits(out, data.y)
+            out = model(batch.x, batch.edge_index)
+            loss = F.binary_cross_entropy_with_logits(out, batch.y.float())
 
             epoch_loss += loss.item() * batch.num_nodes
             num_nodes += batch.num_nodes
 
         return epoch_loss / num_nodes
 
-    return test, train
+    return
 
 
-@app.cell
-def _(epochs, lr, test, test_loader, torch, train, train_loader):
+app._unparsable_cell(
+    r"""
     from torch_geometric.logging import log
 
 
-    def run_experiment(model, num_epochs=10, verbose=1, name=None):
+    def run_experiment(model, num_epochs=10, verbose=1, name=None, lr=0.001):
         name = name or model.__class__.__name__
 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -451,11 +552,11 @@ def _(epochs, lr, test, test_loader, torch, train, train_loader):
 
         log(Model=name)
 
-        for epoch in range(1, epochs + 1):
+        for epoch in range(1, num_epochs + 1):
             train_loss = train(device, model, train_loader, optimizer)
             test_loss = test(device, model, test_loader)
 
-            train_losses.append(train_loss)
+            train_losses.append(train_loss)tensor(0.2
             test_losses.append(test_loss)
 
             if verbose and (epoch - 1) % verbose == 0:
@@ -463,16 +564,17 @@ def _(epochs, lr, test, test_loader, torch, train, train_loader):
 
         log(Epoch=epoch, Train_Loss=train_loss, Test_Loss=test_loss)
 
-        return {"name": name, "epoch": range(1, epochs + 1), "train": train_losses, "test": test_losses}
-
-    return (run_experiment,)
+        return {"name": name, "epoch": range(1, num_epochs + 1), "train": train_losses, "test": test_losses}
+    """,
+    name="_"
+)
 
 
 @app.cell
 def _(GCN, NodeMLP, dataset):
     hidden_channels = 16
     lr = 0.001
-    epochs = 20
+    epochs = 25
     verbose = 5
 
     max_gcn_layers = 8
@@ -494,7 +596,7 @@ def _(GCN, NodeMLP, dataset):
 
     models = gcn_models | mlp_models
     list(models.keys())
-    return epochs, lr, models, verbose
+    return epochs, hidden_channels, lr, models, verbose
 
 
 @app.cell(hide_code=True)
@@ -505,13 +607,22 @@ def _(mo):
 
 
 @app.cell
-def _(btn_run_experiments, epochs, mo, models, pl, run_experiment, verbose):
+def _(
+    btn_run_experiments,
+    epochs,
+    lr,
+    mo,
+    models,
+    pl,
+    run_experiment,
+    verbose,
+):
     mo.stop(not btn_run_experiments.value)
 
     _results = {}
 
     for name, model in models.items():
-        _results[name] = run_experiment(model, num_epochs=epochs, verbose=verbose, name=name)
+        _results[name] = run_experiment(model, num_epochs=epochs, verbose=verbose, name=name, lr=lr)
 
     results = pl.concat(pl.DataFrame(result) for result in _results.values())
     return (results,)
@@ -531,7 +642,7 @@ def _(results):
             .mark_line(point=True)
             .encode(
                 alt.X("epoch:Q").scale(domainMin=1),
-                alt.Y(f"{column}:Q").scale(domainMin=0.2),
+                alt.Y(f"{column}:Q").scale(domainMin=0.4),
                 color=alt.Color("name").scale(scheme=_scheme),
                 tooltip=["name", column],
             )
@@ -544,10 +655,19 @@ def _(results):
 
 
 @app.cell
-def _(np, pl, results, sigmoid, slider_s, utility, visited_nodes):
-    _probs = np.log(sigmoid(utility, s=slider_s.value))
-    _y = visited_nodes
-    _best_possible_loss = -(_y * _probs).mean()
+def _(F, sigmoid, slider_s, torch, utility):
+    _best_possible_loss = F.binary_cross_entropy(
+        torch.tensor(sigmoid(utility, s=slider_s.value)).float(), torch.tensor(sigmoid(utility, s=slider_s.value)).float()#torch.tensor(visited_nodes).float()
+    )
+    _best_possible_loss
+    return
+
+
+@app.cell
+def _(F, pl, results, sigmoid, torch, utility, visited_nodes):
+    _best_possible_loss = F.binary_cross_entropy(
+        torch.tensor(sigmoid(utility)).float(), torch.tensor(visited_nodes).float()
+    )
 
     _lower_bound = pl.DataFrame({"name": "Lower bound", "epoch": "-", "test": _best_possible_loss})
 
@@ -576,6 +696,60 @@ def _(alt, model_comparison, pl):
 
     _rule = alt.Chart(model_comparison).mark_rule(color="red").encode(y="min(test):Q", tooltip="min(test):Q")
     _bar + _rule
+    return
+
+
+@app.cell
+def _(dataset, models, torch):
+    torch.cat([torch.sigmoid(models["GCN-2"](dataset[0].x, dataset[0].edge_index)), dataset[0].y], dim=1)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Visualising predictions
+    """)
+    return
+
+
+@app.cell
+def _():
+    best_num_layers = 4
+    return (best_num_layers,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    btn_train_best_model = mo.ui.run_button(label="Train best GCN model")
+    btn_train_best_model
+    return (btn_train_best_model,)
+
+
+@app.cell
+def _(
+    GCN,
+    best_num_layers,
+    btn_train_best_model,
+    dataset,
+    epochs,
+    hidden_channels,
+    lr,
+    mo,
+    run_experiment,
+):
+    mo.stop(not btn_train_best_model.value)
+
+    gcn = GCN(
+        num_layers=best_num_layers,
+        in_channels=dataset.num_features,
+        hidden_channels=hidden_channels,
+        out_channels=dataset.num_classes,
+    )
+
+    _ = run_experiment(gcn, num_epochs=epochs, verbose=0, lr=lr)
+
+    gcn
     return
 
 
