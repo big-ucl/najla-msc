@@ -22,10 +22,12 @@ def _():
     def sigmoid(z, s=1.0):
         return 1 / (1 + np.exp(-z / s))
 
+
     def torch_sigmoid(z, s=1.0):
         return 1 / (1 + np.exp(-z / s))
 
-    SEED = 42
+
+    SEED = 512
     return F, SEED, cm, mcolors, mo, np, nx, pl, plt, sigmoid, torch
 
 
@@ -33,9 +35,9 @@ def _():
 def _(mo):
     slider_I = mo.ui.slider(start=0, stop=10000, step=100, value=2500, show_value=True, label="Number of individuals $I=$")
     slider_N = mo.ui.slider(steps=[i**2 for i in range(10)], value=5**2, show_value=True, label="Number of nodes $N =$")
-    slider_B = mo.ui.slider(start=0, stop=5, step=0.05, value=1.5, show_value=True, label="Home node penalty $\\beta=$")
+    slider_B = mo.ui.slider(start=0, stop=5, step=0.05, value=0.5, show_value=True, label="Home node penalty $\\beta=$")
     slider_s = mo.ui.slider(
-        start=0, stop=1, step=0.01, value=0.2, show_value=True, label="Scale of noise distribution $s=$"
+        start=0, stop=1, step=0.01, value=0.1, show_value=True, label="Scale of noise distribution $s=$"
     )
 
     md_utility = mo.md("Utility: $\\;\\eta_n^i = X^i X_n - \\beta X^i_h$")
@@ -330,9 +332,9 @@ def _(plt, sigmoid, slider_s, utility, visited_nodes):
     _y = visited_nodes.sum(axis=1)
 
     plt.scatter(_x, _y, s=5)
-    plt.plot([0, _x.max()], [0, _x.max()], c="red")
+    plt.plot([_x.min(), _x.max()], [_x.min(), _x.max()], c="red")
 
-    plt.yticks(range(0, _y.max() + 2, 2))
+    plt.yticks(range(_y.min(), _y.max() + 2, 2))
     plt.xlabel("Expected number of visits")
     plt.ylabel("Actual number of visits")
     return
@@ -385,7 +387,6 @@ def _(G, home_locations, indi_feature, np, torch, visited_nodes):
             home_feature = base_x[self._home_locations[idx]]
 
             x = torch.cat([base_x, is_home, indi_node_feature], dim=1)
-            x_aug = torch.cat
             y = self._visited_nodes[idx].unsqueeze(1)
 
             return Data(
@@ -401,23 +402,23 @@ def _(G, home_locations, indi_feature, np, torch, visited_nodes):
 @app.cell
 def _():
     test_size = 0.2
-    batch_size = 16
+    batch_size = 128
     return batch_size, test_size
 
 
 @app.cell
-def _(SEED, batch_size, dataset, test_size):
+def _(batch_size, dataset, test_size):
     from torch_geometric.loader import DataLoader
     from sklearn.model_selection import train_test_split
 
-    _train_indices, _test_indices = train_test_split(range(len(dataset)), test_size=test_size, random_state=SEED)
+    _train_indices, _test_indices = train_test_split(range(len(dataset)), test_size=test_size)
 
     train_dataset = dataset[_train_indices]
     test_dataset = dataset[_test_indices]
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    return
+    return test_loader, train_loader
 
 
 @app.cell(hide_code=True)
@@ -431,52 +432,115 @@ def _(mo):
 @app.cell
 def _(F, torch):
     from torch_geometric.nn import GCNConv
+    import itertools
+
+
+    def build_module_list(
+        module_f, num_layers: int, in_channels: int, out_channels: int, hidden_channels: int | None = None, **module_kwargs
+    ):
+        if num_layers > 1 and hidden_channels is None:
+            raise ValueError(f"Hidden channels not provided: {num_layers=} or {hidden_channels=}")
+
+        if num_layers < 1:
+            raise ValueError(f"Invalid number of layers: {num_layers=}")
+
+        layers = [in_channels] + [hidden_channels] * (num_layers - 1) + [out_channels]
+        modules = torch.nn.ModuleList()
+
+        for num_in, num_out in itertools.pairwise(layers):
+            modules.append(module_f(num_in, num_out, **module_kwargs))
+
+        return modules
 
 
     class GCN(torch.nn.Module):
-        def __init__(self, num_layers: int, in_channels: int, hidden_channels: int, out_channels: int):
+        def __init__(
+            self, num_layers: int, in_channels: int, hidden_channels: int, out_channels: int, dropout=0.2, residuals=False
+        ):
             super().__init__()
 
-            if num_layers < 2:
-                raise ValueError(f"Minimum 2 layers, found {num_layers}")
+            if residuals and in_channels != hidden_channels:
+                raise ValueError("Number of in channels must match number of hidden channels")
 
-            self.convs = torch.nn.ModuleList()
-
-            self.convs.append(GCNConv(in_channels, hidden_channels))
-            for i in range(num_layers - 2):
-                self.convs.append(GCNConv(hidden_channels, hidden_channels))
-            self.convs.append(GCNConv(hidden_channels, out_channels))
+            self.residuals = residuals
+            self.dropout = dropout
+            self.convs = build_module_list(GCNConv, in_channels, out_channels, hidden_channels)
 
         def forward(self, x, edge_index):
             for conv in self.convs[:-1]:
-                # x = F.dropout(x, p=0.5, training=self.training)
+                x_res = x
+                x = F.dropout(x, p=self.dropout, training=self.training)
                 x = conv(x, edge_index).relu()
 
-            # x = F.dropout(x, p=0.5, training=self.training)
+                if self.residuals:
+                    x = x + x_res
+
+            x = F.dropout(x, p=self.dropout, training=self.training)
             x = self.convs[-1](x, edge_index)
 
             return x
 
 
     class NodeMLP(torch.nn.Module):
-        def __init__(self, in_channels: int, hidden_channels: int, out_channels: int):
+        def __init__(self, num_layers: int, in_channels: int, hidden_channels: int, out_channels: int, dropout=0.2):
             super().__init__()
 
-            self.lin1 = torch.nn.Linear(in_channels, hidden_channels)
-            self.lin2 = torch.nn.Linear(hidden_channels, hidden_channels)
-            self.lin3 = torch.nn.Linear(hidden_channels, out_channels)
+            self.dropout = dropout
+            self.lins = build_module_list(torch.nn.Linear, in_channels, out_channels, hidden_channels)
 
         def forward(self, x, edge_index):
-            x = F.dropout(x, p=0.5, training=self.training)
-            x = self.lin1(x).relu()
-            x = F.dropout(x, p=0.5, training=self.training)
-            x = self.lin2(x).relu()
-            x = F.dropout(x, p=0.5, training=self.training)
-            x = self.lin3(x)
+            for lin in self.lins[:-1]:
+                x = F.dropout(x, p=self.dropout, training=self.training)
+                x = lin(x).relu()
+
+            x = F.dropout(x, p=self.dropout, training=self.training)
+            x = self.lins[-1](x)
 
             return x
 
-    return GCN, NodeMLP
+
+    class GCNPlus(torch.nn.Module):
+        def __init__(
+            self, num_gcn: int, num_lin: int, in_channels: int, hidden_channels: int, out_channels: int, dropout=0.2
+        ):
+            super().__init__()
+
+            self.gcn = GCN(num_gcn, in_channels, hidden_channels, hidden_channels, dropout)
+            self.lin = NodeMLP(num_lin, hidden_channels, hidden_channels, out_channels, dropout)
+
+        def forward(self, x, edge_index):
+            x = self.gcn(x, edge_index).relu()
+            x = self.lin(x, edge_index)
+
+            return x
+
+
+    class GCNRes(torch.nn.Module):
+        def __init__(
+            self,
+            num_pre_layers: int,
+            num_gcn_layers: int,
+            num_post_layers: int,
+            in_channels: int,
+            hidden_channels: int,
+            out_channels: int,
+            dropout=0.2,
+        ):
+            super().__init__()
+
+            self.dropout = dropout
+            self.pre_lin = NodeMLP(num_pre_layers, in_channels, hidden_channels, hidden_channels, dropout)
+            self.convs = GCN(num_gcn_layers, in_channels, hidden_channels, hidden_channels, dropout, residuals=True)
+            self.post_lin = NodeMLP(num_post_layers, hidden_channels, hidden_channels, out_channels, dropout)
+
+        def forward(self, x, edge_index):
+            x = self.pre_lin(x, edge_index)
+            x = self.convs(x, edge_index)
+            x = self.post_lin(x, edge_index)
+
+            return x
+
+    return GCN, GCNPlus, NodeMLP
 
 
 @app.cell
@@ -491,19 +555,30 @@ def _(F, torch):
         return num_neg / num_pos
 
 
-    def train(device, model, loader, optimizer):
+    def extract_features(batch, full_info):
+        if not full_info:
+            return batch.x
+
+        if batch.batch is not None:
+            home_feature = batch.home_feature[batch.batch].unsqueeze(1)
+        else:
+            home_feature = torch.full((batch.x.shape[0], 1), batch.home_feature.item())
+
+        return torch.cat([batch.x, home_feature], dim=1)
+
+
+    def train(device, model, loader, optimizer, full_info):
         model.train()
 
         epoch_loss = 0.0
         num_nodes = 0
 
-        pos_weight = compute_training_weights(loader)
-
         for batch in loader:
             batch = batch.to(device)
+            x = extract_features(batch, full_info)
 
             optimizer.zero_grad()
-            out = model(batch.x, batch.edge_index)
+            out = model(x, batch.edge_index)
             loss = F.binary_cross_entropy_with_logits(out, batch.y.float())
             loss.backward()
             optimizer.step()
@@ -515,7 +590,7 @@ def _(F, torch):
 
 
     @torch.no_grad()
-    def test(device, model, loader):
+    def test(device, model, loader, full_info):
         model.eval()
 
         epoch_loss = 0.0
@@ -523,8 +598,9 @@ def _(F, torch):
 
         for batch in loader:
             batch = batch.to(device)
+            x = extract_features(batch, full_info)
 
-            out = model(batch.x, batch.edge_index)
+            out = model(x, batch.edge_index)
             loss = F.binary_cross_entropy_with_logits(out, batch.y.float())
 
             epoch_loss += loss.item() * batch.num_nodes
@@ -532,15 +608,15 @@ def _(F, torch):
 
         return epoch_loss / num_nodes
 
-    return
+    return test, train
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _(test, test_loader, torch, train, train_loader):
     from torch_geometric.logging import log
 
 
-    def run_experiment(model, num_epochs=10, verbose=1, name=None, lr=0.001):
+    def run_experiment(model, num_epochs=10, verbose=1, name=None, lr=0.001, full_info=False):
         name = name or model.__class__.__name__
 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -553,32 +629,33 @@ app._unparsable_cell(
         log(Model=name)
 
         for epoch in range(1, num_epochs + 1):
-            train_loss = train(device, model, train_loader, optimizer)
-            test_loss = test(device, model, test_loader)
+            train_loss = train(device, model, train_loader, optimizer, full_info)
+            train_eval_loss = test(device, model, train_loader, full_info)
+            test_loss = test(device, model, test_loader, full_info)
 
-            train_losses.append(train_loss)tensor(0.2
+            train_losses.append(train_eval_loss)
             test_losses.append(test_loss)
 
             if verbose and (epoch - 1) % verbose == 0:
-                log(Epoch=epoch, Train_Loss=train_loss, Test_Loss=test_loss)
+                log(Epoch=epoch, train_loss=train_loss, train_eval_loss=train_eval_loss, test_loss=test_loss)
 
-        log(Epoch=epoch, Train_Loss=train_loss, Test_Loss=test_loss)
+        log(Epoch=epoch, train_loss=train_loss, train_eval_loss=train_eval_loss, test_loss=test_loss)
 
         return {"name": name, "epoch": range(1, num_epochs + 1), "train": train_losses, "test": test_losses}
-    """,
-    name="_"
-)
+
+    return (run_experiment,)
 
 
 @app.cell
-def _(GCN, NodeMLP, dataset):
-    hidden_channels = 16
-    lr = 0.001
-    epochs = 25
+def _(GCN, GCNPlus, NodeMLP, dataset):
+    hidden_channels = 128
+    lr = 0.01
+    epochs = 10
     verbose = 5
 
-    max_gcn_layers = 8
-    max_mlp_layers = 4
+    min_gcn_layers, max_gcn_layers = (2, 2)
+    gcnplus_lin_layers = 3
+    mlp_layers = 3
 
     gcn_models = {
         f"GCN-{n}": GCN(
@@ -587,16 +664,40 @@ def _(GCN, NodeMLP, dataset):
             hidden_channels=hidden_channels,
             out_channels=dataset.num_classes,
         )
-        for n in range(2, max_gcn_layers + 1)
+        for n in range(min_gcn_layers, max_gcn_layers + 1)
+    }
+
+    gcn_plus_models = {
+        f"GCNPlus-{n}": GCNPlus(
+            num_gcn=n,
+            num_lin=gcnplus_lin_layers,
+            in_channels=dataset.num_features,
+            hidden_channels=hidden_channels,
+            out_channels=dataset.num_classes,
+        )
+        for n in range(min_gcn_layers, max_gcn_layers + 1)
     }
 
     mlp_models = {
-        "MLP": NodeMLP(in_channels=dataset.num_features, hidden_channels=hidden_channels, out_channels=dataset.num_classes)
+        "MLP": NodeMLP(
+            mlp_layers,
+            in_channels=dataset.num_features,
+            hidden_channels=hidden_channels,
+            out_channels=dataset.num_classes,
+        ),
+        "MLP-Full": NodeMLP(
+            mlp_layers,
+            in_channels=dataset.num_features + 1,
+            hidden_channels=hidden_channels,
+            out_channels=dataset.num_classes,
+        ),
     }
 
-    models = gcn_models | mlp_models
+    full_info_models = {"MLP-Full"}
+
+    models = mlp_models | gcn_models | gcn_plus_models
     list(models.keys())
-    return epochs, hidden_channels, lr, models, verbose
+    return epochs, full_info_models, hidden_channels, lr, models, verbose
 
 
 @app.cell(hide_code=True)
@@ -610,6 +711,7 @@ def _(mo):
 def _(
     btn_run_experiments,
     epochs,
+    full_info_models,
     lr,
     mo,
     models,
@@ -622,10 +724,24 @@ def _(
     _results = {}
 
     for name, model in models.items():
-        _results[name] = run_experiment(model, num_epochs=epochs, verbose=verbose, name=name, lr=lr)
+        _full_info = name in full_info_models
+        _results[name] = run_experiment(model, num_epochs=epochs, verbose=verbose, name=name, lr=lr, full_info=_full_info)
 
     results = pl.concat(pl.DataFrame(result) for result in _results.values())
     return (results,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    TODO
+    - Change utility to a better model
+    - Add a pre- linear layer to GCN
+    - Remove dropout from GCN
+    - Add residual connections to GCN
+    -
+    """)
+    return
 
 
 @app.cell
@@ -642,7 +758,7 @@ def _(results):
             .mark_line(point=True)
             .encode(
                 alt.X("epoch:Q").scale(domainMin=1),
-                alt.Y(f"{column}:Q").scale(domainMin=0.4),
+                alt.Y(f"{column}:Q").scale(domainMin=0.23),
                 color=alt.Color("name").scale(scheme=_scheme),
                 tooltip=["name", column],
             )
@@ -655,21 +771,22 @@ def _(results):
 
 
 @app.cell
-def _(F, sigmoid, slider_s, torch, utility):
-    _best_possible_loss = F.binary_cross_entropy(
-        torch.tensor(sigmoid(utility, s=slider_s.value)).float(), torch.tensor(sigmoid(utility, s=slider_s.value)).float()#torch.tensor(visited_nodes).float()
-    )
-    _best_possible_loss
-    return
-
-
-@app.cell
-def _(F, pl, results, sigmoid, torch, utility, visited_nodes):
-    _best_possible_loss = F.binary_cross_entropy(
-        torch.tensor(sigmoid(utility)).float(), torch.tensor(visited_nodes).float()
+def _(F, pl, results, sigmoid, slider_s, torch, utility, visited_nodes):
+    _best_possible_theoretical_loss = F.binary_cross_entropy(
+        torch.tensor(sigmoid(utility, s=slider_s.value)).float(), torch.tensor(sigmoid(utility, s=slider_s.value)).float()
     )
 
-    _lower_bound = pl.DataFrame({"name": "Lower bound", "epoch": "-", "test": _best_possible_loss})
+    _best_possible_empirical_loss = F.binary_cross_entropy(
+        torch.tensor(sigmoid(utility, s=slider_s.value)).float(), torch.tensor(visited_nodes).float()
+    )
+
+    _random_guessing_loss = F.binary_cross_entropy(
+        torch.full_like(torch.tensor(visited_nodes), 0.5).float(), torch.tensor(visited_nodes).float()
+    )
+
+    _theoretical_bound = pl.DataFrame({"name": "Theoretical bound", "epoch": "-", "test": _best_possible_theoretical_loss})
+    _empirical_bound = pl.DataFrame({"name": "Empirical bound", "epoch": "-", "test": _best_possible_empirical_loss})
+    _random_guessing_bound = pl.DataFrame({"name": "Random guessing bound", "epoch": "-", "test": _random_guessing_loss})
 
 
     _best_models = (
@@ -680,7 +797,7 @@ def _(F, pl, results, sigmoid, torch, utility, visited_nodes):
         .select("name", pl.col("epoch").cast(pl.String), "test")
     )
 
-    model_comparison = pl.concat([_lower_bound, _best_models])
+    model_comparison = pl.concat([_theoretical_bound, _empirical_bound, _best_models, _random_guessing_bound])
     model_comparison
     return (model_comparison,)
 
@@ -689,19 +806,25 @@ def _(F, pl, results, sigmoid, torch, utility, visited_nodes):
 def _(alt, model_comparison, pl):
     _bar = (
         alt
-        .Chart(model_comparison.filter(pl.col("name") != "Lower bound"))
+        .Chart(model_comparison.filter(~pl.col("name").str.contains("bound")))
         .mark_bar()
         .encode(alt.X("name:N").title("Model").sort("y"), y=alt.Y("test:Q").title("Test loss"), tooltip=["name", "test"])
     )
 
-    _rule = alt.Chart(model_comparison).mark_rule(color="red").encode(y="min(test):Q", tooltip="min(test):Q")
-    _bar + _rule
-    return
+    _theo_rule = (
+        alt
+        .Chart(model_comparison.filter(pl.col("name") == "Theoretical bound"))
+        .mark_rule(color="green")
+        .encode(y="min(test):Q", tooltip="min(test):Q")
+    )
+    _emp_rule = (
+        alt
+        .Chart(model_comparison.filter(pl.col("name") == "Empirical bound"))
+        .mark_rule(color="red")
+        .encode(y="min(test):Q", tooltip="min(test):Q")
+    )
 
-
-@app.cell
-def _(dataset, models, torch):
-    torch.cat([torch.sigmoid(models["GCN-2"](dataset[0].x, dataset[0].edge_index)), dataset[0].y], dim=1)
+    _bar + _theo_rule + _emp_rule
     return
 
 
