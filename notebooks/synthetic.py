@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.11"
+__generated_with = "0.20.2"
 app = marimo.App(width="full")
 
 
@@ -431,120 +431,6 @@ def _(mo):
 
 @app.cell
 def _(F, torch):
-    from torch_geometric.nn import GCNConv
-    import itertools
-
-
-    def build_module_list(
-        module_f, num_layers: int, in_channels: int, out_channels: int, hidden_channels: int | None = None, **module_kwargs
-    ):
-        if num_layers > 1 and hidden_channels is None:
-            raise ValueError(f"Hidden channels not provided: {num_layers=} or {hidden_channels=}")
-
-        if num_layers < 1:
-            raise ValueError(f"Invalid number of layers: {num_layers=}")
-
-        layers = [in_channels] + [hidden_channels] * (num_layers - 1) + [out_channels]
-        modules = torch.nn.ModuleList()
-
-        for num_in, num_out in itertools.pairwise(layers):
-            modules.append(module_f(num_in, num_out, **module_kwargs))
-
-        return modules
-
-
-    class GCN(torch.nn.Module):
-        def __init__(
-            self, num_layers: int, in_channels: int, hidden_channels: int, out_channels: int, dropout=0.2, residuals=False
-        ):
-            super().__init__()
-
-            if residuals and in_channels != hidden_channels:
-                raise ValueError("Number of in channels must match number of hidden channels")
-
-            self.residuals = residuals
-            self.dropout = dropout
-            self.convs = build_module_list(GCNConv, in_channels, out_channels, hidden_channels)
-
-        def forward(self, x, edge_index):
-            for conv in self.convs[:-1]:
-                x_res = x
-                x = F.dropout(x, p=self.dropout, training=self.training)
-                x = conv(x, edge_index).relu()
-
-                if self.residuals:
-                    x = x + x_res
-
-            x = F.dropout(x, p=self.dropout, training=self.training)
-            x = self.convs[-1](x, edge_index)
-
-            return x
-
-
-    class NodeMLP(torch.nn.Module):
-        def __init__(self, num_layers: int, in_channels: int, hidden_channels: int, out_channels: int, dropout=0.2):
-            super().__init__()
-
-            self.dropout = dropout
-            self.lins = build_module_list(torch.nn.Linear, in_channels, out_channels, hidden_channels)
-
-        def forward(self, x, edge_index):
-            for lin in self.lins[:-1]:
-                x = F.dropout(x, p=self.dropout, training=self.training)
-                x = lin(x).relu()
-
-            x = F.dropout(x, p=self.dropout, training=self.training)
-            x = self.lins[-1](x)
-
-            return x
-
-
-    class GCNPlus(torch.nn.Module):
-        def __init__(
-            self, num_gcn: int, num_lin: int, in_channels: int, hidden_channels: int, out_channels: int, dropout=0.2
-        ):
-            super().__init__()
-
-            self.gcn = GCN(num_gcn, in_channels, hidden_channels, hidden_channels, dropout)
-            self.lin = NodeMLP(num_lin, hidden_channels, hidden_channels, out_channels, dropout)
-
-        def forward(self, x, edge_index):
-            x = self.gcn(x, edge_index).relu()
-            x = self.lin(x, edge_index)
-
-            return x
-
-
-    class GCNRes(torch.nn.Module):
-        def __init__(
-            self,
-            num_pre_layers: int,
-            num_gcn_layers: int,
-            num_post_layers: int,
-            in_channels: int,
-            hidden_channels: int,
-            out_channels: int,
-            dropout=0.2,
-        ):
-            super().__init__()
-
-            self.dropout = dropout
-            self.pre_lin = NodeMLP(num_pre_layers, in_channels, hidden_channels, hidden_channels, dropout)
-            self.convs = GCN(num_gcn_layers, in_channels, hidden_channels, hidden_channels, dropout, residuals=True)
-            self.post_lin = NodeMLP(num_post_layers, hidden_channels, hidden_channels, out_channels, dropout)
-
-        def forward(self, x, edge_index):
-            x = self.pre_lin(x, edge_index)
-            x = self.convs(x, edge_index)
-            x = self.post_lin(x, edge_index)
-
-            return x
-
-    return GCN, GCNPlus, NodeMLP
-
-
-@app.cell
-def _(F, torch):
     def compute_training_weights(loader):
         num_neg = 0
         num_pos = 0
@@ -647,13 +533,16 @@ def _(test, test_loader, torch, train, train_loader):
 
 
 @app.cell
-def _(GCN, GCNPlus, NodeMLP, dataset):
-    hidden_channels = 128
+def _(dataset):
+    from activitygraphs.models import NodeMLP, GCN, GCNPlus, GCNRes, GCNSkip, GATSkip
+
+    hidden_channels = 64
     lr = 0.01
-    epochs = 10
+    dropout = 0.0
+    epochs = 50
     verbose = 5
 
-    min_gcn_layers, max_gcn_layers = (2, 2)
+    min_gcn_layers, max_gcn_layers = (4, 4)
     gcnplus_lin_layers = 3
     mlp_layers = 3
 
@@ -663,6 +552,7 @@ def _(GCN, GCNPlus, NodeMLP, dataset):
             in_channels=dataset.num_features,
             hidden_channels=hidden_channels,
             out_channels=dataset.num_classes,
+            dropout=dropout,
         )
         for n in range(min_gcn_layers, max_gcn_layers + 1)
     }
@@ -674,30 +564,74 @@ def _(GCN, GCNPlus, NodeMLP, dataset):
             in_channels=dataset.num_features,
             hidden_channels=hidden_channels,
             out_channels=dataset.num_classes,
+            dropout=dropout,
         )
         for n in range(min_gcn_layers, max_gcn_layers + 1)
     }
 
-    mlp_models = {
+    gcn_res_models = {
+        f"GCNRes-{n}": GCNRes(
+            num_pre_layers=1,
+            num_gcn_layers=n,
+            num_post_layers=gcnplus_lin_layers,
+            in_channels=dataset.num_features,
+            hidden_channels=hidden_channels,
+            out_channels=dataset.num_classes,
+            dropout=dropout,
+        )
+        for n in range(min_gcn_layers, max_gcn_layers + 1)
+    }
+
+    other_models = {
         "MLP": NodeMLP(
             mlp_layers,
             in_channels=dataset.num_features,
             hidden_channels=hidden_channels,
             out_channels=dataset.num_classes,
+            dropout=dropout,
         ),
         "MLP-Full": NodeMLP(
             mlp_layers,
             in_channels=dataset.num_features + 1,
             hidden_channels=hidden_channels,
             out_channels=dataset.num_classes,
+            dropout=dropout,
+        ),
+        "GCNSkip-4": GCNSkip(
+            num_pre_layers=1,
+            num_gcn_layers=4,
+            num_post_layers=gcnplus_lin_layers,
+            in_channels=dataset.num_features,
+            hidden_channels=hidden_channels,
+            out_channels=dataset.num_classes,
+            dropout=dropout,
+        ),
+        "GATSkip-4": GATSkip(
+            num_pre_layers=1,
+            num_gcn_layers=4,
+            num_post_layers=gcnplus_lin_layers,
+            in_channels=dataset.num_features,
+            hidden_channels=hidden_channels,
+            out_channels=dataset.num_classes,
+            dropout=dropout,
         ),
     }
 
     full_info_models = {"MLP-Full"}
 
-    models = mlp_models | gcn_models | gcn_plus_models
+    models = other_models | gcn_res_models  # | gcn_models | gcn_plus_models
     list(models.keys())
-    return epochs, full_info_models, hidden_channels, lr, models, verbose
+    return (
+        GATSkip,
+        dropout,
+        epochs,
+        full_info_models,
+        gcnplus_lin_layers,
+        hidden_channels,
+        lr,
+        models,
+        verbose,
+    )
 
 
 @app.cell(hide_code=True)
@@ -736,10 +670,7 @@ def _(mo):
     mo.md(r"""
     TODO
     - Change utility to a better model
-    - Add a pre- linear layer to GCN
     - Remove dropout from GCN
-    - Add residual connections to GCN
-    -
     """)
     return
 
@@ -851,11 +782,12 @@ def _(mo):
 
 @app.cell
 def _(
-    GCN,
+    GATSkip,
     best_num_layers,
     btn_train_best_model,
     dataset,
-    epochs,
+    dropout,
+    gcnplus_lin_layers,
     hidden_channels,
     lr,
     mo,
@@ -863,16 +795,19 @@ def _(
 ):
     mo.stop(not btn_train_best_model.value)
 
-    gcn = GCN(
-        num_layers=best_num_layers,
+    gat = GATSkip(
+        num_pre_layers=1,
+        num_gcn_layers=best_num_layers,
+        num_post_layers=gcnplus_lin_layers,
         in_channels=dataset.num_features,
         hidden_channels=hidden_channels,
         out_channels=dataset.num_classes,
+        dropout=dropout,
     )
 
-    _ = run_experiment(gcn, num_epochs=epochs, verbose=0, lr=lr)
+    _ = run_experiment(gat, num_epochs=100, verbose=10, lr=lr)
 
-    gcn
+    gat
     return
 
 
