@@ -13,6 +13,7 @@ def _():
     import matplotlib.pyplot as plt
     import matplotlib.cm as cm
     import matplotlib.colors as mcolors
+    import altair as alt
 
     import torch
     import torch_geometric as pyg
@@ -28,21 +29,31 @@ def _():
 
 
     SEED = 512
-    return F, SEED, cm, mcolors, mo, np, nx, pl, plt, sigmoid, torch
+    return F, SEED, alt, cm, mcolors, mo, np, nx, pl, plt, sigmoid, torch
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    slider_I = mo.ui.slider(start=0, stop=10000, step=100, value=2500, show_value=True, label="Number of individuals $I=$")
-    slider_N = mo.ui.slider(steps=[i**2 for i in range(10)], value=5**2, show_value=True, label="Number of nodes $N =$")
-    slider_B = mo.ui.slider(start=0, stop=5, step=0.05, value=0.5, show_value=True, label="Home node penalty $\\beta=$")
-    slider_s = mo.ui.slider(
-        start=0, stop=1, step=0.01, value=0.1, show_value=True, label="Scale of noise distribution $s=$"
+    slider_I = mo.ui.slider(
+        start=0, stop=10000, step=100, value=2500, show_value=True, label="Number of individuals $I=$", debounce=True
     )
+    slider_N = mo.ui.slider(
+        steps=[i**2 for i in range(10)], value=5**2, show_value=True, label="Number of nodes $N =$", debounce=True
+    )
+    slider_asc = mo.ui.slider(start=0, stop=1, step=0.05, value=0.15, show_value=True, label="$\\alpha=$", debounce=True)
+    slider_bn = mo.ui.slider(start=0, stop=5, step=0.05, value=2, show_value=True, label="$\\beta_1=$", debounce=True)
+    slider_bh = mo.ui.slider(start=0, stop=5, step=0.05, value=0.8, show_value=True, label="$\\beta_2=$", debounce=True)
+    return slider_I, slider_N, slider_asc, slider_bh, slider_bn
 
-    md_utility = mo.md("Utility: $\\;\\eta_n^i = X^i X_n - \\beta X^i_h$")
-    md_noise = mo.md("Noise: $\\varepsilon^i_n \\sim \\text{Logistic}(0, s)$")
-    return md_noise, md_utility, slider_B, slider_I, slider_N, slider_s
+
+@app.cell
+def _(asc, beta_home, beta_node, mo, noise_scale):
+    md_utility = mo.md("Utility: $\\eta_n^i = \\beta_1 X^i (X_n - \\bar{X}) - \\beta_2 | X_n - X^i_h | - \\alpha$")
+    md_utility_num = mo.md(
+        f"\t   : $\\eta_n^i = {beta_node:.2f} X^i (X_n - \\bar{{X}}) - {beta_home:.2f} | X_n - X^i_h | - {asc:.2f}$"
+    )
+    md_noise = mo.md(f"Noise: $\\varepsilon^i_n \\sim \\text{{Logistic}}(0, {noise_scale})$")
+    return md_noise, md_utility, md_utility_num
 
 
 @app.cell(hide_code=True)
@@ -54,33 +65,48 @@ def _(mo):
 
 
 @app.cell
-def _(slider_B, slider_I, slider_N):
+def _(slider_I, slider_N, slider_asc, slider_bh, slider_bn):
     N_sqrt = int(slider_N.value**0.5)
+    noise_scale = 0.1
     N = N_sqrt**2
     I = slider_I.value
-    beta_home = slider_B.value
-    return I, N, N_sqrt, beta_home
+    asc = slider_asc.value
+    beta_node = slider_bn.value
+    beta_home = slider_bh.value
+    return I, N, N_sqrt, asc, beta_home, beta_node, noise_scale
 
 
 @app.cell
-def _(I, N, SEED, beta_home, mo, np):
+def _(I, N, SEED, asc, beta_home, beta_node, mo, np):
     _rng = np.random.default_rng(seed=SEED)
 
-    min_node_feature, max_node_feature = (-0.9, 0.1)
-    min_indi_feature, max_indi_feature = (0.2, 0.8)
+    min_node_feature, max_node_feature = (-1, 1)
+    min_indi_feature, max_indi_feature = (0, 1)
 
     home_locations = _rng.choice(N, I)
     node_feature = _rng.uniform(min_node_feature, max_node_feature, size=(N, 1))
     indi_feature = _rng.uniform(min_indi_feature, max_indi_feature, size=(I, 1))
     home_feature = node_feature[home_locations]
 
+    mean_node_feature = node_feature.mean()
+
     _exp_node_feature = min_node_feature + (max_node_feature - min_node_feature) / 2
     _exp_indi_feature = min_indi_feature + (max_indi_feature - min_indi_feature) / 2
     _exp_home_feature = _exp_node_feature
 
-    expected_utility = _exp_node_feature - beta_home * _exp_home_feature * _exp_indi_feature
+    expected_utility = (
+        beta_node * _exp_indi_feature * (_exp_node_feature - _exp_node_feature)
+        - beta_home * np.abs(_exp_node_feature - _exp_node_feature)
+        - asc
+    )
     mo.md(f"Expected utility: $\\mathbb{{E}}[\\eta_n^i] = {expected_utility:.4f}$")
-    return home_feature, home_locations, indi_feature, node_feature
+    return (
+        home_feature,
+        home_locations,
+        indi_feature,
+        mean_node_feature,
+        node_feature,
+    )
 
 
 @app.cell
@@ -88,17 +114,24 @@ def _(
     I,
     N,
     SEED,
+    asc,
     beta_home,
+    beta_node,
     home_feature,
     indi_feature,
+    mean_node_feature,
     node_feature,
+    noise_scale,
     np,
-    slider_s,
 ):
     _rng = np.random.default_rng(seed=SEED)
 
-    utility = node_feature.T - beta_home * home_feature * indi_feature
-    noise = _rng.logistic(0, slider_s.value, size=(I, N))
+    utility = (
+        beta_node * indi_feature * (node_feature.T - mean_node_feature)
+        - beta_home * np.abs(node_feature.T - home_feature)
+        - asc
+    )
+    noise = _rng.logistic(0, noise_scale, size=(I, N))
     score = utility + noise
     visited_nodes = np.where(score >= 0, 1, 0)
     return score, utility, visited_nodes
@@ -284,8 +317,18 @@ def _(I, mo):
 
 
 @app.cell(hide_code=True)
-def _(md_noise, md_utility, mo, slider_B, slider_I, slider_N, slider_s):
-    mo.vstack([slider_I, slider_N, slider_B, slider_s, md_utility, md_noise])
+def _(
+    md_noise,
+    md_utility,
+    md_utility_num,
+    mo,
+    slider_I,
+    slider_N,
+    slider_asc,
+    slider_bh,
+    slider_bn,
+):
+    mo.vstack([slider_I, slider_N, slider_asc, slider_bn, slider_bh, md_utility, md_utility_num, md_noise])
     return
 
 
@@ -320,15 +363,15 @@ def _(mo, visited_nodes):
 
 
 @app.cell(hide_code=True)
-def _(mo, sigmoid, slider_s, utility):
-    expected_num_visits = sigmoid(utility, s=slider_s.value).sum(axis=1).mean()
+def _(mo, noise_scale, sigmoid, utility):
+    expected_num_visits = sigmoid(utility, s=noise_scale).sum(axis=1).mean()
     mo.md(f"Expected number of visits per individual: $\\mathbb{{E}}[N^i_v] = {expected_num_visits:.2f}$")
     return
 
 
 @app.cell
-def _(plt, sigmoid, slider_s, utility, visited_nodes):
-    _x = sigmoid(utility, s=slider_s.value).sum(axis=1)
+def _(noise_scale, plt, sigmoid, utility, visited_nodes):
+    _x = sigmoid(utility, s=noise_scale).sum(axis=1)
     _y = visited_nodes.sum(axis=1)
 
     plt.scatter(_x, _y, s=5)
@@ -418,7 +461,7 @@ def _(batch_size, dataset, test_size):
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    return test_loader, train_loader
+    return test_dataset, test_loader, train_loader
 
 
 @app.cell(hide_code=True)
@@ -427,109 +470,6 @@ def _(mo):
     ## Finding a good GCN for this task
     """)
     return
-
-
-@app.cell
-def _(F, torch):
-    def compute_training_weights(loader):
-        num_neg = 0
-        num_pos = 0
-
-        for batch in loader:
-            num_neg += (batch.y == 0).sum()
-            num_pos += batch.y.sum()
-        return num_neg / num_pos
-
-
-    def extract_features(batch, full_info):
-        if not full_info:
-            return batch.x
-
-        if batch.batch is not None:
-            home_feature = batch.home_feature[batch.batch].unsqueeze(1)
-        else:
-            home_feature = torch.full((batch.x.shape[0], 1), batch.home_feature.item())
-
-        return torch.cat([batch.x, home_feature], dim=1)
-
-
-    def train(device, model, loader, optimizer, full_info):
-        model.train()
-
-        epoch_loss = 0.0
-        num_nodes = 0
-
-        for batch in loader:
-            batch = batch.to(device)
-            x = extract_features(batch, full_info)
-
-            optimizer.zero_grad()
-            out = model(x, batch.edge_index)
-            loss = F.binary_cross_entropy_with_logits(out, batch.y.float())
-            loss.backward()
-            optimizer.step()
-
-            epoch_loss += loss.item() * batch.num_nodes
-            num_nodes += batch.num_nodes
-
-        return epoch_loss / num_nodes
-
-
-    @torch.no_grad()
-    def test(device, model, loader, full_info):
-        model.eval()
-
-        epoch_loss = 0.0
-        num_nodes = 0
-
-        for batch in loader:
-            batch = batch.to(device)
-            x = extract_features(batch, full_info)
-
-            out = model(x, batch.edge_index)
-            loss = F.binary_cross_entropy_with_logits(out, batch.y.float())
-
-            epoch_loss += loss.item() * batch.num_nodes
-            num_nodes += batch.num_nodes
-
-        return epoch_loss / num_nodes
-
-    return test, train
-
-
-@app.cell
-def _(test, test_loader, torch, train, train_loader):
-    from torch_geometric.logging import log
-
-
-    def run_experiment(model, num_epochs=10, verbose=1, name=None, lr=0.001, full_info=False):
-        name = name or model.__class__.__name__
-
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        model = model.to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-        train_losses = []
-        test_losses = []
-
-        log(Model=name)
-
-        for epoch in range(1, num_epochs + 1):
-            train_loss = train(device, model, train_loader, optimizer, full_info)
-            train_eval_loss = test(device, model, train_loader, full_info)
-            test_loss = test(device, model, test_loader, full_info)
-
-            train_losses.append(train_eval_loss)
-            test_losses.append(test_loss)
-
-            if verbose and (epoch - 1) % verbose == 0:
-                log(Epoch=epoch, train_loss=train_loss, train_eval_loss=train_eval_loss, test_loss=test_loss)
-
-        log(Epoch=epoch, train_loss=train_loss, train_eval_loss=train_eval_loss, test_loss=test_loss)
-
-        return {"name": name, "epoch": range(1, num_epochs + 1), "train": train_losses, "test": test_losses}
-
-    return (run_experiment,)
 
 
 @app.cell
@@ -542,7 +482,7 @@ def _(dataset):
     epochs = 50
     verbose = 5
 
-    min_gcn_layers, max_gcn_layers = (4, 4)
+    min_gcn_layers, max_gcn_layers = (2, 5)
     gcnplus_lin_layers = 3
     mlp_layers = 3
 
@@ -582,6 +522,36 @@ def _(dataset):
         for n in range(min_gcn_layers, max_gcn_layers + 1)
     }
 
+    gcn_skip_models = {
+        f"GCNSkip-{n}{'-res' if res else ''}": GCNSkip(
+            num_pre_layers=1,
+            num_gcn_layers=n,
+            num_post_layers=gcnplus_lin_layers,
+            in_channels=dataset.num_features,
+            hidden_channels=hidden_channels,
+            out_channels=dataset.num_classes,
+            dropout=dropout,
+            residuals=res,
+        )
+        for n in range(min_gcn_layers, max_gcn_layers + 1)
+        for res in [True, False]
+    }
+
+    gat_skip_models = {
+        f"GATSkip-{n}{'-res' if res else ''}": GATSkip(
+            num_pre_layers=1,
+            num_gcn_layers=n,
+            num_post_layers=gcnplus_lin_layers,
+            in_channels=dataset.num_features,
+            hidden_channels=hidden_channels,
+            out_channels=dataset.num_classes,
+            dropout=dropout,
+            residuals=res,
+        )
+        for n in range(min_gcn_layers, max_gcn_layers + 1)
+        for res in [True, False]
+    }
+
     other_models = {
         "MLP": NodeMLP(
             mlp_layers,
@@ -597,29 +567,11 @@ def _(dataset):
             out_channels=dataset.num_classes,
             dropout=dropout,
         ),
-        "GCNSkip-4": GCNSkip(
-            num_pre_layers=1,
-            num_gcn_layers=4,
-            num_post_layers=gcnplus_lin_layers,
-            in_channels=dataset.num_features,
-            hidden_channels=hidden_channels,
-            out_channels=dataset.num_classes,
-            dropout=dropout,
-        ),
-        "GATSkip-4": GATSkip(
-            num_pre_layers=1,
-            num_gcn_layers=4,
-            num_post_layers=gcnplus_lin_layers,
-            in_channels=dataset.num_features,
-            hidden_channels=hidden_channels,
-            out_channels=dataset.num_classes,
-            dropout=dropout,
-        ),
     }
 
     full_info_models = {"MLP-Full"}
 
-    models = other_models | gcn_res_models  # | gcn_models | gcn_plus_models
+    models = other_models | gcn_models | gcn_plus_models | gcn_res_models | gcn_skip_models | gat_skip_models
     list(models.keys())
     return (
         GATSkip,
@@ -650,82 +602,136 @@ def _(
     mo,
     models,
     pl,
-    run_experiment,
+    test_loader,
+    train_loader,
     verbose,
 ):
+    from activitygraphs.experiment import run_experiment
+
     mo.stop(not btn_run_experiments.value)
 
     _results = {}
 
     for name, model in models.items():
         _full_info = name in full_info_models
-        _results[name] = run_experiment(model, num_epochs=epochs, verbose=verbose, name=name, lr=lr, full_info=_full_info)
+        _results[name] = run_experiment(
+            model, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name=name, lr=lr, full_info=_full_info
+        )
 
     results = pl.concat(pl.DataFrame(result) for result in _results.values())
-    return (results,)
+    return (run_experiment,)
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    TODO
-    - Change utility to a better model
-    - Remove dropout from GCN
-    """)
-    return
+def _(pl):
+    _results = pl.read_parquet("reports/data/synthetic-results.parquet")
+    # _results = results
 
 
-@app.cell
-def _(results):
-    import altair as alt
-
-    _scheme = "inferno"
+    results_aug = _results.with_columns(type=pl.col("name").str.split("-").list.first())
+    results_aug
+    return (results_aug,)
 
 
-    def _plot(title, column):
+@app.cell(hide_code=True)
+def _(alt, results_aug):
+    def plot_results(results, title, column, color="name:N", detail=None, scheme="inferno"):
+        kwargs = {} if detail is None else {"detail": detail}
+        scheme_kwargs = {} if scheme is None else {"scheme": scheme}
+
         return (
             alt
             .Chart(results)
             .mark_line(point=True)
             .encode(
                 alt.X("epoch:Q").scale(domainMin=1),
-                alt.Y(f"{column}:Q").scale(domainMin=0.23),
-                color=alt.Color("name").scale(scheme=_scheme),
+                alt.Y(f"{column}:Q").scale(domainMin=0.10),
+                color=alt.Color(color).scale(**scheme_kwargs),
                 tooltip=["name", column],
+                **kwargs,
             )
-            .properties(title=title, width=400, height=400)
+            .properties(title=title, width=600, height=450)
         )
 
 
-    _plot("Training loss", "train") | _plot("Test loss", "test")
-    return (alt,)
+    plot_results(results_aug, "Training loss", "train") | plot_results(results_aug, "Test loss", "test")
+    return (plot_results,)
 
 
-@app.cell
-def _(F, pl, results, sigmoid, slider_s, torch, utility, visited_nodes):
+@app.cell(hide_code=True)
+def _(pl, plot_results, results_aug):
+    _best_performers = pl.concat([
+        results_aug.group_by("type").agg(pl.all().sort_by("test").first()).select("name"),
+        pl.DataFrame({"name": "MLP"}),
+    ])
+    _results = results_aug.join(_best_performers, on="name")
+
+    plot_results(_results, "Training loss", "train") | plot_results(_results, "Test loss", "test")
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo, results_aug):
+    dropdown_type = mo.ui.dropdown(results_aug["type"].unique(), label="Choose type of GCN model:")
+    return (dropdown_type,)
+
+
+@app.cell(hide_code=True)
+def _(dropdown_type, mo, pl, plot_results, results_aug):
+    _results = results_aug.with_columns(layers=pl.col("name").str.extract(r"(\d)").fill_null("MLP"))
+
+    if dropdown_type.value:
+        _results = _results.filter((pl.col("type") == dropdown_type.value) | (pl.col("type") == "MLP"))
+
+
+    _fig = plot_results(_results, "Training loss", "train", color="layers", detail="name", scheme=None) | plot_results(
+        _results, "Test loss", "test", color="layers", detail="name"
+    )
+
+    mo.vstack([dropdown_type, _fig])
+    return
+
+
+@app.cell(hide_code=True)
+def _(F, noise_scale, pl, results_aug, sigmoid, torch, utility, visited_nodes):
     _best_possible_theoretical_loss = F.binary_cross_entropy(
-        torch.tensor(sigmoid(utility, s=slider_s.value)).float(), torch.tensor(sigmoid(utility, s=slider_s.value)).float()
+        torch.tensor(sigmoid(utility, s=noise_scale)).float(), torch.tensor(sigmoid(utility, s=noise_scale)).float()
     )
 
     _best_possible_empirical_loss = F.binary_cross_entropy(
-        torch.tensor(sigmoid(utility, s=slider_s.value)).float(), torch.tensor(visited_nodes).float()
+        torch.tensor(sigmoid(utility, s=noise_scale)).float(), torch.tensor(visited_nodes).float()
     )
 
     _random_guessing_loss = F.binary_cross_entropy(
         torch.full_like(torch.tensor(visited_nodes), 0.5).float(), torch.tensor(visited_nodes).float()
     )
 
-    _theoretical_bound = pl.DataFrame({"name": "Theoretical bound", "epoch": "-", "test": _best_possible_theoretical_loss})
-    _empirical_bound = pl.DataFrame({"name": "Empirical bound", "epoch": "-", "test": _best_possible_empirical_loss})
-    _random_guessing_bound = pl.DataFrame({"name": "Random guessing bound", "epoch": "-", "test": _random_guessing_loss})
+    _theoretical_bound = pl.DataFrame({
+        "name": "Theoretical bound",
+        "epoch": "-",
+        "test": _best_possible_theoretical_loss,
+        "type": "Baseline",
+    })
+    _empirical_bound = pl.DataFrame({
+        "name": "Empirical bound",
+        "epoch": "-",
+        "test": _best_possible_empirical_loss,
+        "type": "Baseline",
+    })
+    _random_guessing_bound = pl.DataFrame({
+        "name": "Random guessing bound",
+        "epoch": "-",
+        "test": _random_guessing_loss,
+        "type": "Baseline",
+    })
 
 
     _best_models = (
-        results
+        results_aug
         .group_by("name")
         .agg(pl.all().sort_by("test").first())
         .sort("test")
-        .select("name", pl.col("epoch").cast(pl.String), "test")
+        .select("name", pl.col("epoch").cast(pl.String), "test", "type")
     )
 
     model_comparison = pl.concat([_theoretical_bound, _empirical_bound, _best_models, _random_guessing_bound])
@@ -733,13 +739,18 @@ def _(F, pl, results, sigmoid, slider_s, torch, utility, visited_nodes):
     return (model_comparison,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(alt, model_comparison, pl):
     _bar = (
         alt
         .Chart(model_comparison.filter(~pl.col("name").str.contains("bound")))
         .mark_bar()
-        .encode(alt.X("name:N").title("Model").sort("y"), y=alt.Y("test:Q").title("Test loss"), tooltip=["name", "test"])
+        .encode(
+            alt.X("name:N").title("Model").sort("y"),
+            y=alt.Y("test:Q").title("Test loss"),
+            color=alt.Color("type:N").scale(scheme="inferno"),
+            tooltip=["name", "test"],
+        )
     )
 
     _theo_rule = (
@@ -755,7 +766,29 @@ def _(alt, model_comparison, pl):
         .encode(y="min(test):Q", tooltip="min(test):Q")
     )
 
-    _bar + _theo_rule + _emp_rule
+    _mlp_rule = (
+        alt
+        .Chart(model_comparison.filter(pl.col("name") == "MLP"))
+        .mark_rule(color="red")
+        .encode(y="min(test):Q", tooltip="min(test):Q")
+    )
+
+    _mlp_rule + _bar + _theo_rule + _emp_rule
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Conclusions:
+    - Plain GCN can't beat the MLP
+    - GCNPlus can, but struggles
+    - Residual connections help, but aren't the best fix
+    - Skip connections help the most, almost equal to MLP-Full
+    - Skip + Residual not better than just Skip
+    - 4 or 5 layers ideal
+    - GATConv is more stable, performs the best and converges faster
+    """)
     return
 
 
@@ -765,12 +798,6 @@ def _(mo):
     ## Visualising predictions
     """)
     return
-
-
-@app.cell
-def _():
-    best_num_layers = 4
-    return (best_num_layers,)
 
 
 @app.cell(hide_code=True)
@@ -783,7 +810,6 @@ def _(mo):
 @app.cell
 def _(
     GATSkip,
-    best_num_layers,
     btn_train_best_model,
     dataset,
     dropout,
@@ -792,8 +818,12 @@ def _(
     lr,
     mo,
     run_experiment,
+    test_loader,
+    train_loader,
 ):
     mo.stop(not btn_train_best_model.value)
+
+    best_num_layers = 5
 
     gat = GATSkip(
         num_pre_layers=1,
@@ -803,11 +833,117 @@ def _(
         hidden_channels=hidden_channels,
         out_channels=dataset.num_classes,
         dropout=dropout,
+        residuals=False,
     )
 
-    _ = run_experiment(gat, num_epochs=100, verbose=10, lr=lr)
+    _ = run_experiment(gat, train_loader, test_loader, num_epochs=50, verbose=10, lr=lr)
 
     gat
+    return (gat,)
+
+
+@app.cell(hide_code=True)
+def _(mo, test_dataset):
+    dropdown_predictions = mo.ui.dropdown(
+        range(len(test_dataset)),
+        value=0,
+        allow_select_none=False,
+        searchable=True,
+        label="Predictions for test datapoint:",
+    )
+    return (dropdown_predictions,)
+
+
+@app.cell(hide_code=True)
+def _(
+    G,
+    cm,
+    dropdown_predictions,
+    fig_base,
+    gat,
+    mcolors,
+    mo,
+    noise_scale,
+    np,
+    nx,
+    plt,
+    pos,
+    score,
+    sigmoid,
+    test_dataset,
+    torch,
+):
+    _i = dropdown_predictions.value
+    _data = test_dataset[_i]
+    _preds = torch.sigmoid(gat(_data.x, _data.edge_index)).squeeze().detach().numpy()
+
+    # ==================
+
+    _fig, ((_ax1, _ax2), (_ax3, _ax4)) = plt.subplots(2, 2, figsize=(10, 6))
+
+    _base_cmap = cm.PiYG
+    _norm = mcolors.Normalize(vmin=0, vmax=1)
+    _cmap = _base_cmap
+
+    nx.draw_networkx(G, pos=pos, node_color=_preds, cmap=_cmap, ax=_ax1, vmin=0, vmax=1)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=_norm)
+    _sm.set_array(_preds)
+    _cbar = fig_base.colorbar(_sm, ax=_ax1)
+    _cbar.set_label("$\\bar{P}(s^i_n = 1 | X^i, X_n, X_h^i)$")
+
+    _ax1.set_axis_off()
+    _ax1.set_title("Predicted probablities of visit")
+
+    # ==================
+
+    _probs = sigmoid(score[_data.user_id], noise_scale)
+
+    nx.draw_networkx(G, pos=pos, node_color=_probs, cmap=_cmap, ax=_ax2, vmin=0, vmax=1)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=_norm)
+    _sm.set_array(_probs)
+    _cbar = fig_base.colorbar(_sm, ax=_ax2)
+    _cbar.set_label("$P(s^i_n = 1 | X^i, X_n, X_h^i)$")
+
+    _ax2.set_axis_off()
+    _ax2.set_title("Actual probablities of visit")
+
+    # ==================
+
+    nx.draw_networkx(G, pos=pos, node_color=_data.y, cmap=_cmap, ax=_ax3, vmin=0, vmax=1)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=_norm)
+    _sm.set_array(_data.y)
+    _cbar = fig_base.colorbar(_sm, ax=_ax3)
+    _cbar.set_label("$s^i_n = 1$")
+
+    _ax3.set_axis_off()
+    _ax3.set_title("Actual visited nodes")
+
+    # ==================
+
+    _residuals = _probs - _preds
+
+    _vmax = np.abs(_residuals).max()
+    _norm = mcolors.Normalize(vmin=-_vmax, vmax=_vmax)
+
+    nx.draw_networkx(G, pos=pos, node_color=_residuals, cmap=cm.RdBu, ax=_ax4, vmin=-_vmax, vmax=_vmax)
+
+    _sm = cm.ScalarMappable(cmap=cm.RdBu, norm=_norm)
+    _sm.set_array(_residuals)
+    _cbar = fig_base.colorbar(_sm, ax=_ax4)
+    _cbar.set_label("$P(s^i_n = 1) - \\bar{P}(s^i_n = 1)$")
+
+    _ax4.set_axis_off()
+    _ax4.set_title("Residuals")
+
+    mo.vstack([dropdown_predictions, _fig])
+    return
+
+
+@app.cell
+def _():
     return
 
 

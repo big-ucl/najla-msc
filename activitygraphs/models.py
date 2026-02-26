@@ -140,6 +140,7 @@ class GCNSkip(torch.nn.Module):
         hidden_channels: int,
         out_channels: int,
         dropout: float = 0.2,
+        residuals: bool = False,
         conv: pyg.nn.conv.MessagePassing | None = None,
     ):
         super().__init__()
@@ -147,7 +148,7 @@ class GCNSkip(torch.nn.Module):
         self.dropout = dropout
         self.pre_lin = NodeMLP(num_pre_layers, in_channels, hidden_channels, hidden_channels, dropout)
         self.convs = GCN(
-            num_gcn_layers, hidden_channels, hidden_channels, hidden_channels, dropout, residuals=True, conv=conv
+            num_gcn_layers, hidden_channels, hidden_channels, hidden_channels, dropout, residuals=residuals, conv=conv
         )
         self.post_lin = NodeMLP(num_post_layers, hidden_channels + in_channels, hidden_channels, out_channels, dropout)
 
@@ -173,6 +174,7 @@ class GATSkip(GCNSkip):
         hidden_channels: int,
         out_channels: int,
         dropout: float = 0.2,
+        residuals: bool = False,
     ):
         super().__init__(
             num_pre_layers,
@@ -182,5 +184,6 @@ class GATSkip(GCNSkip):
             hidden_channels,
             out_channels,
             dropout,
+            residuals,
             conv=GATConv,
         )
