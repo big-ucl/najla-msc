@@ -18,12 +18,14 @@ def extract_features(batch: pyg.data.Data, full_info: bool):
     if not full_info:
         return batch.x
 
+    distances = batch.distances
+
     if batch.batch is not None:
         home_feature = batch.home_feature[batch.batch].unsqueeze(1)
     else:
         home_feature = torch.full((batch.x.shape[0], 1), batch.home_feature.item())
 
-    return torch.cat([batch.x, home_feature], dim=1)
+    return torch.cat([batch.x, home_feature, distances], dim=1)
 
 
 def train(

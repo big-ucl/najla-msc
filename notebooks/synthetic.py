@@ -3,6 +3,13 @@ import marimo
 __generated_with = "0.20.2"
 app = marimo.App(width="full")
 
+with app.setup:
+    import matplotlib.pyplot as plt
+    import altair as alt
+
+    plt.style.use("default")
+    alt.theme.enable("default")
+
 
 @app.cell
 def _():
@@ -10,10 +17,8 @@ def _():
     import polars as pl
     import numpy as np
     import networkx as nx
-    import matplotlib.pyplot as plt
     import matplotlib.cm as cm
     import matplotlib.colors as mcolors
-    import altair as alt
 
     import torch
     import torch_geometric as pyg
@@ -29,7 +34,7 @@ def _():
 
 
     SEED = 512
-    return F, SEED, alt, cm, mcolors, mo, np, nx, pl, plt, sigmoid, torch
+    return F, SEED, cm, mcolors, mo, np, nx, pl, sigmoid, torch
 
 
 @app.cell(hide_code=True)
@@ -43,14 +48,17 @@ def _(mo):
     slider_asc = mo.ui.slider(start=0, stop=1, step=0.05, value=0.15, show_value=True, label="$\\alpha=$", debounce=True)
     slider_bn = mo.ui.slider(start=0, stop=5, step=0.05, value=2, show_value=True, label="$\\beta_1=$", debounce=True)
     slider_bh = mo.ui.slider(start=0, stop=5, step=0.05, value=0.8, show_value=True, label="$\\beta_2=$", debounce=True)
-    return slider_I, slider_N, slider_asc, slider_bh, slider_bn
+    slider_dist = mo.ui.slider(start=0, stop=5, step=0.05, value=0.5, show_value=True, label="$\\beta_d=$", debounce=True)
+    return slider_I, slider_N, slider_asc, slider_bh, slider_bn, slider_dist
 
 
 @app.cell
-def _(asc, beta_home, beta_node, mo, noise_scale):
-    md_utility = mo.md("Utility: $\\eta_n^i = \\beta_1 X^i (X_n - \\bar{X}) - \\beta_2 | X_n - X^i_h | - \\alpha$")
+def _(asc, beta_dist, beta_home, beta_node, mo, noise_scale):
+    md_utility = mo.md(
+        "Utility: $\\eta_n^i = \\beta_1 X^i (X_n - \\bar{X}) - \\beta_2 | X_n - X^i_h | - \\beta_d X^i \\text{dist}(n, \\text{home}_i) - \\alpha$"
+    )
     md_utility_num = mo.md(
-        f"\t   : $\\eta_n^i = {beta_node:.2f} X^i (X_n - \\bar{{X}}) - {beta_home:.2f} | X_n - X^i_h | - {asc:.2f}$"
+        f"\t   : $\\eta_n^i = {beta_node:.2f} X^i (X_n - \\bar{{X}}) - {beta_home:.2f} | X_n - X^i_h | - {beta_dist:.2f}\\, X^i \\text{{dist}}(n, \\text{{home}}_i) - {asc:.2f}$"
     )
     md_noise = mo.md(f"Noise: $\\varepsilon^i_n \\sim \\text{{Logistic}}(0, {noise_scale})$")
     return md_noise, md_utility, md_utility_num
@@ -65,7 +73,7 @@ def _(mo):
 
 
 @app.cell
-def _(slider_I, slider_N, slider_asc, slider_bh, slider_bn):
+def _(slider_I, slider_N, slider_asc, slider_bh, slider_bn, slider_dist):
     N_sqrt = int(slider_N.value**0.5)
     noise_scale = 0.1
     N = N_sqrt**2
@@ -73,11 +81,28 @@ def _(slider_I, slider_N, slider_asc, slider_bh, slider_bn):
     asc = slider_asc.value
     beta_node = slider_bn.value
     beta_home = slider_bh.value
-    return I, N, N_sqrt, asc, beta_home, beta_node, noise_scale
+    beta_dist = slider_dist.value
+    return I, N, N_sqrt, asc, beta_dist, beta_home, beta_node, noise_scale
 
 
 @app.cell
-def _(I, N, SEED, asc, beta_home, beta_node, mo, np):
+def _(N_sqrt, nx):
+    G = nx.navigable_small_world_graph(N_sqrt, seed=11)
+    G = nx.convert_node_labels_to_integers(G)
+    return (G,)
+
+
+@app.cell
+def _(G, np, nx):
+    distances = np.array([
+        [x[1] for x in sorted(row[1].items(), key=lambda x: x[0])] for row in nx.all_pairs_shortest_path_length(G)
+    ])
+    distances = distances / distances.max()
+    return (distances,)
+
+
+@app.cell
+def _(I, N, SEED, asc, beta_dist, beta_home, beta_node, distances, mo, np):
     _rng = np.random.default_rng(seed=SEED)
 
     min_node_feature, max_node_feature = (-1, 1)
@@ -94,9 +119,12 @@ def _(I, N, SEED, asc, beta_home, beta_node, mo, np):
     _exp_indi_feature = min_indi_feature + (max_indi_feature - min_indi_feature) / 2
     _exp_home_feature = _exp_node_feature
 
+    _exp_dist_feature = distances.mean()
+
     expected_utility = (
         beta_node * _exp_indi_feature * (_exp_node_feature - _exp_node_feature)
         - beta_home * np.abs(_exp_node_feature - _exp_node_feature)
+        - beta_dist * _exp_dist_feature
         - asc
     )
     mo.md(f"Expected utility: $\\mathbb{{E}}[\\eta_n^i] = {expected_utility:.4f}$")
@@ -110,14 +138,24 @@ def _(I, N, SEED, asc, beta_home, beta_node, mo, np):
 
 
 @app.cell
+def _(G, node_feature, nx):
+    nx.set_node_attributes(G, {i: f.item() for i, f in enumerate(node_feature)}, "node_feature")
+    pos = nx.kamada_kawai_layout(G)
+    return (pos,)
+
+
+@app.cell
 def _(
     I,
     N,
     SEED,
     asc,
+    beta_dist,
     beta_home,
     beta_node,
+    distances,
     home_feature,
+    home_locations,
     indi_feature,
     mean_node_feature,
     node_feature,
@@ -129,6 +167,7 @@ def _(
     utility = (
         beta_node * indi_feature * (node_feature.T - mean_node_feature)
         - beta_home * np.abs(node_feature.T - home_feature)
+        - beta_dist * indi_feature * distances[home_locations, :]
         - asc
     )
     noise = _rng.logistic(0, noise_scale, size=(I, N))
@@ -137,24 +176,15 @@ def _(
     return score, utility, visited_nodes
 
 
-@app.cell
-def _(N_sqrt, node_feature, nx):
-    G = nx.navigable_small_world_graph(N_sqrt, seed=11)
-    G = nx.convert_node_labels_to_integers(G)
-    nx.set_node_attributes(G, {i: f.item() for i, f in enumerate(node_feature)}, "node_feature")
-    pos = nx.kamada_kawai_layout(G)
-    return G, pos
-
-
 @app.cell(hide_code=True)
-def _(G, cm, mcolors, node_feature, np, nx, plt, pos):
+def _(G, cm, mcolors, node_feature, np, nx, pos):
     fig_base, _ax = plt.subplots()
 
     _base_cmap = cm.BrBG
 
     _vmax = np.max(np.abs(node_feature))
     _norm = mcolors.Normalize(vmin=-_vmax, vmax=_vmax)
-    _cmap = mcolors.LinearSegmentedColormap.from_list("trunc_Reds", _base_cmap(np.linspace(0, 0.7, 256)))
+    _cmap = _base_cmap
 
     nx.draw_networkx(G, pos=pos, node_color=node_feature, cmap=_cmap, ax=_ax, vmin=-_vmax, vmax=_vmax)
 
@@ -178,7 +208,6 @@ def _(
     mcolors,
     np,
     nx,
-    plt,
     pos,
     score,
     slider_indiv,
@@ -245,7 +274,6 @@ def _(
     mcolors,
     np,
     nx,
-    plt,
     pos,
     slider_indiv,
     utility,
@@ -327,8 +355,9 @@ def _(
     slider_asc,
     slider_bh,
     slider_bn,
+    slider_dist,
 ):
-    mo.vstack([slider_I, slider_N, slider_asc, slider_bn, slider_bh, md_utility, md_utility_num, md_noise])
+    mo.vstack([slider_I, slider_N, slider_asc, slider_bn, slider_bh, slider_dist, md_utility, md_utility_num, md_noise])
     return
 
 
@@ -370,7 +399,7 @@ def _(mo, noise_scale, sigmoid, utility):
 
 
 @app.cell
-def _(noise_scale, plt, sigmoid, utility, visited_nodes):
+def _(noise_scale, sigmoid, utility, visited_nodes):
     _x = sigmoid(utility, s=noise_scale).sum(axis=1)
     _y = visited_nodes.sum(axis=1)
 
@@ -392,7 +421,7 @@ def _(mo):
 
 
 @app.cell
-def _(G, home_locations, indi_feature, np, torch, visited_nodes):
+def _(G, distances, home_locations, indi_feature, np, torch, visited_nodes):
     from torch_geometric.data import Data, InMemoryDataset
     from torch_geometric.utils import from_networkx
 
@@ -401,7 +430,12 @@ def _(G, home_locations, indi_feature, np, torch, visited_nodes):
 
     class SyntheticDataset(InMemoryDataset):
         def __init__(
-            self, base_data: Data, indi_feature: np.ndarray, home_locations: np.ndarray, visited_nodes: np.ndarray
+            self,
+            base_data: Data,
+            indi_feature: np.ndarray,
+            home_locations: np.ndarray,
+            visited_nodes: np.ndarray,
+            distances: np.ndarray,
         ):
             super().__init__()
 
@@ -409,6 +443,7 @@ def _(G, home_locations, indi_feature, np, torch, visited_nodes):
             self._indi_feature = indi_feature.copy()
             self._home_locations = home_locations.copy()
             self._visited_nodes = torch.tensor(visited_nodes, dtype=int)
+            self._distances = torch.tensor(distances)
 
         @property
         def num_classes(self):
@@ -428,16 +463,23 @@ def _(G, home_locations, indi_feature, np, torch, visited_nodes):
             indi_node_feature = torch.full_like(base_x, indi_feature)
 
             home_feature = base_x[self._home_locations[idx]]
+            distances = self._distances[self._home_locations[idx]].unsqueeze(1).float()
 
             x = torch.cat([base_x, is_home, indi_node_feature], dim=1)
             y = self._visited_nodes[idx].unsqueeze(1)
 
             return Data(
-                x=x, y=y, edge_index=base_edge_index, indi_feature=indi_feature, home_feature=home_feature, user_id=idx
+                x=x,
+                y=y,
+                edge_index=base_edge_index,
+                indi_feature=indi_feature,
+                home_feature=home_feature,
+                user_id=idx,
+                distances=distances,
             )
 
 
-    dataset = SyntheticDataset(base_data, indi_feature, home_locations, visited_nodes)
+    dataset = SyntheticDataset(base_data, indi_feature, home_locations, visited_nodes, distances)
     dataset
     return (dataset,)
 
@@ -562,7 +604,7 @@ def _(dataset):
         ),
         "MLP-Full": NodeMLP(
             mlp_layers,
-            in_channels=dataset.num_features + 1,
+            in_channels=dataset.num_features + 2,
             hidden_channels=hidden_channels,
             out_channels=dataset.num_classes,
             dropout=dropout,
@@ -619,7 +661,13 @@ def _(
         )
 
     results = pl.concat(pl.DataFrame(result) for result in _results.values())
-    return (run_experiment,)
+    return results, run_experiment
+
+
+@app.cell
+def _(results):
+    results.write_parquet("reports/data/synthetic-results.parquet")
+    return
 
 
 @app.cell(hide_code=True)
@@ -634,7 +682,7 @@ def _(pl):
 
 
 @app.cell(hide_code=True)
-def _(alt, results_aug):
+def _(results_aug):
     def plot_results(results, title, column, color="name:N", detail=None, scheme="inferno"):
         kwargs = {} if detail is None else {"detail": detail}
         scheme_kwargs = {} if scheme is None else {"scheme": scheme}
@@ -645,7 +693,7 @@ def _(alt, results_aug):
             .mark_line(point=True)
             .encode(
                 alt.X("epoch:Q").scale(domainMin=1),
-                alt.Y(f"{column}:Q").scale(domainMin=0.10),
+                alt.Y(f"{column}:Q").scale(domainMin=0.09),
                 color=alt.Color(color).scale(**scheme_kwargs),
                 tooltip=["name", column],
                 **kwargs,
@@ -740,7 +788,7 @@ def _(F, noise_scale, pl, results_aug, sigmoid, torch, utility, visited_nodes):
 
 
 @app.cell(hide_code=True)
-def _(alt, model_comparison, pl):
+def _(model_comparison, pl):
     _bar = (
         alt
         .Chart(model_comparison.filter(~pl.col("name").str.contains("bound")))
@@ -866,7 +914,6 @@ def _(
     noise_scale,
     np,
     nx,
-    plt,
     pos,
     score,
     sigmoid,
@@ -939,11 +986,6 @@ def _(
     _ax4.set_title("Residuals")
 
     mo.vstack([dropdown_predictions, _fig])
-    return
-
-
-@app.cell
-def _():
     return
 
 
