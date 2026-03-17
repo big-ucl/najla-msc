@@ -661,12 +661,12 @@ def _(
         )
 
     results = pl.concat(pl.DataFrame(result) for result in _results.values())
-    return results, run_experiment
+    results.write_parquet("reports/data/synthetic-results.parquet")
+    return (run_experiment,)
 
 
 @app.cell
-def _(results):
-    results.write_parquet("reports/data/synthetic-results.parquet")
+def _():
     return
 
 
