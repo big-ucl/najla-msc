@@ -21,6 +21,7 @@ dependencies = [
     "nbconvert>=7.17.0",
     "nbformat>=5.10.4",
     "networkx>=3.4.2",
+    "nvitop>=1.6.2",
     "omegaconf>=2.3.0",
     "pandas-stubs~=3.0.0",
     "playwright>=1.58.0",
@@ -41,6 +42,12 @@ dependencies = [
     "torch-geometric>=2.7.0",
     "tqdm>=4.67.1",
 ]
+
+[project.scripts]
+activity-graphs = "activitygraphs.main:main"
+
+[tool.setuptools.packages.find]
+include = ["activitygraphs*"]
 
 [tool.uv]
 no-build-isolation-package = [

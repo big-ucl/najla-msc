@@ -14,7 +14,7 @@ with app.setup:
     from activitygraphs.config import load_config
     from pathlib import Path
 
-    project_root = Path(mo.notebook_dir().parent)
+    project_root = Path(mo.notebook_dir().parent.parent)
     cfg = load_config(project_root)
 
 
@@ -370,7 +370,7 @@ def _(
 
         return nodes, edges
 
-    mo.stop(True)
+    mo.stop(False)
 
     _network_nodes, _network_edges = build_network_graph(locations, places, land_use, statistics, utm_crs)
 
@@ -398,17 +398,25 @@ def _(
     from tqdm import tqdm
     import pickle
 
+    import torch_geometric.transforms as T
+
     from joblib import Parallel, delayed
 
-    _excluded_feature_cols = ["loc_name", "type", "lon", "lat", "is_work", "is_edu", "is_visited", "purpose"]
+    _excluded_feature_cols = ["loc_name", "type", "lon", "lat", "is_work", "is_edu", "is_visited", "purpose", "geometry", "original_geometry"]
 
     def build_graph(user_id):
         indiv_nodes = add_user_cols(network_nodes, user_id)
         node_feature_cols = [col for col in indiv_nodes.columns if col not in _excluded_feature_cols]
 
-        indiv_graph = c2g.gdf_to_pyg(indiv_nodes, network_edges, node_feature_cols=node_feature_cols, node_label_cols=["is_visited"], edge_feature_cols=["weight"], keep_geom=False)
+        indiv_graph = c2g.gdf_to_pyg(indiv_nodes, network_edges, node_feature_cols=node_feature_cols, node_label_cols=["is_visited"], edge_feature_cols=["weight"], keep_geom=False, device="cpu")
 
-        return indiv_graph
+        transforms = T.Compose([
+                T.AddRandomWalkPE(walk_length=20, attr_name=None),
+                T.AddLaplacianEigenvectorPE(k=8, attr_name=None)
+        ])
+
+
+        return transforms(indiv_graph)
 
     mo.stop(False)
 
@@ -436,8 +444,15 @@ def _(user_ids):
 
 
 @app.cell
-def _(network_nodes):
-    select_node_col = mo.ui.dropdown(list(network_nodes.columns), searchable=True, label="Column:", value=None)
+def _(add_user_cols, network_nodes, select_user_id):
+    _user_id = select_user_id.value
+    user_nodes = add_user_cols(network_nodes, _user_id)
+    return (user_nodes,)
+
+
+@app.cell
+def _(user_nodes):
+    select_node_col = mo.ui.dropdown(list(user_nodes.columns), searchable=True, label="Column:", value="purpose")
     return (select_node_col,)
 
 
@@ -449,22 +464,27 @@ def _():
 
 @app.cell
 def _(
-    add_user_cols,
     network_edges,
-    network_nodes,
     select_node_col,
     select_user_id,
     toggle_polygons,
+    user_nodes,
 ):
-    _user_id = select_user_id.value
-
-    _nodes = add_user_cols(network_nodes, _user_id)
-
-    _nodes = _nodes.set_geometry("original_geometry") if toggle_polygons.value else _nodes
+    _nodes = user_nodes.set_geometry("original_geometry") if toggle_polygons.value else user_nodes
     _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
     _m = _nodes.explore(m=_m, column=select_node_col.value, marker_kwds={"radius": 5})
 
     mo.vstack([mo.hstack([select_user_id, select_node_col, toggle_polygons], justify="start"), _m])
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
     return
 
 

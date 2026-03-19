@@ -1,9 +1,10 @@
+import functools
 import itertools
 
 import torch
 import torch.nn.functional as F
 import torch_geometric as pyg
-from torch_geometric.nn.conv import GATConv, GCNConv
+from torch_geometric.nn.conv import GCNConv, GPSConv, GATConv
 
 
 def build_module_list(
@@ -51,11 +52,15 @@ class GCN(torch.nn.Module):
         self.dropout = dropout
         self.convs = build_module_list(conv, num_layers, in_channels, out_channels, hidden_channels)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None) -> torch.Tensor:
         for conv in self.convs[:-1]:
             x_res = x
             x = F.dropout(x, p=self.dropout, training=self.training)
-            x = conv(x, edge_index)
+
+            if edge_attr is not None:
+                x = conv(x, edge_index, edge_attr)
+            else:
+                x = conv(x, edge_index)
 
             if self.residuals:
                 x = x + x_res
@@ -77,7 +82,9 @@ class NodeMLP(torch.nn.Module):
         self.dropout = dropout
         self.lins = build_module_list(torch.nn.Linear, num_layers, in_channels, out_channels, hidden_channels)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None, batch=None
+    ) -> torch.Tensor:
         for lin in self.lins[:-1]:
             x = F.dropout(x, p=self.dropout, training=self.training)
             x = lin(x).relu()
@@ -152,11 +159,13 @@ class GCNSkip(torch.nn.Module):
         )
         self.post_lin = NodeMLP(num_post_layers, hidden_channels + in_channels, hidden_channels, out_channels, dropout)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None, batch=None
+    ) -> torch.Tensor:
         x_skip = x
 
         x = self.pre_lin(x, edge_index)
-        x = self.convs(x, edge_index)
+        x = self.convs(x, edge_index, edge_attr)
 
         x = torch.cat([x, x_skip], dim=1)
         x = self.post_lin(x, edge_index)
@@ -173,6 +182,7 @@ class GATSkip(GCNSkip):
         in_channels: int,
         hidden_channels: int,
         out_channels: int,
+        edge_dim: int,
         dropout: float = 0.2,
         residuals: bool = False,
     ):
@@ -185,5 +195,57 @@ class GATSkip(GCNSkip):
             out_channels,
             dropout,
             residuals,
-            conv=GATConv,
+            conv=functools.partial(GATConv, edge_dim=edge_dim),
         )
+
+
+class GPSLayer(torch.nn.Module):
+    def __init__(self, hidden_channels, edge_dim, num_heads=4, dropout=0.2):
+        super().__init__()
+        self.conv = GPSConv(
+            channels=hidden_channels,
+            conv=GATConv(hidden_channels, hidden_channels, heads=1, edge_dim=edge_dim, add_self_loops=False),
+            heads=num_heads,
+            dropout=dropout,
+            attn_type="performer",
+        )
+
+    def forward(self, x, edge_index, edge_attr, batch):
+        return self.conv(x, edge_index, batch, edge_attr=edge_attr)
+
+
+class GraphTransformer(torch.nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        hidden_channels,
+        out_channels,
+        edge_dim,
+        num_layers=4,
+        num_heads=8,
+        dropout=0.2,
+    ):
+        super().__init__()
+
+        self.input_proj = torch.nn.Linear(in_channels, hidden_channels)
+        self.edge_proj = torch.nn.Linear(edge_dim, hidden_channels)
+
+        self.layers = torch.nn.ModuleList([
+            GPSLayer(hidden_channels, hidden_channels, num_heads, dropout) for _ in range(num_layers)
+        ])
+
+        self.output = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(dropout),
+            torch.nn.Linear(hidden_channels, out_channels),
+        )
+
+    def forward(self, x, edge_index, edge_attr, batch):
+        x = self.input_proj(x)
+        edge_attr = self.edge_proj(edge_attr)
+
+        for layer in self.layers:
+            x = layer(x, edge_index, edge_attr, batch)
+
+        return self.output(x)

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.20.2"
+__generated_with = "0.21.0"
 app = marimo.App(width="full")
 
 with app.setup:
@@ -663,11 +663,6 @@ def _(
     results = pl.concat(pl.DataFrame(result) for result in _results.values())
     results.write_parquet("reports/data/synthetic-results.parquet")
     return (run_experiment,)
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell(hide_code=True)
