@@ -291,6 +291,7 @@ def _(gpd, locations, statistics, utm_crs):
             stats_by_sector = stats_by_sector.drop(columns=["area"])
 
         stats_by_sector = original_locations.merge(stats_by_sector, on="loc_id", how="right")
+        stats_by_sector["area"] = stats_by_sector.to_crs(utm_crs).geometry.area
 
         return stats_by_sector
 
@@ -343,13 +344,13 @@ def _(
 ):
     def build_network_graph(locations: gpd.GeoDataFrame, places: gpd.GeoDataFrame, land_use: gpd.GeoDataFrame, statistics: gpd.GeoDataFrame, utm_crs):
         locations = locations.to_crs(utm_crs)
-    
+
         network_locations = add_pop_empl_stats(locations, statistics, utm_crs)
         network_locations = add_poi_counts(network_locations, places, utm_crs)
         network_locations = add_land_uses(network_locations, land_use, utm_crs)
 
         network_locations = network_locations.set_index("loc_id")
-    
+
         nodes, edges = c2g.contiguity_graph(network_locations, set_point_nodes=True)
 
         # Connect disconnected subsectors to main graph
@@ -411,7 +412,7 @@ def _(
 
     mo.stop(False)
 
-    _graphs = Parallel()(delayed(build_graph)(user_id) for user_id in user_ids)
+    _graphs = Parallel(n_jobs=-1)(delayed(build_graph)(user_id) for user_id in user_ids)
 
 
     with open(dataset_path, "wb") as _f: 
@@ -451,26 +452,19 @@ def _(
     add_user_cols,
     network_edges,
     network_nodes,
-    nodes,
     select_node_col,
     select_user_id,
     toggle_polygons,
-    user_id,
 ):
     _user_id = select_user_id.value
 
-    _nodes = add_user_cols(network_nodes, user_id)
+    _nodes = add_user_cols(network_nodes, _user_id)
 
-    _nodes = _nodes.set_geometry("original_geometry") if toggle_polygons.value else nodes
+    _nodes = _nodes.set_geometry("original_geometry") if toggle_polygons.value else _nodes
     _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
-    _m = network_nodes.explore(m=_m, column=select_node_col.value, marker_kwds={"radius": 5})
+    _m = _nodes.explore(m=_m, column=select_node_col.value, marker_kwds={"radius": 5})
 
     mo.vstack([mo.hstack([select_user_id, select_node_col, toggle_polygons], justify="start"), _m])
-    return
-
-
-@app.cell
-def _():
     return
 
 
