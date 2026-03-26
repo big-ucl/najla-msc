@@ -418,7 +418,7 @@ def _(
 
         return transforms(indiv_graph)
 
-    mo.stop(False)
+    mo.stop(True)
 
     _graphs = Parallel(n_jobs=-1)(delayed(build_graph)(user_id) for user_id in user_ids)
 

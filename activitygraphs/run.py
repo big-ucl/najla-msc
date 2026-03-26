@@ -115,9 +115,14 @@ def geneva_experiment(cfg: Config):
     gps_layers = 4
     mlp_layers = 3
 
+    mlp = build_mlp(dataset, mlp_layers, hidden_channels, dropout)
     gat = build_gat(dataset, gat_layers, hidden_channels, dropout)
     gps = build_gps(dataset, gps_layers, hidden_channels, dropout)
-    mlp = build_mlp(dataset, mlp_layers, hidden_channels, dropout)
+
+    mlp_l1 = build_mlp(dataset, mlp_layers, hidden_channels, dropout)
+    gat_l1 = build_gat(dataset, gat_layers, hidden_channels, dropout)
+    gps_l1 = build_gps(dataset, gps_layers, hidden_channels, dropout)
+
 
     epochs = 50
     verbose = 5
@@ -126,8 +131,18 @@ def geneva_experiment(cfg: Config):
     gname = f"GATSkip-{gat_layers}-res"
     tname = f"GTransformer-{gps_layers}-res"
 
-    results_mlp = run_experiment(mlp, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name="MLP", lr=lr)
-    results_gat = run_experiment(gat, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name=gname, lr=lr)
-    results_gps = run_experiment(gps, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name=tname, lr=lr)
+    results_mlp = run_experiment(mlp, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name="MLP", lr=lr, reg="l1", save=True)
+    results_gat = run_experiment(gat, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name=gname, lr=lr, reg="l1", save=True)
+    results_gps = run_experiment(gps, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name=tname, lr=lr, reg="l1", save=True)
 
-    save_results(cfg.paths.reports, "geneva", results_gat, results_gps, results_mlp)
+    results_mlp_l1 = run_experiment(
+        mlp_l1, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name="MLP-l1", lr=lr, reg="l1", save=True
+    )
+    results_gat_l1 = run_experiment(
+        gat_l1, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name=gname + "-l1", lr=lr, reg="l1", save=True
+    )
+    results_gps_l1 = run_experiment(
+        gps_l1, train_loader, test_loader, num_epochs=epochs, verbose=verbose, name=tname + "-l1", lr=lr, reg="l1", save=True
+    )
+
+    save_results(cfg.paths.reports, "geneva", results_gat, results_gps, results_mlp, results_mlp_l1, results_gat_l1, results_gps_l1)

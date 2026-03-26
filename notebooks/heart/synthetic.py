@@ -32,6 +32,9 @@ def _():
     def torch_sigmoid(z, s=1.0):
         return 1 / (1 + np.exp(-z / s))
 
+    import os
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
 
     SEED = 512
     return F, SEED, cm, mcolors, mo, np, nx, pl, sigmoid, torch
@@ -55,7 +58,7 @@ def _(mo):
 @app.cell
 def _(asc, beta_dist, beta_home, beta_node, mo, noise_scale):
     md_utility = mo.md(
-        "Utility: $\\eta_n^i = \\beta_1 X^i (X_n - \\bar{X}) - \\beta_2 | X_n - X^i_h | - \\beta_d X^i \\text{dist}(n, \\text{home}_i) - \\alpha$"
+        "Utility: $\\eta_n^i = \\beta_1 X^i (X_n - \\bar{X_n}) - \\beta_2 | X_n - X^i_h | - \\beta_d X^i \\text{dist}(n, \\text{home}_i) - \\alpha$"
     )
     md_utility_num = mo.md(
         f"\t   : $\\eta_n^i = {beta_node:.2f} X^i (X_n - \\bar{{X}}) - {beta_home:.2f} | X_n - X^i_h | - {beta_dist:.2f}\\, X^i \\text{{dist}}(n, \\text{{home}}_i) - {asc:.2f}$"
@@ -173,106 +176,22 @@ def _(
     noise = _rng.logistic(0, noise_scale, size=(I, N))
     score = utility + noise
     visited_nodes = np.where(score >= 0, 1, 0)
-    return score, utility, visited_nodes
+    return noise, score, utility, visited_nodes
 
 
-@app.cell(hide_code=True)
-def _(G, cm, mcolors, node_feature, np, nx, pos):
-    fig_base, _ax = plt.subplots()
-
-    _base_cmap = cm.BrBG
-
-    _vmax = np.max(np.abs(node_feature))
-    _norm = mcolors.Normalize(vmin=-_vmax, vmax=_vmax)
-    _cmap = _base_cmap
-
-    nx.draw_networkx(G, pos=pos, node_color=node_feature, cmap=_cmap, ax=_ax, vmin=-_vmax, vmax=_vmax)
-
-    _sm = cm.ScalarMappable(cmap=_cmap, norm=_norm)
-    _sm.set_array(node_feature)
-    _cbar = fig_base.colorbar(_sm, ax=_ax)
-    _cbar.set_label("$X_n$")
-
-    _ax.set_axis_off()
-    _ax.set_title("Base network")
-
-    None
-    return (fig_base,)
+@app.cell
+def _(cm):
+    cmap = cm.BrBG
+    return (cmap,)
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(
     G,
     cm,
+    cmap,
     home_locations,
     mcolors,
-    np,
-    nx,
-    pos,
-    score,
-    slider_indiv,
-    visited_nodes,
-):
-    fig_indiv, _ax = plt.subplots()
-
-    _i = slider_indiv.value
-    _home_node = home_locations[_i].item()
-
-    _score_nodes = np.where(score[_i] >= 0, 1, 0)
-
-    _unvisited_nodes = [i for i in np.nonzero(1 - _score_nodes)[0].tolist() if i != _home_node]
-    _visited_nodes = [i for i in np.nonzero(_score_nodes)[0].tolist() if i != _home_node]
-
-    _cmap = cm.RdBu
-
-
-    nx.draw_networkx_nodes(
-        G, nodelist=_unvisited_nodes, pos=pos, node_color=score[_i, _unvisited_nodes], cmap=_cmap, ax=_ax, vmin=-1, vmax=1
-    )
-    nx.draw_networkx_nodes(
-        G,
-        nodelist=[_home_node],
-        pos=pos,
-        node_color="ForestGreen",
-        edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
-        linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
-        ax=_ax,
-    )
-    nx.draw_networkx_nodes(
-        G,
-        nodelist=_visited_nodes,
-        pos=pos,
-        node_color=score[_i, _visited_nodes],
-        cmap=_cmap,
-        ax=_ax,
-        vmin=-1,
-        vmax=1,
-        edgecolors="green",
-        linewidths=1.5,
-    )
-
-    nx.draw_networkx_labels(G, pos, ax=_ax)
-    nx.draw_networkx_edges(G, pos=pos, ax=_ax)
-
-    _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
-    _sm.set_array(score[_i])
-    _cbar = fig_indiv.colorbar(_sm, ax=_ax)
-    _cbar.set_label("$Z^i_n$")
-
-    _ax.set_axis_off()
-    _ax.set_title(f"Network for individual $i = {_i}$")
-
-    None
-    return (fig_indiv,)
-
-
-@app.cell(hide_code=True)
-def _(
-    G,
-    cm,
-    home_locations,
-    mcolors,
-    np,
     nx,
     pos,
     slider_indiv,
@@ -280,22 +199,21 @@ def _(
     visited_nodes,
 ):
     fig_indiv_util, _ax = plt.subplots()
+    fig_indiv_util.set_size_inches(5, 6)
+
 
     _i = slider_indiv.value
     _home_node = home_locations[_i].item()
 
-    _utility_nodes = np.where(utility[_i] >= 0, 1, 0)
+    _all_other = [i for i in G.nodes if i != _home_node]
 
-    _unvisited_nodes = [i for i in np.nonzero(1 - _utility_nodes)[0].tolist() if i != _home_node]
-    _visited_nodes = [i for i in np.nonzero(_utility_nodes)[0].tolist() if i != _home_node]
-
-    _cmap = cm.RdBu
+    _cmap = cmap
 
     nx.draw_networkx_nodes(
         G,
-        nodelist=_unvisited_nodes,
+        nodelist=_all_other,
         pos=pos,
-        node_color=utility[_i, _unvisited_nodes],
+        node_color=utility[_i, _all_other],
         cmap=_cmap,
         ax=_ax,
         vmin=-1,
@@ -306,11 +224,13 @@ def _(
         nodelist=[_home_node],
         pos=pos,
         node_color="ForestGreen",
+        node_shape="s",
         edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
         linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
-    nx.draw_networkx_nodes(
+
+    """nx.draw_networkx_nodes(
         G,
         nodelist=_visited_nodes,
         pos=pos,
@@ -321,21 +241,167 @@ def _(
         vmax=1,
         edgecolors="green",
         linewidths=1.5,
-    )
+    )"""
 
-    nx.draw_networkx_labels(G, pos, ax=_ax)
+    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="white")
     nx.draw_networkx_edges(G, pos=pos, ax=_ax)
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
     _sm.set_array(utility[_i])
-    _cbar = fig_indiv_util.colorbar(_sm, ax=_ax)
-    _cbar.set_label("$\\eta_n^i$")
+    _cbar = fig_indiv_util.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar.set_label("Individual-specific node utility $\\eta_{{i, n}}$")
 
     _ax.set_axis_off()
-    _ax.set_title(f"Network for individual $i = {_i}$ without noise $\\varepsilon^i_n$")
+    _ax.set_title(f"Network graph with node utilities for individual $i = {_i}$")
 
     None
     return (fig_indiv_util,)
+
+
+@app.cell
+def _(
+    G,
+    cm,
+    cmap,
+    fig_indiv_util,
+    home_locations,
+    mcolors,
+    noise,
+    nx,
+    pos,
+    slider_indiv,
+    utility,
+    visited_nodes,
+):
+    fig_noise, _ax = plt.subplots()
+    fig_noise.set_size_inches(5, 6)
+
+    _i = slider_indiv.value
+    _home_node = home_locations[_i].item()
+
+    _all_other = [i for i in G.nodes if i != _home_node]
+
+    _cmap = cmap
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_all_other,
+        pos=pos,
+        node_color=noise[_i, _all_other],
+        cmap=_cmap,
+        ax=_ax,
+        vmin=-1,
+        vmax=1,
+    )
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=[_home_node],
+        pos=pos,
+        node_color="ForestGreen",
+        node_shape="s",
+        edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        ax=_ax,
+    )
+
+    """nx.draw_networkx_nodes(
+        G,
+        nodelist=_visited_nodes,
+        pos=pos,
+        node_color=utility[_i, _visited_nodes],
+        cmap=_cmap,
+        ax=_ax,
+        vmin=-1,
+        vmax=1,
+        edgecolors="green",
+        linewidths=1.5,
+    )"""
+
+    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="k")
+    nx.draw_networkx_edges(G, pos=pos, ax=_ax)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
+    _sm.set_array(utility[_i])
+    _cbar = fig_indiv_util.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar.set_label("Noise $\\varepsilon_{i, n} \\sim \\text{Gumbel}(0,0.1)$")
+
+    _ax.set_axis_off()
+    _ax.set_title(f"Additive noise for individual $i = {_i}$")
+
+    None
+    return (fig_noise,)
+
+
+@app.cell
+def _(
+    G,
+    cm,
+    cmap,
+    home_locations,
+    mcolors,
+    np,
+    nx,
+    pos,
+    score,
+    slider_indiv,
+    utility,
+):
+    fig_visit, _ax = plt.subplots()
+    fig_visit.set_size_inches(5, 6)
+
+    _i = slider_indiv.value
+    _home_node = home_locations[_i].item()
+
+    _score_nodes = np.where(score[_i] >= 0, 1, 0)
+
+    _unvisited_nodes = [i for i in np.nonzero(1 - _score_nodes)[0].tolist() if i != _home_node]
+    _visited_nodes = [i for i in np.nonzero(_score_nodes)[0].tolist() if i != _home_node]
+
+    _cmap = cmap
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_unvisited_nodes,
+        pos=pos,
+        node_color="white",
+        ax=_ax,
+        edgecolors="lightgray"
+    )
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_visited_nodes,
+        pos=pos,
+        node_color="DarkCyan",
+        ax=_ax,
+    )
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=[_home_node],
+        pos=pos,
+        node_color="ForestGreen",
+        node_shape="s",
+        ax=_ax,
+    )
+
+    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="k")
+    nx.draw_networkx_edges(G, pos=pos, ax=_ax)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
+    _sm.set_array(utility[_i])
+    _cbar = fig_visit.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+
+    _cbar.solids.set_alpha(0)
+    _cbar.outline.set_alpha(0)
+    _cbar.ax.tick_params(labelcolor='none', color='none')
+    _cbar.set_label("")
+
+    _ax.set_axis_off()
+    _ax.set_title(f"Nodes visited by individual $i = {_i}$")
+
+    None
+    return (fig_visit,)
 
 
 @app.cell(hide_code=True)
@@ -361,11 +427,27 @@ def _(
     return
 
 
+@app.cell
+def _(fig_indiv_util, fig_noise, fig_poisson, fig_pps, fig_preds, fig_visit):
+    from pathlib import Path
+
+    _path = Path("reports/figures")
+    _dpi = 200
+
+    fig_indiv_util.savefig(_path / "synth_indiv_util.png", dpi=_dpi)
+    fig_noise.savefig(_path / "synth_noise.png", dpi=_dpi)
+    fig_visit.savefig(_path / "synth_visited.png", dpi=_dpi)
+    fig_preds.savefig(_path / "synth_preds.png", dpi=_dpi)
+    fig_poisson.savefig(_path / "synth_poisson.png", dpi=_dpi)
+    fig_pps.savefig(_path / "synth_pps.png", dpi=_dpi)
+    return
+
+
 @app.cell(hide_code=True)
 def _(
-    fig_base,
-    fig_indiv,
     fig_indiv_util,
+    fig_noise,
+    fig_visit,
     home_locations,
     indi_feature,
     mo,
@@ -379,8 +461,14 @@ def _(
         slider_indiv,
         mo.md(f"Value of individual feature: $X^i={_x_i:.4f}$"),
         mo.md(f"Value of home node feature: $X^i_h={_x_h:.4f}$"),
-        mo.hstack([fig_base, fig_indiv, fig_indiv_util], justify="start"),
+        mo.hstack([fig_indiv_util, fig_noise, fig_visit], justify="start"),
     ])
+    return
+
+
+@app.cell
+def _(fig_poisson, fig_pps, fig_preds, mo):
+    mo.hstack([fig_preds, fig_poisson, fig_pps], justify="start"),
     return
 
 
@@ -503,7 +591,7 @@ def _(batch_size, dataset, test_size):
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    return test_dataset, test_loader, train_loader
+    return DataLoader, test_loader, train_loader
 
 
 @app.cell(hide_code=True)
@@ -587,6 +675,7 @@ def _(dataset):
             in_channels=dataset.num_features,
             hidden_channels=hidden_channels,
             out_channels=dataset.num_classes,
+            edge_dim=1,
             dropout=dropout,
             residuals=res,
         )
@@ -876,7 +965,8 @@ def _(
         hidden_channels=hidden_channels,
         out_channels=dataset.num_classes,
         dropout=dropout,
-        residuals=False,
+        edge_dim=1,
+        residuals=True,
     )
 
     _ = run_experiment(gat, train_loader, test_loader, num_epochs=50, verbose=10, lr=lr)
@@ -885,102 +975,260 @@ def _(
     return (gat,)
 
 
-@app.cell(hide_code=True)
-def _(mo, test_dataset):
-    dropdown_predictions = mo.ui.dropdown(
-        range(len(test_dataset)),
-        value=0,
-        allow_select_none=False,
-        searchable=True,
-        label="Predictions for test datapoint:",
-    )
-    return (dropdown_predictions,)
+@app.cell
+def _(DataLoader, dataset, gat, slider_indiv, torch):
+    _i = slider_indiv.value
+    _loader = DataLoader(dataset[_i:_i + 1])
+    batch = next(iter(_loader)).cuda()
+
+    _logits = gat(batch.x, batch.edge_index)
+    probs = torch.sigmoid(_logits).detach().cpu().numpy()
+    return batch, probs
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(
     G,
     cm,
-    dropdown_predictions,
-    fig_base,
-    gat,
+    cmap,
+    home_locations,
     mcolors,
-    mo,
-    noise_scale,
-    np,
     nx,
     pos,
-    score,
-    sigmoid,
-    test_dataset,
-    torch,
+    probs,
+    slider_indiv,
+    visited_nodes,
 ):
-    _i = dropdown_predictions.value
-    _data = test_dataset[_i]
-    _preds = torch.sigmoid(gat(_data.x, _data.edge_index)).squeeze().detach().numpy()
+    fig_preds, _ax = plt.subplots()
+    fig_preds.set_size_inches(5, 6)
 
-    # ==================
 
-    _fig, ((_ax1, _ax2), (_ax3, _ax4)) = plt.subplots(2, 2, figsize=(10, 6))
+    _i = slider_indiv.value
+    _home_node = home_locations[_i].item()
 
-    _base_cmap = cm.PiYG
-    _norm = mcolors.Normalize(vmin=0, vmax=1)
-    _cmap = _base_cmap
+    _all_other = [i for i in G.nodes if i != _home_node]
 
-    nx.draw_networkx(G, pos=pos, node_color=_preds, cmap=_cmap, ax=_ax1, vmin=0, vmax=1)
+    _cmap = cmap
 
-    _sm = cm.ScalarMappable(cmap=_cmap, norm=_norm)
-    _sm.set_array(_preds)
-    _cbar = fig_base.colorbar(_sm, ax=_ax1)
-    _cbar.set_label("$\\bar{P}(s^i_n = 1 | X^i, X_n, X_h^i)$")
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_all_other,
+        pos=pos,
+        node_color=probs[_all_other],
+        cmap=_cmap,
+        ax=_ax,
+        vmin=0,
+        vmax=1,
+    )
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=[_home_node],
+        pos=pos,
+        node_color="ForestGreen",
+        node_shape="s",
+        edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        ax=_ax,
+    )
 
-    _ax1.set_axis_off()
-    _ax1.set_title("Predicted probablities of visit")
+    """nx.draw_networkx_nodes(
+        G,
+        nodelist=_visited_nodes,
+        pos=pos,
+        node_color=utility[_i, _visited_nodes],
+        cmap=_cmap,
+        ax=_ax,
+        vmin=-1,
+        vmax=1,
+        edgecolors="green",
+        linewidths=1.5,
+    )"""
 
-    # ==================
+    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="white")
+    nx.draw_networkx_edges(G, pos=pos, ax=_ax)
 
-    _probs = sigmoid(score[_data.user_id], noise_scale)
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=0, vmax=1))
+    _sm.set_array(probs)
+    _cbar = fig_preds.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar.set_label("Node visit probability $\\hat{y}_{{i, n}}$")
 
-    nx.draw_networkx(G, pos=pos, node_color=_probs, cmap=_cmap, ax=_ax2, vmin=0, vmax=1)
+    _ax.set_axis_off()
+    _ax.set_title(f"GATSkip predicted visit probabilites for individual $i = {_i}$")
 
-    _sm = cm.ScalarMappable(cmap=_cmap, norm=_norm)
-    _sm.set_array(_probs)
-    _cbar = fig_base.colorbar(_sm, ax=_ax2)
-    _cbar.set_label("$P(s^i_n = 1 | X^i, X_n, X_h^i)$")
+    fig_preds
+    return (fig_preds,)
 
-    _ax2.set_axis_off()
-    _ax2.set_title("Actual probablities of visit")
 
-    # ==================
+@app.cell
+def _(SEED, batch, gat, torch):
+    from activitygraphs.sampling import poisson_sampling, pps_sampling
 
-    nx.draw_networkx(G, pos=pos, node_color=_data.y, cmap=_cmap, ax=_ax3, vmin=0, vmax=1)
+    _logits = gat(batch.x, batch.edge_index).detach()
+    _generator = torch.Generator(device="cuda").manual_seed(SEED)
 
-    _sm = cm.ScalarMappable(cmap=_cmap, norm=_norm)
-    _sm.set_array(_data.y)
-    _cbar = fig_base.colorbar(_sm, ax=_ax3)
-    _cbar.set_label("$s^i_n = 1$")
+    num_pps_nodes = 7
 
-    _ax3.set_axis_off()
-    _ax3.set_title("Actual visited nodes")
+    poisson_visits = poisson_sampling(_logits, generator=_generator).cpu().numpy()
+    pps_visits = pps_sampling(num_pps_nodes, _logits, batch.batch, generator=_generator).cpu().numpy()
 
-    # ==================
+    poisson_visits
+    return num_pps_nodes, poisson_visits, pps_visits
 
-    _residuals = _probs - _preds
 
-    _vmax = np.abs(_residuals).max()
-    _norm = mcolors.Normalize(vmin=-_vmax, vmax=_vmax)
+@app.cell
+def _(fig_poisson):
+    fig_poisson
+    return
 
-    nx.draw_networkx(G, pos=pos, node_color=_residuals, cmap=cm.RdBu, ax=_ax4, vmin=-_vmax, vmax=_vmax)
 
-    _sm = cm.ScalarMappable(cmap=cm.RdBu, norm=_norm)
-    _sm.set_array(_residuals)
-    _cbar = fig_base.colorbar(_sm, ax=_ax4)
-    _cbar.set_label("$P(s^i_n = 1) - \\bar{P}(s^i_n = 1)$")
+@app.cell
+def _(
+    G,
+    cm,
+    cmap,
+    home_locations,
+    mcolors,
+    np,
+    nx,
+    poisson_visits,
+    pos,
+    slider_indiv,
+    utility,
+):
+    fig_poisson, _ax = plt.subplots()
+    fig_poisson.set_size_inches(5, 6)
 
-    _ax4.set_axis_off()
-    _ax4.set_title("Residuals")
+    _i = slider_indiv.value
+    _home_node = home_locations[_i].item()
 
-    mo.vstack([dropdown_predictions, _fig])
+    _score_nodes = poisson_visits
+
+    _unvisited_nodes = [i for i in np.nonzero(1 - _score_nodes)[0].tolist() if i != _home_node]
+    _visited_nodes = [i for i in np.nonzero(_score_nodes)[0].tolist() if i != _home_node]
+
+    _cmap = cmap
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_unvisited_nodes,
+        pos=pos,
+        node_color="white",
+        ax=_ax,
+        edgecolors="lightgray"
+    )
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_visited_nodes,
+        pos=pos,
+        node_color="DarkCyan",
+        ax=_ax,
+    )
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=[_home_node],
+        pos=pos,
+        node_color="ForestGreen",
+        node_shape="s",
+        ax=_ax,
+    )
+
+    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="k")
+    nx.draw_networkx_edges(G, pos=pos, ax=_ax)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
+    _sm.set_array(utility[_i])
+    _cbar = fig_poisson.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+
+    _cbar.solids.set_alpha(0)
+    _cbar.outline.set_alpha(0)
+    _cbar.ax.tick_params(labelcolor='none', color='none')
+    _cbar.set_label("")
+
+    _ax.set_axis_off()
+    _ax.set_title("Poisson-sampled location choice set")
+
+    fig_poisson
+    return (fig_poisson,)
+
+
+@app.cell
+def _(
+    G,
+    cm,
+    cmap,
+    fig_poisson,
+    home_locations,
+    mcolors,
+    np,
+    num_pps_nodes,
+    nx,
+    pos,
+    pps_visits,
+    slider_indiv,
+    utility,
+):
+    fig_pps, _ax = plt.subplots()
+    fig_pps.set_size_inches(5, 6)
+
+    _i = slider_indiv.value
+    _home_node = home_locations[_i].item()
+
+    _score_nodes = pps_visits
+
+    _unvisited_nodes = [i for i in np.nonzero(1 - _score_nodes)[0].tolist() if i != _home_node]
+    _visited_nodes = [i for i in np.nonzero(_score_nodes)[0].tolist() if i != _home_node]
+
+    _cmap = cmap
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_unvisited_nodes,
+        pos=pos,
+        node_color="white",
+        ax=_ax,
+        edgecolors="lightgray"
+    )
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=_visited_nodes,
+        pos=pos,
+        node_color="DarkCyan",
+        ax=_ax,
+    )
+
+    nx.draw_networkx_nodes(
+        G,
+        nodelist=[_home_node],
+        pos=pos,
+        node_color="ForestGreen",
+        node_shape="s",
+        ax=_ax,
+    )
+
+    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="k")
+    nx.draw_networkx_edges(G, pos=pos, ax=_ax)
+
+    _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
+    _sm.set_array(utility[_i])
+    _cbar = fig_poisson.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+
+    _cbar.solids.set_alpha(0)
+    _cbar.outline.set_alpha(0)
+    _cbar.ax.tick_params(labelcolor='none', color='none')
+    _cbar.set_label("")
+
+    _ax.set_axis_off()
+    _ax.set_title(f"PPS-sampled location choice set of size $m = {num_pps_nodes}$ ")
+
+    fig_pps
+    return (fig_pps,)
+
+
+@app.cell
+def _():
     return
 
 

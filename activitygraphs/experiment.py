@@ -40,6 +40,8 @@ def train(
     full_info: bool,
     pos_weight: torch.Tensor,
     loss_fn: LossFn,
+    reg: str = None,
+    lambda_reg: float = 0.01,
 ):
     model.train()
 
@@ -54,6 +56,10 @@ def train(
         out = model(x, batch.edge_index, batch.edge_attr, batch.batch)
         loss = loss_fn(out, batch.y.float(), pos_weight=pos_weight)
         loss.backward()
+
+        if reg == "l1":
+            l1_norm = sum(p.abs().sum() for p in model.parameters())
+            loss += lambda_reg * l1_norm
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
@@ -95,7 +101,9 @@ def run_experiment(
     verbose: int = 1,
     name: str | None = None,
     lr: float = 0.01,
+    reg: str = None,
     full_info: bool = False,
+    save: bool = False,
 ):
     name = name or model.__class__.__name__
 
@@ -116,7 +124,7 @@ def run_experiment(
     log(Model=name)
 
     for epoch in range(1, num_epochs + 1):
-        train_loss = train(device, model, train_loader, optimizer, full_info, pos_weight, loss_fn)
+        train_loss = train(device, model, train_loader, optimizer, full_info, pos_weight, loss_fn, reg=reg)
         train_eval_loss = evaluate(device, model, train_loader, full_info)
         test_loss = evaluate(device, model, test_loader, full_info)
 
@@ -140,6 +148,9 @@ def run_experiment(
         train_eval_bce=train_eval_loss,
         test_bce=test_loss,
     )
+
+    if save:
+        torch.save(model.state_dict(), f"models/{name}.pth")
 
     return {
         "name": name,

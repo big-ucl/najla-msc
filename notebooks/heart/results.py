@@ -33,7 +33,7 @@ def _():
 
 @app.cell
 def _(reports_path):
-    results = pl.read_parquet(reports_path / "geneva-results_latest.parquet")
+    results = pl.read_parquet(reports_path / "geneva-results.parquet")
     results
     return (results,)
 

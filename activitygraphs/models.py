@@ -52,7 +52,9 @@ class GCN(torch.nn.Module):
         self.dropout = dropout
         self.convs = build_module_list(conv, num_layers, in_channels, out_channels, hidden_channels)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None, batch=None
+    ) -> torch.Tensor:
         for conv in self.convs[:-1]:
             x_res = x
             x = F.dropout(x, p=self.dropout, training=self.training)
@@ -104,7 +106,9 @@ class GCNPlus(torch.nn.Module):
         self.gcn = GCN(num_gcn, in_channels, hidden_channels, hidden_channels, dropout)
         self.lin = NodeMLP(num_lin, hidden_channels, hidden_channels, out_channels, dropout)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None, batch=None
+    ) -> torch.Tensor:
         x = self.gcn(x, edge_index).relu()
         x = self.lin(x, edge_index)
 
@@ -129,7 +133,9 @@ class GCNRes(torch.nn.Module):
         self.convs = GCN(num_gcn_layers, hidden_channels, hidden_channels, hidden_channels, dropout, residuals=True)
         self.post_lin = NodeMLP(num_post_layers, hidden_channels, hidden_channels, out_channels, dropout)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None, batch=None
+    ) -> torch.Tensor:
         x = self.pre_lin(x, edge_index)
         x = self.convs(x, edge_index)
         x = self.post_lin(x, edge_index)
