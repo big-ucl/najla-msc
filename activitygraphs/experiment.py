@@ -163,6 +163,7 @@ def evaluate_baseline(
 
     return {
         "name": name,
+        "epoch": [0],
         "train_bce": [0.0],
         "train_eval_bce": [0.0],
         "bce": [loss],
@@ -172,6 +173,7 @@ def evaluate_baseline(
         "mrr": [metrics["mrr"]],
         "ndcg@5": [metrics["ndcg@5"]],
     }
+
 
 
 def run_experiment(
@@ -262,7 +264,6 @@ def run_experiment(
         "epoch": range(1, num_epochs + 1),
         "train_bce": train_losses,
         "train_eval_bce": train_eval_losses,
-        "test": test_losses,
         "bce": test_losses,
         "bce_weight": test_losses_weighted,
         "precision@5": metric_losses["precision@5"],
