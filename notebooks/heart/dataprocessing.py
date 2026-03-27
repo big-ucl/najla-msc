@@ -35,7 +35,9 @@ def _(gva_data):
     _group_keys = ["user_id", "journey_id"]
 
     _locations = gva_data.locations_df.select("loc_id", "type")
-    _modes = gva_data.user_journeys_df.group_by(_group_keys, maintain_order=True).agg(modes="leg_mode")
+    _modes = gva_data.user_journeys_df.group_by(
+        _group_keys, maintain_order=True
+    ).agg(modes="leg_mode")
     _trips = (
         gva_data.user_journeys_df
         .group_by(_group_keys, maintain_order=True)
@@ -57,8 +59,14 @@ def _(gva_data):
     trips = (
         _trips
         .join(_modes, on=_group_keys)
-        .join(_locations.select(dep_loc_id="loc_id", dep_loc_type="type"), on="dep_loc_id")
-        .join(_locations.select(arr_loc_id="loc_id", arr_loc_type="type"), on="arr_loc_id")
+        .join(
+            _locations.select(dep_loc_id="loc_id", dep_loc_type="type"),
+            on="dep_loc_id",
+        )
+        .join(
+            _locations.select(arr_loc_id="loc_id", arr_loc_type="type"),
+            on="arr_loc_id",
+        )
         .filter(dep_loc_type="subsector", arr_loc_type="subsector")
     )
 
@@ -78,7 +86,12 @@ def _(trips):
         .sort("user_id")
     )
 
-    visits_by_purpose = visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
+    visits_by_purpose = (
+        visits
+        .group_by("user_id", "purpose")
+        .agg(pl.col("loc_id").unique())
+        .sort("user_id")
+    )
     visits_by_purpose
     return visits, visits_by_purpose
 
@@ -95,7 +108,13 @@ def _(num_visits_per_person, visits):
     avg_visits_per_person = num_visits_per_person.select("num_locs").mean().item()
     avg_non_hwe_visits_per_person = (
         visits
-        .filter(~pl.col("purpose").is_in(["od_lieu_domicile", "od_lieu_travail", "od_lieu_etude"]))
+        .filter(
+            ~pl.col("purpose").is_in([
+                "od_lieu_domicile",
+                "od_lieu_travail",
+                "od_lieu_etude",
+            ])
+        )
         .group_by("user_id")
         .agg(num_locs=pl.len())
         .select("num_locs")
@@ -133,12 +152,13 @@ def _(gpd, locations, visits, visits_by_purpose):
         nodes["is_edu"] = nodes["loc_id"].isin(edu_location).astype(int)
         nodes["is_visited"] = nodes["loc_id"].isin(user_visits).astype(int)
 
-        nodes = nodes.merge(visits.filter(user_id=user_id).select("loc_id", "purpose").to_pandas(), on="loc_id", how="left")
-        nodes = nodes.set_index("loc_id")
+        visit_purposes = visits.filter(user_id=user_id).select("loc_id", pl.col("purpose")).group_by("loc_id").agg(pl.col("purpose").str.join(", ")).to_pandas()
+        nodes = nodes.merge(visit_purposes, on="loc_id", how="left")
+        nodes = nodes.set_index("loc_id").sort_index()
 
         return nodes
 
-    _user_id = "20703"
+    _user_id = "20704"
     add_user_cols(locations, _user_id)
     return (add_user_cols,)
 
@@ -178,13 +198,20 @@ def _():
 @app.cell
 def _(CRS, c2g, locations, output_dir):
     mo.stop(True)
-    c2g.load_overture_data(area=locations["geometry"].to_crs(CRS).union_all(), types=["land_use", "place"], output_dir=output_dir, save_to_file=True)
+    c2g.load_overture_data(
+        area=locations["geometry"].to_crs(CRS).union_all(),
+        types=["land_use", "place"],
+        output_dir=output_dir,
+        save_to_file=True,
+    )
     return
 
 
 @app.cell
 def _(gpd, output_dir):
-    land_use = gpd.read_file(output_dir / "land_use.geojson")[["id", "subtype", "class", "geometry"]].set_index("id")
+    land_use = gpd.read_file(output_dir / "land_use.geojson")[
+        ["id", "subtype", "class", "geometry"]
+    ].set_index("id")
     land_use = land_use[
         land_use.geom_type.isin(["Polygon", "MultiPolygon"])
     ].copy()
@@ -195,16 +222,25 @@ def _(gpd, output_dir):
 
 @app.cell
 def _(gpd, output_dir):
-    places = gpd.read_file(output_dir / "place.geojson")[["id", "names", "basic_category", "taxonomy", "geometry"]].set_index("id")
+    places = gpd.read_file(output_dir / "place.geojson")[
+        ["id", "names", "basic_category", "taxonomy", "geometry"]
+    ].set_index("id")
     places
     return (places,)
 
 
 @app.cell
 def _(gpd, utm_crs):
-    statistics = gpd.read_file(project_root / cfg.data.paths.external / "statistics/geneva" / "AGGLO_CARREAU_200-SHP.zip")
+    statistics = gpd.read_file(
+        project_root
+        / cfg.data.paths.external
+        / "statistics/geneva"
+        / "AGGLO_CARREAU_200-SHP.zip"
+    )
 
-    statistics["population"] = statistics["D_POP_HA"] * statistics["GEOM_AREA"] / 10000
+    statistics["population"] = (
+        statistics["D_POP_HA"] * statistics["GEOM_AREA"] / 10000
+    )
     statistics["jobs"] = statistics["D_EMP_HA"] * statistics["GEOM_AREA"] / 10000
 
     statistics = statistics.rename(columns={"GRID_ID": "id"}).to_crs(utm_crs)
@@ -224,50 +260,105 @@ def _():
 
 @app.cell
 def _(gpd, locations, pd, places, utm_crs):
-    def add_poi_counts(locations: gpd.GeoDataFrame, places: gpd.GeoDataFrame, utm_crs: str, category="top_category", normalise=True) -> pd.DataFrame:
+    def add_poi_counts(
+        locations: gpd.GeoDataFrame,
+        places: gpd.GeoDataFrame,
+        utm_crs: str,
+        category="top_category",
+        normalise=True,
+    ) -> pd.DataFrame:
         original_locations = locations
-        locations = locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
+        locations = (
+            locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
+        )
         locations["area"] = locations.geometry.area
 
         places = places.copy()
-        places["top_category"] = places["taxonomy"].str.extract(r'hierarchy[\'"]:\s?\[[\'"]([^\'"]+)[\'"]') # Extract the first element in the "hiearchy"
+        places["top_category"] = places["taxonomy"].str.extract(
+            r'hierarchy[\'"]:\s?\[[\'"]([^\'"]+)[\'"]'
+        )  # Extract the first element in the "hiearchy"
 
-        intersection = locations.sjoin(places.to_crs(utm_crs), predicate="intersects", how="left")
-        poi_by_sector = pd.DataFrame(intersection.groupby(["loc_id", category]).size(), columns=["count"]).reset_index()
+        intersection = locations.sjoin(
+            places.to_crs(utm_crs), predicate="intersects", how="left"
+        )
+        poi_by_sector = pd.DataFrame(
+            intersection.groupby(["loc_id", category]).size(), columns=["count"]
+        ).reset_index()
 
-        if normalise: 
-            poi_by_sector = locations[["loc_id", "area"]].merge(poi_by_sector, on="loc_id", how="left")
+        if normalise:
+            poi_by_sector = locations[["loc_id", "area"]].merge(
+                poi_by_sector, on="loc_id", how="left"
+            )
             poi_by_sector["count"] = poi_by_sector["count"] / poi_by_sector["area"]
 
-        noi_poi_counts = pd.pivot_table(poi_by_sector, columns=category, index="loc_id", values="count", fill_value=0).add_prefix("poi_")
-        noi_poi_counts = original_locations.merge(noi_poi_counts, on="loc_id", how="left").fillna(0)
+        noi_poi_counts = pd.pivot_table(
+            poi_by_sector,
+            columns=category,
+            index="loc_id",
+            values="count",
+            fill_value=0,
+        ).add_prefix("poi_")
+        noi_poi_counts = original_locations.merge(
+            noi_poi_counts, on="loc_id", how="left"
+        ).fillna(0)
 
         return noi_poi_counts
 
-    add_poi_counts(locations, places, utm_crs, category="top_category", normalise=True)
+
+    add_poi_counts(
+        locations, places, utm_crs, category="top_category", normalise=True
+    )
     return (add_poi_counts,)
 
 
 @app.cell
 def _(gpd, land_use, locations, pd, utm_crs):
-    def add_land_uses(locations: gpd.GeoDataFrame, land_uses: gpd.GeoDataFrame, utm_crs, normalise=True) -> pd.DataFrame:
+    def add_land_uses(
+        locations: gpd.GeoDataFrame,
+        land_uses: gpd.GeoDataFrame,
+        utm_crs,
+        normalise=True,
+    ) -> pd.DataFrame:
         original_locations = locations
 
-        locations = locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
+        locations = (
+            locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
+        )
         locations["total_area"] = locations.geometry.area
 
-        intersection = locations.overlay(land_uses.to_crs(utm_crs), how="intersection")
+        intersection = locations.overlay(
+            land_uses.to_crs(utm_crs), how="intersection"
+        )
         intersection["land_use_area"] = intersection.geometry.area
-        land_use_by_sector = intersection.drop(columns=["geometry"]).groupby(["loc_id", "subtype"]).sum(numeric_only=True).reset_index().rename(columns={"subtype": "land_use"}, errors="raise")
+        land_use_by_sector = (
+            intersection
+            .drop(columns=["geometry"])
+            .groupby(["loc_id", "subtype"])
+            .sum(numeric_only=True)
+            .reset_index()
+            .rename(columns={"subtype": "land_use"}, errors="raise")
+        )
 
         if normalise:
-            land_use_by_sector["pct_area"] = land_use_by_sector["land_use_area"] / land_use_by_sector["total_area"] 
+            land_use_by_sector["pct_area"] = (
+                land_use_by_sector["land_use_area"]
+                / land_use_by_sector["total_area"]
+            )
 
         value_col = "pct_area" if normalise else "land_use_area"
-        loc_land_uses = pd.pivot_table(land_use_by_sector, columns="land_use", index="loc_id", values=value_col, fill_value=0).add_prefix("land_use_")
-        loc_land_uses = original_locations.merge(loc_land_uses, on="loc_id", how="left").fillna(0)
+        loc_land_uses = pd.pivot_table(
+            land_use_by_sector,
+            columns="land_use",
+            index="loc_id",
+            values=value_col,
+            fill_value=0,
+        ).add_prefix("land_use_")
+        loc_land_uses = original_locations.merge(
+            loc_land_uses, on="loc_id", how="left"
+        ).fillna(0)
 
         return loc_land_uses
+
 
     add_land_uses(locations, land_use, utm_crs)
     return (add_land_uses,)
@@ -275,25 +366,44 @@ def _(gpd, land_use, locations, pd, utm_crs):
 
 @app.cell
 def _(gpd, locations, statistics, utm_crs):
-    def add_pop_empl_stats(locations: gpd.GeoDataFrame, statistics: gpd.GeoDataFrame, utm_crs, normalise=True):
+    def add_pop_empl_stats(
+        locations: gpd.GeoDataFrame,
+        statistics: gpd.GeoDataFrame,
+        utm_crs,
+        normalise=True,
+    ):
         original_locations = locations
-        locations = locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
+        locations = (
+            locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
+        )
         locations["area"] = locations.geometry.area
 
+        intersection = locations.sjoin(
+            statistics.to_crs(utm_crs), how="left", predicate="intersects"
+        )
+        stats_by_sector = intersection.groupby("loc_id")[
+            ["population", "jobs"]
+        ].sum()
 
-        intersection = locations.sjoin(statistics.to_crs(utm_crs), how="left", predicate="intersects")
-        stats_by_sector = intersection.groupby("loc_id")[["population", "jobs"]].sum()
-
-        if normalise: 
-            stats_by_sector = stats_by_sector.merge(locations[["loc_id", "area"]], on="loc_id")
-            stats_by_sector["population"] = stats_by_sector["population"] / stats_by_sector["area"]
-            stats_by_sector["jobs"] = stats_by_sector["jobs"] / stats_by_sector["area"]
+        if normalise:
+            stats_by_sector = stats_by_sector.merge(
+                locations[["loc_id", "area"]], on="loc_id"
+            )
+            stats_by_sector["population"] = (
+                stats_by_sector["population"] / stats_by_sector["area"]
+            )
+            stats_by_sector["jobs"] = (
+                stats_by_sector["jobs"] / stats_by_sector["area"]
+            )
             stats_by_sector = stats_by_sector.drop(columns=["area"])
 
-        stats_by_sector = original_locations.merge(stats_by_sector, on="loc_id", how="right")
+        stats_by_sector = original_locations.merge(
+            stats_by_sector, on="loc_id", how="right"
+        )
         stats_by_sector["area"] = stats_by_sector.to_crs(utm_crs).geometry.area
 
         return stats_by_sector
+
 
     add_pop_empl_stats(locations, statistics, utm_crs)
     return (add_pop_empl_stats,)
@@ -342,7 +452,13 @@ def _(
     statistics,
     utm_crs,
 ):
-    def build_network_graph(locations: gpd.GeoDataFrame, places: gpd.GeoDataFrame, land_use: gpd.GeoDataFrame, statistics: gpd.GeoDataFrame, utm_crs):
+    def build_network_graph(
+        locations: gpd.GeoDataFrame,
+        places: gpd.GeoDataFrame,
+        land_use: gpd.GeoDataFrame,
+        statistics: gpd.GeoDataFrame,
+        utm_crs,
+    ):
         locations = locations.to_crs(utm_crs)
 
         network_locations = add_pop_empl_stats(locations, statistics, utm_crs)
@@ -351,15 +467,27 @@ def _(
 
         network_locations = network_locations.set_index("loc_id")
 
-        nodes, edges = c2g.contiguity_graph(network_locations, set_point_nodes=True)
+        nodes, edges = c2g.contiguity_graph(
+            network_locations, set_point_nodes=True
+        )
 
         # Connect disconnected subsectors to main graph
-        island_loc_ids = ["subsector-174", "subsector-141", "subsector-10", "subsector-325"]
+        island_loc_ids = [
+            "subsector-174",
+            "subsector-141",
+            "subsector-10",
+            "subsector-325",
+        ]
         cross_lake_loc_ids = ["subsector-243", "subsector-261", "subsector-54"]
         island_nodes = nodes[nodes.index.isin(island_loc_ids)]
-        mainland_nodes = nodes[~nodes.index.isin(island_loc_ids) & ~nodes.index.isin(cross_lake_loc_ids)]
+        mainland_nodes = nodes[
+            ~nodes.index.isin(island_loc_ids)
+            & ~nodes.index.isin(cross_lake_loc_ids)
+        ]
 
-        _, island_edges = c2g.knn_graph(island_nodes, k=3, target_gdf=mainland_nodes)
+        _, island_edges = c2g.knn_graph(
+            island_nodes, k=3, target_gdf=mainland_nodes
+        )
         island_edges = island_edges.reset_index()
         island_edges["source"] = island_edges["source"].str[1]
         island_edges["target"] = island_edges["target"].str[1]
@@ -370,9 +498,12 @@ def _(
 
         return nodes, edges
 
+
     mo.stop(False)
 
-    _network_nodes, _network_edges = build_network_graph(locations, places, land_use, statistics, utm_crs)
+    _network_nodes, _network_edges = build_network_graph(
+        locations, places, land_use, statistics, utm_crs
+    )
 
     _network_nodes.to_parquet(network_path / "nodes.parquet")
     _network_edges.to_parquet(network_path / "edges.parquet")
@@ -387,12 +518,20 @@ def _(gpd, network_path):
 
 
 @app.cell
+def _():
+    run_gen = mo.ui.run_button()
+    run_gen
+    return (run_gen,)
+
+
+@app.cell
 def _(
     add_user_cols,
     c2g,
     dataset_path,
     network_edges,
     network_nodes,
+    run_gen,
     user_ids,
 ):
     from tqdm import tqdm
@@ -402,28 +541,57 @@ def _(
 
     from joblib import Parallel, delayed
 
-    _excluded_feature_cols = ["loc_name", "type", "lon", "lat", "is_work", "is_edu", "is_visited", "purpose", "geometry", "original_geometry"]
+    _excluded_feature_cols = [
+        "loc_name",
+        "type",
+        "lon",
+        "lat",
+        "is_work",
+        "is_edu",
+        "is_visited",
+        "purpose",
+        "geometry",
+        "original_geometry",
+    ]
+
+    node_counts = []
+
 
     def build_graph(user_id):
         indiv_nodes = add_user_cols(network_nodes, user_id)
-        node_feature_cols = [col for col in indiv_nodes.columns if col not in _excluded_feature_cols]
+        node_feature_cols = [
+            col for col in indiv_nodes.columns if col not in _excluded_feature_cols
+        ]
 
-        indiv_graph = c2g.gdf_to_pyg(indiv_nodes, network_edges, node_feature_cols=node_feature_cols, node_label_cols=["is_visited"], edge_feature_cols=["weight"], keep_geom=False, device="cpu")
+        indiv_graph = c2g.gdf_to_pyg(
+            indiv_nodes,
+            network_edges,
+            node_feature_cols=node_feature_cols,
+            node_label_cols=["is_visited"],
+            edge_feature_cols=["weight"],
+            keep_geom=False,
+            device="cpu",
+        )
+
+        if indiv_graph.num_nodes != 469:
+            raise ValueError(user_id, len(indiv_nodes))
 
         transforms = T.Compose([
-                T.AddRandomWalkPE(walk_length=20, attr_name=None),
-                T.AddLaplacianEigenvectorPE(k=8, attr_name=None)
+            T.AddRandomWalkPE(walk_length=20, attr_name=None),
+            T.AddLaplacianEigenvectorPE(k=8, attr_name=None),
         ])
-
 
         return transforms(indiv_graph)
 
-    mo.stop(True)
 
-    _graphs = Parallel(n_jobs=-1)(delayed(build_graph)(user_id) for user_id in user_ids)
+    mo.stop(not run_gen.value)
+
+    _graphs = Parallel(n_jobs=-1)(
+        delayed(build_graph)(user_id) for user_id in user_ids
+    )
 
 
-    with open(dataset_path, "wb") as _f: 
+    with open(dataset_path, "wb") as _f:
         pickle.dump(_graphs, _f)
     return (pickle,)
 
@@ -439,7 +607,9 @@ def _(dataset_path, pickle):
 
 @app.cell
 def _(user_ids):
-    select_user_id = mo.ui.dropdown(user_ids, value=user_ids.first(), label="User ID:", searchable=True)
+    select_user_id = mo.ui.dropdown(
+        user_ids, value=user_ids.first(), label="User ID:", searchable=True
+    )
     return (select_user_id,)
 
 
@@ -452,7 +622,9 @@ def _(add_user_cols, network_nodes, select_user_id):
 
 @app.cell
 def _(user_nodes):
-    select_node_col = mo.ui.dropdown(list(user_nodes.columns), searchable=True, label="Column:", value="purpose")
+    select_node_col = mo.ui.dropdown(
+        list(user_nodes.columns), searchable=True, label="Column:", value="purpose"
+    )
     return (select_node_col,)
 
 
@@ -470,11 +642,54 @@ def _(
     toggle_polygons,
     user_nodes,
 ):
-    _nodes = user_nodes.set_geometry("original_geometry") if toggle_polygons.value else user_nodes
+    _nodes = (
+        user_nodes.set_geometry("original_geometry")
+        if toggle_polygons.value
+        else user_nodes
+    )
     _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
-    _m = _nodes.explore(m=_m, column=select_node_col.value, marker_kwds={"radius": 5})
+    _m = _nodes.explore(
+        m=_m, column=select_node_col.value, marker_kwds={"radius": 5}
+    )
 
-    mo.vstack([mo.hstack([select_user_id, select_node_col, toggle_polygons], justify="start"), _m])
+    mo.vstack([
+        mo.hstack(
+            [select_user_id, select_node_col, toggle_polygons], justify="start"
+        ),
+        _m,
+    ])
+    return
+
+
+@app.cell
+def _():
+    import numpy as np
+
+    return (np,)
+
+
+@app.cell
+def _(locations, np, visits):
+    unique_visits = visits.select("loc_id", "user_id").unique()
+
+    num_nodes = len(locations)
+    num_users = len(visits["user_id"].unique())
+
+    prob_uniform = 1 / num_nodes
+    prob_visit = len(unique_visits) / (num_nodes * num_users)
+
+
+    def inverse_sigmoid(prob):
+        return np.log(prob / (1 - prob))
+
+
+    prob_uniform, prob_visit
+    return
+
+
+@app.cell
+def _(pro):
+    pro
     return
 
 

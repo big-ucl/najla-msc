@@ -4,6 +4,7 @@ import torch_geometric as pyg
 from torch_geometric.logging import log
 
 from activitygraphs.loss import LossFn
+from activitygraphs.metrics import precision_at_k, recall_at_k, mean_reciprocal_rank, ndcg_at_k
 
 
 def compute_training_weights(loader: pyg.loader.DataLoader) -> torch.Tensor:
@@ -74,7 +75,13 @@ def train(
 
 
 @torch.no_grad()
-def evaluate(device: torch.device, model: torch.nn.Module, loader: pyg.loader.DataLoader, full_info: bool):
+def evaluate(
+    device: torch.device,
+    model: torch.nn.Module,
+    loader: pyg.loader.DataLoader,
+    full_info: bool,
+    pos_weight: torch.Tensor | None = None,
+):
     model.eval()
 
     epoch_loss = 0.0
@@ -85,12 +92,86 @@ def evaluate(device: torch.device, model: torch.nn.Module, loader: pyg.loader.Da
         x = extract_features(batch, full_info)
 
         out = model(x, batch.edge_index, batch.edge_attr, batch.batch)
-        loss = F.binary_cross_entropy_with_logits(out, batch.y.float())
+        loss = F.binary_cross_entropy_with_logits(out, batch.y.float(), pos_weight=pos_weight)
 
         epoch_loss += loss.item() * batch.num_nodes
         num_nodes += batch.num_nodes
 
     return epoch_loss / num_nodes
+
+
+@torch.no_grad()
+def evaluate_at_k(
+    device: torch.device,
+    model: torch.nn.Module,
+    loader: pyg.loader.DataLoader,
+    full_info: bool,
+    k: int = 5,
+):
+    model.eval()
+    precisions, recalls, mrrs, ndcgs = [], [], [], []
+
+    for batch in loader:
+        batch = batch.to(device)
+        x = extract_features(batch, full_info)
+        out = model(x, batch.edge_index, batch.edge_attr, batch.batch)
+
+        for i in range(batch.num_graphs):
+            mask = batch.batch == i
+            scores = out[mask].squeeze()
+            labels = batch.y[mask].squeeze()
+
+            if labels.sum().int().item() == 0:
+                continue
+
+            precisions.append(precision_at_k(scores, labels, k))
+            recalls.append(recall_at_k(scores, labels, k))
+            mrrs.append(mean_reciprocal_rank(scores, labels))
+            ndcgs.append(ndcg_at_k(scores, labels, k))
+
+    return {
+        f"precision@{k}": sum(precisions) / len(precisions),
+        f"recall@{k}": sum(recalls) / len(recalls),
+        "mrr": sum(mrrs) / len(mrrs),
+        f"ndcg@{k}": sum(ndcgs) / len(ndcgs),
+    }
+
+
+@torch.no_grad()
+def evaluate_baseline(
+    baseline: torch.nn.Module,
+    loader: pyg.loader.DataLoader,
+    name: str,
+    full_info: bool = False,
+    pos_weight: torch.Tensor = None,
+):
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    baseline = baseline.to(device)
+    loss = evaluate(device, baseline, loader, full_info)
+    loss_weight = evaluate(device, baseline, loader, full_info, pos_weight=pos_weight)
+    metrics = evaluate_at_k(device, baseline, loader, full_info)
+
+    log(
+        Model=name,
+        bce=loss,
+        w_bce=loss_weight,
+        precision_at_5=metrics["precision@5"],
+        recall_at_5=metrics["recall@5"],
+        mrr=metrics["mrr"],
+        ndcg_at_5=metrics["ndcg@5"],
+    )
+
+    return {
+        "name": name,
+        "train_bce": [0.0],
+        "train_eval_bce": [0.0],
+        "bce": [loss],
+        "bce_weight": [loss_weight],
+        "precision@5": [metrics["precision@5"]],
+        "recall@5": [metrics["recall@5"]],
+        "mrr": [metrics["mrr"]],
+        "ndcg@5": [metrics["ndcg@5"]],
+    }
 
 
 def run_experiment(
@@ -112,10 +193,17 @@ def run_experiment(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
 
-    epoch = train_loss = train_eval_loss = test_loss = None
+    epoch = train_loss = train_eval_loss = test_loss = test_loss_weight = metrics = None
     train_losses = []
     train_eval_losses = []
     test_losses = []
+    test_losses_weighted = []
+    metric_losses = {
+        "precision@5": [],
+        "recall@5": [],
+        "mrr": [],
+        "ndcg@5": [],
+    }
 
     # noinspection PyTypeChecker
     loss_fn: LossFn = F.binary_cross_entropy_with_logits
@@ -127,26 +215,43 @@ def run_experiment(
         train_loss = train(device, model, train_loader, optimizer, full_info, pos_weight, loss_fn, reg=reg)
         train_eval_loss = evaluate(device, model, train_loader, full_info)
         test_loss = evaluate(device, model, test_loader, full_info)
+        test_loss_weight = evaluate(device, model, test_loader, full_info, pos_weight=pos_weight)
+
+        metrics = evaluate_at_k(device, model, test_loader, full_info)
 
         scheduler.step(test_loss)
 
         train_losses.append(train_loss)
         train_eval_losses.append(train_eval_loss)
         test_losses.append(test_loss)
+        test_losses_weighted.append(test_loss_weight)
+
+        for metric, values in metric_losses.items():
+            values.append(metrics[metric])
 
         if verbose and (epoch - 1) % verbose == 0:
             log(
                 Epoch=epoch,
                 train_loss=train_loss,
                 train_eval_bce=train_eval_loss,
-                test_bce=test_loss,
+                bce=test_loss,
+                w_bce=test_loss_weight,
+                precision_at_3=metrics["precision@5"],
+                recall_at_3=metrics["recall@5"],
+                mrr=metrics["mrr"],
+                ndcg_at_3=metrics["ndcg@5"],
             )
 
     log(
         Epoch=epoch,
         train_loss=train_loss,
         train_eval_bce=train_eval_loss,
-        test_bce=test_loss,
+        bce=test_loss,
+        w_bce=test_loss_weight,
+        precision_at_3=metrics["precision@5"],
+        recall_at_3=metrics["recall@5"],
+        mrr=metrics["mrr"],
+        ndcg_at_3=metrics["ndcg@5"],
     )
 
     if save:
@@ -155,7 +260,13 @@ def run_experiment(
     return {
         "name": name,
         "epoch": range(1, num_epochs + 1),
-        "train": train_losses,
-        "train_eval": train_eval_losses,
+        "train_bce": train_losses,
+        "train_eval_bce": train_eval_losses,
         "test": test_losses,
+        "bce": test_losses,
+        "bce_weight": test_losses_weighted,
+        "precision@5": metric_losses["precision@5"],
+        "recall@5": metric_losses["recall@5"],
+        "mrr": metric_losses["mrr"],
+        "ndcg@5": metric_losses["ndcg@5"],
     }
