@@ -27,11 +27,14 @@ with app.setup:
 @app.cell
 def _():
     models_path = project_root / "models"
+    processed_path = project_root / cfg.data.paths.processed / "GenevaTPG2"
+    dataset_path = processed_path / "dataset.pickle"
+    network_path = processed_path / "networkgraph"
 
     batch_size = 64
     test_size = 0.2
     seed = 42
-    return batch_size, models_path, seed, test_size
+    return batch_size, models_path, network_path, seed, test_size
 
 
 @app.cell
@@ -41,11 +44,19 @@ def _():
     return (load_dataset,)
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Loading the models
+    """)
+    return
+
+
 @app.cell
 def _():
     from activitygraphs.run import build_gat, build_gps, build_mlp
 
-    return (build_gat,)
+    return build_gat, build_mlp
 
 
 @app.cell
@@ -53,16 +64,17 @@ def _(batch_size, load_dataset, seed, test_size):
     train_set, test_set = load_dataset(cfg, test_size, seed)
     train_loader = pyg.loader.DataLoader(train_set, batch_size=batch_size)
     test_loader = pyg.loader.DataLoader(test_set, batch_size=batch_size)
-    return train_loader, train_set
+    return test_set, train_loader, train_set
 
 
 @app.cell
-def _(build_gat, models_path, train_set):
+def _(build_gat, build_mlp, models_path, train_set):
     hidden_channels = 128
     dropout = 0.2
     gat_layers = 8
     gps_layers = 4
     mlp_layers = 3
+
 
     def load_model(file, builder, layers):
         path = models_path / file
@@ -71,32 +83,509 @@ def _(build_gat, models_path, train_set):
         model.load_state_dict(torch.load(path, weights_only=True))
         return model.cuda().eval()
 
+
     gat = load_model("GATSkip-8-res.pth", build_gat, gat_layers)
-    gat
-    return (gat,)
+    mlp = load_model("MLP.pth", build_mlp, mlp_layers)
+    gat, mlp
+    return gat, mlp
 
 
 @app.cell
-def _(gat, train_loader):
-    def predict(model, batch):
-        return 
+def _(train_loader, train_set):
+    from activitygraphs.baselines import NodeBaseline, ConditionalNodeBaseline
 
-    batch = next(iter(train_loader)).cuda()
-    logits = gat(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
-    probs = torch.sigmoid(logits)
+    node_baseline = NodeBaseline(train_set[0].num_nodes).fit(train_loader)
+    cond_baseline = ConditionalNodeBaseline(train_set[0].num_nodes).fit(train_loader)
 
-    probs
-    return batch, logits
+    node_baseline, cond_baseline
+    return cond_baseline, node_baseline
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Loading network data
+    """)
+    return
 
 
 @app.cell
-def _(batch, logits, seed):
+def _():
+    from activitygraphs.data.geneva import GenevaData
+    from activitygraphs.network import Network
+
+    network_name = "routes"
+
+    gva_data = GenevaData.load(cfg.data, project_root)
+    gva_network = Network.load(cfg.data, project_root, network_name)
+    return (gva_data,)
+
+
+@app.cell
+def _(network_path):
+    network_nodes = gpd.read_parquet(network_path / "nodes.parquet")
+    network_edges = gpd.read_parquet(network_path / "edges.parquet")
+
+    network_nodes
+    return network_edges, network_nodes
+
+
+@app.cell
+def _(gva_data):
+    _group_keys = ["user_id", "journey_id"]
+
+    _locations = gva_data.locations_df.select("loc_id", "type")
+    _modes = gva_data.user_journeys_df.group_by(
+        _group_keys, maintain_order=True
+    ).agg(modes="leg_mode")
+    _trips = (
+        gva_data.user_journeys_df
+        .group_by(_group_keys, maintain_order=True)
+        .agg(pl.all().gather([0, -1]))
+        .select(
+            "user_id",
+            "journey_id",
+            (pl.col("leg_id").list.last() + 1).alias("num_legs"),
+            pl.col("dep_day").list.first(),
+            pl.col("dep_time").list.first(),
+            pl.col("dep_purpose").list.first(),
+            pl.col("dep_loc_id").list.first(),
+            pl.col("arr_loc_id").list.last(),
+            pl.col("arr_purpose").list.last(),
+        )
+    )
+
+
+    trips = (
+        _trips
+        .join(_modes, on=_group_keys)
+        .join(
+            _locations.select(dep_loc_id="loc_id", dep_loc_type="type"),
+            on="dep_loc_id",
+        )
+        .join(
+            _locations.select(arr_loc_id="loc_id", arr_loc_type="type"),
+            on="arr_loc_id",
+        )
+        .filter(dep_loc_type="subsector", arr_loc_type="subsector")
+    )
+
+    visits = (
+        pl
+        .concat([
+            trips.select("user_id", purpose="dep_purpose", loc_id="dep_loc_id"),
+            trips.select("user_id", purpose="arr_purpose", loc_id="arr_loc_id"),
+        ])
+        .unique()
+        .sort("user_id")
+    )
+
+    visits_by_purpose = (
+        visits
+        .group_by("user_id", "purpose")
+        .agg(pl.col("loc_id").unique())
+        .sort("user_id")
+    )
+    return visits, visits_by_purpose
+
+
+@app.cell
+def _(visits, visits_by_purpose):
+    def add_user_cols(nodes: gpd.GeoDataFrame, user_id: str) -> pl.DataFrame:
+        home_locations = visits_by_purpose.filter(
+            purpose="od_lieu_domicile"
+        ).with_columns(pl.col("loc_id").list.first())
+        work_locations = visits_by_purpose.filter(
+            purpose="od_lieu_travail"
+        ).with_columns(pl.col("loc_id").list.len())
+        edu_locations = visits_by_purpose.filter(
+            purpose="od_lieu_etude"
+        ).with_columns(pl.col("loc_id").list.len())
+
+        nodes = nodes.copy().reset_index()
+
+        home_location = home_locations.filter(user_id=user_id)["loc_id"].to_list()
+        work_location = work_locations.filter(user_id=user_id)["loc_id"].to_list()
+        edu_location = edu_locations.filter(user_id=user_id)["loc_id"].to_list()
+        user_visits = visits.filter(user_id=user_id)["loc_id"].to_list()
+
+        nodes["is_home"] = nodes["loc_id"].isin(home_location).astype(int)
+        nodes["is_work"] = nodes["loc_id"].isin(work_location).astype(int)
+        nodes["is_edu"] = nodes["loc_id"].isin(edu_location).astype(int)
+        nodes["is_visited"] = nodes["loc_id"].isin(user_visits).astype(int)
+
+        visit_purposes = (
+            visits
+            .filter(user_id=user_id)
+            .select("loc_id", pl.col("purpose"))
+            .group_by("loc_id")
+            .agg(pl.col("purpose").str.join(", "))
+            .to_pandas()
+        )
+        nodes = nodes.merge(visit_purposes, on="loc_id", how="left")
+        nodes = nodes.set_index("loc_id").sort_index()
+
+        return nodes
+
+    return (add_user_cols,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Making predictions
+    """)
+    return
+
+
+@app.cell
+def _():
+    "user_id = 25895"
+    return
+
+
+@app.cell
+def _(test_set):
+    index = 1
+    data = test_set[index]
+    user_id = data.user_id
+    return data, user_id
+
+
+@app.cell
+def _():
     from activitygraphs.sampling import poisson_sampling, pps_sampling
 
-    generator = torch.Generator(device="cuda").manual_seed(seed)
+    return poisson_sampling, pps_sampling
 
-    poisson_sampling(logits, generator).sum()
-    pps_sampling(10, logits, batch.batch, generator).sum()
+
+@app.cell
+def _(
+    cond_baseline,
+    data,
+    gat,
+    mlp,
+    node_baseline,
+    poisson_sampling,
+    pps_sampling,
+):
+    batch = next(iter(pyg.loader.DataLoader([data]))).cuda()
+
+
+    def predict_and_sample(model, batch, n=15):
+        logits = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+        probs = torch.sigmoid(logits)
+
+        generator = None #torch.Generator(device="cuda").manual_seed(seed)
+
+        poisson = poisson_sampling(logits, generator)
+        pps = pps_sampling(n, logits, batch.batch, generator)
+
+        return logits, probs, poisson, pps
+
+
+    logits, probs, poisson, pps = predict_and_sample(gat, batch)
+    mlp_logits, mlp_probs, mlp_poisson, mlp_pps = predict_and_sample(mlp, batch)
+    node_logits, node_probs, node_poisson, node_pps = predict_and_sample(node_baseline, batch)
+    cond_logits, cond_probs, cond_poisson, cond_pps = predict_and_sample(cond_baseline, batch)
+    return (
+        cond_poisson,
+        cond_pps,
+        cond_probs,
+        mlp_poisson,
+        mlp_pps,
+        mlp_probs,
+        node_poisson,
+        node_pps,
+        node_probs,
+        poisson,
+        pps,
+        probs,
+    )
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Visualising predictions and samples
+    """)
+    return
+
+
+@app.cell
+def _(
+    add_user_cols,
+    cond_poisson,
+    cond_pps,
+    cond_probs,
+    mlp_poisson,
+    mlp_pps,
+    mlp_probs,
+    network_nodes,
+    node_poisson,
+    node_pps,
+    node_probs,
+    poisson,
+    pps,
+    probs,
+    user_id,
+):
+    def add_preds_and_sample(nodes, preds, poisson, pps, prefix=""):
+        nodes = nodes.copy().sort_index()
+
+        nodes[prefix + "preds"] = preds.detach().cpu().numpy()
+        nodes[prefix + "poisson"] = poisson.detach().cpu().numpy()
+        nodes[prefix + "pps"] = pps.detach().cpu().numpy()
+
+        return nodes
+
+
+    user_nodes = add_user_cols(network_nodes, user_id)
+    user_nodes = add_preds_and_sample(user_nodes, probs, poisson, pps)
+    user_nodes = add_preds_and_sample(user_nodes, mlp_probs, mlp_poisson, mlp_pps, prefix="mlp_")
+    user_nodes = add_preds_and_sample(user_nodes, node_probs, node_poisson, node_pps, prefix="node_")
+    user_nodes = add_preds_and_sample(user_nodes, cond_probs, cond_poisson, cond_pps, prefix="cond_")
+
+
+
+    user_nodes
+    return (user_nodes,)
+
+
+@app.cell
+def _(user_nodes):
+    select_node_col = mo.ui.dropdown(
+        list(user_nodes.columns), searchable=True, label="Column:", value="preds"
+    )
+    toggle_polygons = mo.ui.switch(value=True, label="Show subsectors")
+    return select_node_col, toggle_polygons
+
+
+@app.cell
+def _(network_edges, select_node_col, toggle_polygons, user_nodes):
+    _nodes = (
+        user_nodes.set_geometry("original_geometry")
+        if toggle_polygons.value
+        else user_nodes
+    )
+    _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
+    _m = _nodes.explore(
+        m=_m, column=select_node_col.value, marker_kwds={"radius": 5}, cmap="OrRd"
+    )
+
+    mo.vstack([
+        mo.hstack([select_node_col, toggle_polygons], justify="start"),
+        _m,
+    ])
+    return
+
+
+@app.cell
+def _(network_nodes):
+    CRS = "EPSG:4326"
+    utm_crs = network_nodes.estimate_utm_crs()
+    return (CRS,)
+
+
+@app.cell
+def _():
+    import contextily as cx
+    import matplotlib.pyplot as plt
+
+    return cx, plt
+
+
+@app.cell
+def _(user_id):
+    user_id
+    return
+
+
+@app.cell
+def _(CRS, cx):
+    from matplotlib.colors import PowerNorm
+
+    def plot_preds(nodes, col, title, ax=None, as_points=False, edges=None):
+        nodes = nodes if as_points else nodes.set_geometry("original_geometry")
+        nodes = nodes.to_crs(CRS)
+
+
+        figsize = (7, 7) if ax is None else None
+
+        if not as_points:
+            ax = nodes.boundary.plot(ax=ax, color="gray", linewidth=0.3)
+
+        if edges is not None:
+            ax = edges.plot(
+                ax=ax,
+                figsize=figsize,
+                color="gray", 
+                legend=True,
+                linewidth=0.3
+            )
+
+        cmap = "Reds" if not as_points else "viridis_r"
+        gamma = 0.7 if not as_points else 0.3
+        label = "Predicted probability of visit $\\hat{y}_{i,n}$" if not as_points else "Per-node visit frequency" 
+    
+        ax = nodes.plot(
+            ax=ax,
+            column=col,
+            figsize=figsize,
+            legend=True,
+            cmap=cmap,
+            norm=PowerNorm(gamma=gamma, vmin=0, vmax=1),
+            legend_kwds={
+                "shrink": 0.7,
+                "label": label,
+                "location": "bottom",
+                "pad": 0.01,
+            },
+            markersize=25,
+        )
+
+        ax.set_title(title)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        cx.add_basemap(ax, crs=CRS, source=cx.providers.CartoDB.PositronNoLabels)
+
+        return ax
+
+    return (plot_preds,)
+
+
+@app.cell
+def _():
+    double_figsize = (13, 7)
+    return (double_figsize,)
+
+
+@app.cell
+def _(
+    double_figsize,
+    network_edges,
+    plot_preds,
+    plot_visited,
+    plt,
+    user_nodes,
+):
+    _fig, _axs = plt.subplots(1, 2, figsize=double_figsize, constrained_layout=True)
+
+    plot_preds(
+        user_nodes,
+        "node_preds",
+        "Graph structure of the TPG dataset, with per-node visit frequencies",
+        ax=_axs[0],
+        as_points=True,
+        edges=network_edges,
+    )
+
+    plot_visited(
+        user_nodes,
+        "is_visited",
+        "Visited nodes for example individual",
+        ax=_axs[1]
+    )
+
+    _fig.savefig(project_root / cfg.paths.figures / "gva_struct.png")
+    _fig
+    return
+
+
+@app.cell
+def _(double_figsize, plot_preds, plt, user_nodes):
+    _fig, _axs = plt.subplots(1, 2, figsize=double_figsize, constrained_layout=True)
+
+    plot_preds(
+        user_nodes,
+        "mlp_preds",
+        "MLP predicted visit probabilities for example individual",
+        ax=_axs[0]
+    )
+
+    plot_preds(
+        user_nodes,
+        "preds",
+        "GATSkipRes predicted visit probabilities for example individual",
+        ax=_axs[1]
+    )
+
+    _fig.savefig(project_root / cfg.paths.figures / "gva_preds.png")
+    _fig
+    return
+
+
+@app.cell
+def _():
+    import seaborn as sns
+
+    return (sns,)
+
+
+@app.cell
+def _(CRS, cx, sns):
+    from matplotlib.colors import ListedColormap
+
+    def plot_visited(nodes, col, title, ax=None, legend_name="Visited", as_points=False, edges=None, include_unvisited=False):
+        nodes = nodes if as_points else nodes.set_geometry("original_geometry")
+        nodes = nodes.to_crs(CRS).copy()
+
+        if include_unvisited:
+            nodes.loc[nodes[col] == 0, "visit"] = "Unvisited"
+    
+        nodes.loc[nodes[col] == 1, "visit"] = legend_name
+        nodes.loc[nodes["is_home"] == 1, "visit"] = "Home"
+    
+        figsize = (7, 7) if ax is None else None
+
+        if not as_points:
+            ax = nodes.boundary.plot(ax=ax, color="gray", linewidth=0.3)
+    
+        if edges is not None:
+            ax = edges.to_crs(CRS).plot(
+                ax=ax,
+                figsize=figsize,
+                color="gray", 
+                linewidth=0.3
+            )
+
+
+        tab10 = sns.color_palette()
+        categories = [legend_name, "Home"] + (["Unvisited"] if include_unvisited else [])
+        colors = [tab10[0], tab10[1]] + (["lightgray"] if include_unvisited else [])
+        cmap = ListedColormap(colors)
+
+        ax = nodes.plot(
+            ax=ax,
+            column="visit",
+            figsize=figsize,
+            legend=True,
+            markersize=20,
+            categories=categories,
+            cmap=cmap,
+        )
+
+        ax.set_title(title)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        cx.add_basemap(ax, crs=CRS, source=cx.providers.CartoDB.PositronNoLabels)
+
+        return ax
+
+    return (plot_visited,)
+
+
+@app.cell
+def _(double_figsize, plot_visited, plt, user_nodes):
+    _fig, _axs = plt.subplots(1, 2, figsize=double_figsize, constrained_layout=True)
+
+    plot_visited(user_nodes, "poisson", "Poisson sample of GATSkipRes predictions", legend_name="Sampled", ax=_axs[0])
+    plot_visited(user_nodes, "pps", "15-node PPS sample of GATSkipRes predictions", legend_name="Sampled", ax=_axs[1])
+
+    _fig.savefig(project_root / cfg.paths.figures / "gva_samples.png")
+    _fig
     return
 
 

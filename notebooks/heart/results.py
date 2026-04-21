@@ -47,8 +47,8 @@ def _():
 
 @app.cell
 def _(alt, figures_path, results):
-    _results = results.unpivot(
-        on=["train_eval", "test"],
+    _results = results.filter(pl.col("epoch") > 5).unpivot(
+        on=["bce_weight"],
         index=["name", "epoch"],
         value_name="BCE",
         variable_name="Dataset",
@@ -70,6 +70,11 @@ def _(alt, figures_path, results):
     fig.save(figures_path / "results.png")
 
     fig
+    return
+
+
+@app.cell
+def _():
     return
 
 

@@ -37,6 +37,7 @@ dependencies = [
     "ruff>=0.11.11",
     "scikit-learn>=1.7.1",
     "scipy>=1.15.3",
+    "seaborn>=0.13.2",
     "sqlglot>=26.29.0",
     "torch>=2.10.0",
     "torch-geometric>=2.7.0",
@@ -50,6 +51,7 @@ activity-graphs = "activitygraphs.main:main"
 include = ["activitygraphs*"]
 
 [tool.uv]
+package = true
 no-build-isolation-package = [
   "torch-cluster",
   "torch-scatter",

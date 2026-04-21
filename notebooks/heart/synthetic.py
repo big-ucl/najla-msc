@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.0"
+__generated_with = "0.21.1"
 app = marimo.App(width="full")
 
 with app.setup:
@@ -180,8 +180,9 @@ def _(
 
 
 @app.cell
-def _(cm):
-    cmap = cm.BrBG
+def _(sns):
+    cmap = sns.color_palette("vlag_r", as_cmap=True)#cm.BrBG
+    best_i = 26
     return (cmap,)
 
 
@@ -190,16 +191,16 @@ def _(
     G,
     cm,
     cmap,
+    figsize,
     home_locations,
     mcolors,
     nx,
     pos,
     slider_indiv,
+    tab10,
     utility,
-    visited_nodes,
 ):
-    fig_indiv_util, _ax = plt.subplots()
-    fig_indiv_util.set_size_inches(5, 6)
+    fig_indiv_util, _ax = plt.subplots(figsize=figsize, constrained_layout=True)
 
 
     _i = slider_indiv.value
@@ -223,10 +224,10 @@ def _(
         G,
         nodelist=[_home_node],
         pos=pos,
-        node_color="ForestGreen",
+        node_color=tab10[1],
         node_shape="s",
-        edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
-        linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        #edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        #linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
 
@@ -252,7 +253,7 @@ def _(
     _cbar.set_label("Individual-specific node utility $\\eta_{{i, n}}$")
 
     _ax.set_axis_off()
-    _ax.set_title(f"Network graph with node utilities for individual $i = {_i}$")
+    _ax.set_title("Network graph with node utilities for example individual $i$")
 
     None
     return (fig_indiv_util,)
@@ -264,17 +265,17 @@ def _(
     cm,
     cmap,
     fig_indiv_util,
+    figsize,
     home_locations,
     mcolors,
     noise,
     nx,
     pos,
     slider_indiv,
+    tab10,
     utility,
-    visited_nodes,
 ):
-    fig_noise, _ax = plt.subplots()
-    fig_noise.set_size_inches(5, 6)
+    fig_noise, _ax = plt.subplots(figsize=figsize, constrained_layout=True)
 
     _i = slider_indiv.value
     _home_node = home_locations[_i].item()
@@ -297,10 +298,10 @@ def _(
         G,
         nodelist=[_home_node],
         pos=pos,
-        node_color="ForestGreen",
+        node_color=tab10[1],
         node_shape="s",
-        edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
-        linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        #edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        #linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
 
@@ -326,7 +327,7 @@ def _(
     _cbar.set_label("Noise $\\varepsilon_{i, n} \\sim \\text{Gumbel}(0,0.1)$")
 
     _ax.set_axis_off()
-    _ax.set_title(f"Additive noise for individual $i = {_i}$")
+    _ax.set_title("Additive noise for example individual $i$")
 
     None
     return (fig_noise,)
@@ -337,6 +338,7 @@ def _(
     G,
     cm,
     cmap,
+    figsize,
     home_locations,
     mcolors,
     np,
@@ -344,10 +346,10 @@ def _(
     pos,
     score,
     slider_indiv,
+    tab10,
     utility,
 ):
-    fig_visit, _ax = plt.subplots()
-    fig_visit.set_size_inches(5, 6)
+    fig_visit, _ax = plt.subplots(figsize=figsize, constrained_layout=True)
 
     _i = slider_indiv.value
     _home_node = home_locations[_i].item()
@@ -372,7 +374,7 @@ def _(
         G,
         nodelist=_visited_nodes,
         pos=pos,
-        node_color="DarkCyan",
+        node_color=tab10[0],
         ax=_ax,
     )
 
@@ -380,12 +382,17 @@ def _(
         G,
         nodelist=[_home_node],
         pos=pos,
-        node_color="ForestGreen",
+        node_color=tab10[1],
         node_shape="s",
         ax=_ax,
     )
 
-    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="k")
+    _light_nodes = {n: n for n in _visited_nodes + [_home_node]}
+    _dark_nodes = {n: n for n in _unvisited_nodes}
+
+    nx.draw_networkx_labels(G, pos, labels=_light_nodes, font_color="white")
+    nx.draw_networkx_labels(G, pos, labels=_dark_nodes, font_color="black")
+
     nx.draw_networkx_edges(G, pos=pos, ax=_ax)
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
@@ -398,7 +405,7 @@ def _(
     _cbar.set_label("")
 
     _ax.set_axis_off()
-    _ax.set_title(f"Nodes visited by individual $i = {_i}$")
+    _ax.set_title(f"Nodes visited by example individual $i$")
 
     None
     return (fig_visit,)
@@ -991,17 +998,16 @@ def _(
     G,
     cm,
     cmap,
+    figsize,
     home_locations,
     mcolors,
     nx,
     pos,
     probs,
     slider_indiv,
-    visited_nodes,
+    tab10,
 ):
-    fig_preds, _ax = plt.subplots()
-    fig_preds.set_size_inches(5, 6)
-
+    fig_preds, _ax = plt.subplots(figsize=figsize, constrained_layout=True)
 
     _i = slider_indiv.value
     _home_node = home_locations[_i].item()
@@ -1024,10 +1030,10 @@ def _(
         G,
         nodelist=[_home_node],
         pos=pos,
-        node_color="ForestGreen",
+        node_color=tab10[1],
         node_shape="s",
-        edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
-        linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        #edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        #linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
 
@@ -1053,7 +1059,7 @@ def _(
     _cbar.set_label("Node visit probability $\\hat{y}_{{i, n}}$")
 
     _ax.set_axis_off()
-    _ax.set_title(f"GATSkip predicted visit probabilites for individual $i = {_i}$")
+    _ax.set_title(f"GATSkip predicted visit probabilites for example individual $i$")
 
     fig_preds
     return (fig_preds,)
@@ -1076,9 +1082,11 @@ def _(SEED, batch, gat, torch):
 
 
 @app.cell
-def _(fig_poisson):
-    fig_poisson
-    return
+def _():
+    import seaborn as sns
+
+    tab10 = sns.color_palette()
+    return sns, tab10
 
 
 @app.cell
@@ -1086,6 +1094,7 @@ def _(
     G,
     cm,
     cmap,
+    figsize,
     home_locations,
     mcolors,
     np,
@@ -1093,10 +1102,10 @@ def _(
     poisson_visits,
     pos,
     slider_indiv,
+    tab10,
     utility,
 ):
-    fig_poisson, _ax = plt.subplots()
-    fig_poisson.set_size_inches(5, 6)
+    fig_poisson, _ax = plt.subplots(figsize=figsize, constrained_layout=True)
 
     _i = slider_indiv.value
     _home_node = home_locations[_i].item()
@@ -1121,7 +1130,7 @@ def _(
         G,
         nodelist=_visited_nodes,
         pos=pos,
-        node_color="DarkCyan",
+        node_color=tab10[0],
         ax=_ax,
     )
 
@@ -1129,12 +1138,17 @@ def _(
         G,
         nodelist=[_home_node],
         pos=pos,
-        node_color="ForestGreen",
+        node_color=tab10[1],
         node_shape="s",
         ax=_ax,
     )
 
-    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="k")
+    _light_nodes = {n: n for n in _visited_nodes + [_home_node]}
+    _dark_nodes = {n: n for n in _unvisited_nodes}
+
+    nx.draw_networkx_labels(G, pos, labels=_light_nodes, font_color="white")
+    nx.draw_networkx_labels(G, pos, labels=_dark_nodes, font_color="black")
+
     nx.draw_networkx_edges(G, pos=pos, ax=_ax)
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
@@ -1154,11 +1168,18 @@ def _(
 
 
 @app.cell
+def _():
+    figsize = (5, 5)
+    return (figsize,)
+
+
+@app.cell
 def _(
     G,
     cm,
     cmap,
     fig_poisson,
+    figsize,
     home_locations,
     mcolors,
     np,
@@ -1167,10 +1188,10 @@ def _(
     pos,
     pps_visits,
     slider_indiv,
+    tab10,
     utility,
 ):
-    fig_pps, _ax = plt.subplots()
-    fig_pps.set_size_inches(5, 6)
+    fig_pps, _ax = plt.subplots(figsize=figsize, constrained_layout=True)
 
     _i = slider_indiv.value
     _home_node = home_locations[_i].item()
@@ -1195,7 +1216,7 @@ def _(
         G,
         nodelist=_visited_nodes,
         pos=pos,
-        node_color="DarkCyan",
+        node_color=tab10[0],
         ax=_ax,
     )
 
@@ -1203,12 +1224,17 @@ def _(
         G,
         nodelist=[_home_node],
         pos=pos,
-        node_color="ForestGreen",
+        node_color=tab10[1],
         node_shape="s",
         ax=_ax,
     )
 
-    nx.draw_networkx_labels(G, pos, ax=_ax, font_color="k")
+    _light_nodes = {n: n for n in _visited_nodes + [_home_node]}
+    _dark_nodes = {n: n for n in _unvisited_nodes}
+
+    nx.draw_networkx_labels(G, pos, labels=_light_nodes, font_color="white")
+    nx.draw_networkx_labels(G, pos, labels=_dark_nodes, font_color="black")
+
     nx.draw_networkx_edges(G, pos=pos, ax=_ax)
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
@@ -1225,11 +1251,6 @@ def _(
 
     fig_pps
     return (fig_pps,)
-
-
-@app.cell
-def _():
-    return
 
 
 if __name__ == "__main__":

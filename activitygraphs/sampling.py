@@ -7,7 +7,7 @@ def poisson_sampling(logits: torch.Tensor, generator: torch.Generator | None) ->
     return torch.bernoulli(probs, generator=generator).detach()
 
 
-def pps_sampling(num_samples: int, logits: torch.Tensor, batch: torch.Tensor, generator: torch.Generator | None) -> torch.Tensor:
+def pps_sampling(num_samples: int, logits: torch.Tensor, batch: torch.Tensor, generator: torch.Generator | None = None) -> torch.Tensor:
     logits, mask = pyg.utils.to_dense_batch(logits, batch, fill_value=0.0)
     probs = torch.sigmoid(logits).squeeze(-1) * mask
 
