@@ -32,7 +32,7 @@ LOCATIONS_SCHEMA = {
     "lat": "float64",
     "geometry": "geometry",
 }
-LOCATIONS_COLUMNS = LOCATIONS_SCHEMA.keys()
+LOCATIONS_COLUMNS = list(LOCATIONS_SCHEMA.keys())
 
 USER_JOURNEY_SCHEMA = pl.Schema({
     "user_id": pl.String,

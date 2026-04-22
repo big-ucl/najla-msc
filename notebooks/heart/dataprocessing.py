@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.0"
+__generated_with = "0.21.1"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -21,12 +21,8 @@ with app.setup:
 @app.cell
 def _():
     from activitygraphs.data.geneva import GenevaData
-    from activitygraphs.network import Network
-
-    network_name = "routes"
 
     gva_data = GenevaData.load(cfg.data, project_root)
-    gva_network = Network.load(cfg.data, project_root, network_name)
     return (gva_data,)
 
 
@@ -172,19 +168,47 @@ def _():
 
 
 @app.cell
-def _(locations):
+def _():
     import geopandas as gpd
     import pandas as pd
 
-    CRS = "EPSG:4326"
-    utm_crs = locations.estimate_utm_crs()
-    return CRS, gpd, pd, utm_crs
+    return gpd, pd
 
 
 @app.cell
-def _():
-    output_dir = project_root / cfg.data.paths.external / "ouverture"
-    return (output_dir,)
+def _(locations):
+
+    CRS = "EPSG:4326"
+    utm_crs = locations.estimate_utm_crs()
+    return CRS, utm_crs
+
+
+@app.cell
+def _(locations):
+    from activitygraphs.data.overture import Overture
+
+    overture = Overture.load(locations, cfg.data.files.overture, project_root)
+    return (overture,)
+
+
+@app.cell
+def _(locations, overture):
+    overture.add_land_uses(locations)
+    return
+
+
+@app.cell
+def _(locations, overture):
+    overture.add_poi_counts(locations)
+    return
+
+
+@app.cell
+def _(locations):
+    from activitygraphs.data.statistics import add_statistics
+
+    add_statistics(locations, cfg.data.files.statistics)
+    return
 
 
 @app.cell(hide_code=True)
@@ -195,173 +219,12 @@ def _():
     return
 
 
-@app.cell
-def _(CRS, c2g, locations, output_dir):
-    mo.stop(True)
-    c2g.load_overture_data(
-        area=locations["geometry"].to_crs(CRS).union_all(),
-        types=["land_use", "place"],
-        output_dir=output_dir,
-        save_to_file=True,
-    )
-    return
-
-
-@app.cell
-def _(gpd, output_dir):
-    land_use = gpd.read_file(output_dir / "land_use.geojson")[
-        ["id", "subtype", "class", "geometry"]
-    ].set_index("id")
-    land_use = land_use[
-        land_use.geom_type.isin(["Polygon", "MultiPolygon"])
-    ].copy()
-    land_use = land_use.explode(index_parts=False)
-    land_use
-    return (land_use,)
-
-
-@app.cell
-def _(gpd, output_dir):
-    places = gpd.read_file(output_dir / "place.geojson")[
-        ["id", "names", "basic_category", "taxonomy", "geometry"]
-    ].set_index("id")
-    places
-    return (places,)
-
-
-@app.cell
-def _(gpd, utm_crs):
-    statistics = gpd.read_file(
-        project_root
-        / cfg.data.paths.external
-        / "statistics/geneva"
-        / "AGGLO_CARREAU_200-SHP.zip"
-    )
-
-    statistics["population"] = (
-        statistics["D_POP_HA"] * statistics["GEOM_AREA"] / 10000
-    )
-    statistics["jobs"] = statistics["D_EMP_HA"] * statistics["GEOM_AREA"] / 10000
-
-    statistics = statistics.rename(columns={"GRID_ID": "id"}).to_crs(utm_crs)
-    statistics = statistics[["id", "population", "jobs", "geometry"]]
-
-    statistics
-    return (statistics,)
-
-
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
     ### Enhance node features
     """)
     return
-
-
-@app.cell
-def _(gpd, locations, pd, places, utm_crs):
-    def add_poi_counts(
-        locations: gpd.GeoDataFrame,
-        places: gpd.GeoDataFrame,
-        utm_crs: str,
-        category="top_category",
-        normalise=True,
-    ) -> pd.DataFrame:
-        original_locations = locations
-        locations = (
-            locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
-        )
-        locations["area"] = locations.geometry.area
-
-        places = places.copy()
-        places["top_category"] = places["taxonomy"].str.extract(
-            r'hierarchy[\'"]:\s?\[[\'"]([^\'"]+)[\'"]'
-        )  # Extract the first element in the "hiearchy"
-
-        intersection = locations.sjoin(
-            places.to_crs(utm_crs), predicate="intersects", how="left"
-        )
-        poi_by_sector = pd.DataFrame(
-            intersection.groupby(["loc_id", category]).size(), columns=["count"]
-        ).reset_index()
-
-        if normalise:
-            poi_by_sector = locations[["loc_id", "area"]].merge(
-                poi_by_sector, on="loc_id", how="left"
-            )
-            poi_by_sector["count"] = poi_by_sector["count"] / poi_by_sector["area"]
-
-        noi_poi_counts = pd.pivot_table(
-            poi_by_sector,
-            columns=category,
-            index="loc_id",
-            values="count",
-            fill_value=0,
-        ).add_prefix("poi_")
-        noi_poi_counts = original_locations.merge(
-            noi_poi_counts, on="loc_id", how="left"
-        ).fillna(0)
-
-        return noi_poi_counts
-
-
-    add_poi_counts(
-        locations, places, utm_crs, category="top_category", normalise=True
-    )
-    return (add_poi_counts,)
-
-
-@app.cell
-def _(gpd, land_use, locations, pd, utm_crs):
-    def add_land_uses(
-        locations: gpd.GeoDataFrame,
-        land_uses: gpd.GeoDataFrame,
-        utm_crs,
-        normalise=True,
-    ) -> pd.DataFrame:
-        original_locations = locations
-
-        locations = (
-            locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
-        )
-        locations["total_area"] = locations.geometry.area
-
-        intersection = locations.overlay(
-            land_uses.to_crs(utm_crs), how="intersection"
-        )
-        intersection["land_use_area"] = intersection.geometry.area
-        land_use_by_sector = (
-            intersection
-            .drop(columns=["geometry"])
-            .groupby(["loc_id", "subtype"])
-            .sum(numeric_only=True)
-            .reset_index()
-            .rename(columns={"subtype": "land_use"}, errors="raise")
-        )
-
-        if normalise:
-            land_use_by_sector["pct_area"] = (
-                land_use_by_sector["land_use_area"]
-                / land_use_by_sector["total_area"]
-            )
-
-        value_col = "pct_area" if normalise else "land_use_area"
-        loc_land_uses = pd.pivot_table(
-            land_use_by_sector,
-            columns="land_use",
-            index="loc_id",
-            values=value_col,
-            fill_value=0,
-        ).add_prefix("land_use_")
-        loc_land_uses = original_locations.merge(
-            loc_land_uses, on="loc_id", how="left"
-        ).fillna(0)
-
-        return loc_land_uses
-
-
-    add_land_uses(locations, land_use, utm_crs)
-    return (add_land_uses,)
 
 
 @app.cell
@@ -682,6 +545,8 @@ def _():
 def _():
     from activitygraphs.run import load_dataset
 
+    mo.stop(True)
+
     test_size = 0.2
     seed = 42
 
@@ -772,7 +637,7 @@ def _(CRS, cx, nodes):
 
         ax = nodes.plot(column=col, figsize=(15, 15), legend=True, cmap="OrRd")
         nodes.boundary.plot(ax=ax, color="lightgrey")
-    
+
         cx.add_basemap(ax, crs=CRS, source=cx.providers.CartoDB.PositronNoLabels)
 
         return ax

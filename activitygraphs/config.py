@@ -20,6 +20,13 @@ class GTFSFiles:
 
 
 @dataclass
+class OvertureFiles:
+    directory: str
+    land_use: str
+    place: str
+
+
+@dataclass
 class GenevaBoundaryFiles:
     geneva_subsectors: str
     french_postcodes: str
@@ -31,6 +38,7 @@ class GenevaBoundaryFiles:
 @dataclass
 class InputFiles:
     raw_journeys: str
+    overture: OvertureFiles
 
 
 @dataclass
@@ -45,6 +53,7 @@ class LTDSInputFiles(InputFiles):
 class GenevaInputFiles(InputFiles):
     boundaries: GenevaBoundaryFiles
     gtfs: GTFSFiles
+    statistics: Path
 
 
 @dataclass

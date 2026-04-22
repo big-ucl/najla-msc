@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
 
 import geopandas as gpd
 import pandas as pd
@@ -102,14 +101,14 @@ class GenevaData(NetworkData):
     def _dirs(
         cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None
     ) -> tuple[Path, Path]:
-        project_root = project_root if project_root is not None else Path(".")
+        project_root: Path = project_root if project_root is not None else Path(".")
         suffix = "" if name is None else f"-{name}"
         data_dir = project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
 
         return project_root, data_dir
 
     @classmethod
-    def load(cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None) -> Self:
+    def load(cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None) -> "GenevaData":
         project_root, data_dir = cls._dirs(cfg, project_root, name)
         gva_inputs = load_files(cfg, project_root)
 
