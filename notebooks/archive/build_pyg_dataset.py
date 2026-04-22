@@ -5,11 +5,7 @@ app = marimo.App(width="full")
 
 with app.setup:
     import marimo as mo
-    import geopandas as gpd
-
-    import marimo as mo
     import polars as pl
-    import polars.selectors as cs
     from pathlib import Path
 
     from activitygraphs.config import load_config
@@ -69,7 +65,7 @@ def _():
 
 @app.cell
 def _(gva_network):
-    from activitygraphs.geometric import network_to_pyg
+    from activitygraphs.locations.geometric import network_to_pyg
 
     base_data = network_to_pyg(gva_network)
     base_data
@@ -88,7 +84,7 @@ def _():
 
 @app.cell
 def _(base_data, gva_data, network_name):
-    from activitygraphs.geometric import ActivityGraphBuilder, ActivityDataset
+    from activitygraphs.locations.geometric import ActivityGraphBuilder, ActivityDataset
 
     try:
         dataset = ActivityDataset.from_files(cfg.data, project_root, name=network_name)

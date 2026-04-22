@@ -17,7 +17,7 @@ with app.setup:
 
 @app.cell
 def _():
-    from activitygraphs.geometric import ActivityDataset
+    from activitygraphs.locations.geometric import ActivityDataset
 
     network_name = "stops"
 
@@ -116,10 +116,6 @@ def _(losses):
 
 @app.cell
 def _():
-    import matplotlib.pyplot as plt
-
-
-
     return
 
 

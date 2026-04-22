@@ -180,7 +180,7 @@ class ActivityDataset(Dataset):
 
     @classmethod
     def _dir(cls, cfg: DataConfig, project_root: Path | None = None, name: str | None = None):
-        project_root = project_root if project_root is not None else Path(".")
+        project_root = project_root if project_root is not None else Path("..")
         suffix = "" if name is None else f"-{name}"
         return project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
 
