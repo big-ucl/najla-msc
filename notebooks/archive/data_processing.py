@@ -60,7 +60,7 @@ def _(Path, cfg, mo, run_button):
 
     mo.stop(not run_button.value, mo.md("Click button above to run conversion"))
 
-    _files = (Path(s) for s in cfg.files.values())
+    _files = (Path(s) for s in cfg.inputs.values())
     convert_excel_to_parquet(cfg.data.paths.raw, *_files)
     return
 
@@ -80,7 +80,6 @@ def _(mo):
 
 @app.cell
 def _(cfg, mo, reprocess_button):
-    import exploration.dataprocessing as dp
 
     from exploration.dataprocessing import ActivityDataset
     from data.ltds import read_and_process_ltds
@@ -184,7 +183,6 @@ def _(dataset, interesting_hh_id, mo, new_graph_switch):
             if hh_id in dataset.trip_df["hh_id"]:
                 return hh_id
 
-
     new_graph_button = mo.ui.button(
         label="Sample new graph from dataset ",
         disabled=not new_graph_switch.value,
@@ -228,7 +226,6 @@ def _(ax, cly, generate_map_toggle, gpd, hh_graph, mo):
         ax = geo.plot(ax=ax)
         cly.add_basemap(ax, crs=geo.crs.to_string(), attribution=False)
         return ax
-
 
     mo.stop(not generate_map_toggle.value)
 

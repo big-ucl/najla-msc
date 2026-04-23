@@ -28,12 +28,18 @@ def _():
 
 @app.cell
 def _(gva_data):
+    from activitygraphs.dataprocessing import load_gva_network_graph
+
+    network_nodes, network_edges = load_gva_network_graph(gva_data, cfg.data, project_root)
+    return network_edges, network_nodes
+
+
+@app.cell
+def _(gva_data):
     _group_keys = ["user_id", "journey_id"]
 
     _locations = gva_data.locations_df.select("loc_id", "type")
-    _modes = gva_data.user_journeys_df.group_by(
-        _group_keys, maintain_order=True
-    ).agg(modes="leg_mode")
+    _modes = gva_data.user_journeys_df.group_by(_group_keys, maintain_order=True).agg(modes="leg_mode")
     _trips = (
         gva_data.user_journeys_df
         .group_by(_group_keys, maintain_order=True)
@@ -50,7 +56,6 @@ def _(gva_data):
             pl.col("arr_purpose").list.last(),
         )
     )
-
 
     trips = (
         _trips
@@ -82,12 +87,7 @@ def _(trips):
         .sort("user_id")
     )
 
-    visits_by_purpose = (
-        visits
-        .group_by("user_id", "purpose")
-        .agg(pl.col("loc_id").unique())
-        .sort("user_id")
-    )
+    visits_by_purpose = visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
     visits_by_purpose
     return visits, visits_by_purpose
 
@@ -134,7 +134,6 @@ def _(gpd, locations, visits, visits_by_purpose):
     work_locations = visits_by_purpose.filter(purpose="od_lieu_travail").with_columns(pl.col("loc_id").list.len())
     edu_locations = visits_by_purpose.filter(purpose="od_lieu_etude").with_columns(pl.col("loc_id").list.len())
 
-
     def add_user_cols(nodes: gpd.GeoDataFrame, user_id: str) -> pl.DataFrame:
         nodes = nodes.copy().reset_index()
 
@@ -148,7 +147,14 @@ def _(gpd, locations, visits, visits_by_purpose):
         nodes["is_edu"] = nodes["loc_id"].isin(edu_location).astype(int)
         nodes["is_visited"] = nodes["loc_id"].isin(user_visits).astype(int)
 
-        visit_purposes = visits.filter(user_id=user_id).select("loc_id", pl.col("purpose")).group_by("loc_id").agg(pl.col("purpose").str.join(", ")).to_pandas()
+        visit_purposes = (
+            visits
+            .filter(user_id=user_id)
+            .select("loc_id", pl.col("purpose"))
+            .group_by("loc_id")
+            .agg(pl.col("purpose").str.join(", "))
+            .to_pandas()
+        )
         nodes = nodes.merge(visit_purposes, on="loc_id", how="left")
         nodes = nodes.set_index("loc_id").sort_index()
 
@@ -172,43 +178,14 @@ def _():
     import geopandas as gpd
     import pandas as pd
 
-    return gpd, pd
+    return (gpd,)
 
 
 @app.cell
 def _(locations):
-
     CRS = "EPSG:4326"
     utm_crs = locations.estimate_utm_crs()
-    return CRS, utm_crs
-
-
-@app.cell
-def _(locations):
-    from activitygraphs.data.overture import Overture
-
-    overture = Overture.load(locations, cfg.data.files.overture, project_root)
-    return (overture,)
-
-
-@app.cell
-def _(locations, overture):
-    overture.add_land_uses(locations)
-    return
-
-
-@app.cell
-def _(locations, overture):
-    overture.add_poi_counts(locations)
-    return
-
-
-@app.cell
-def _(locations):
-    from activitygraphs.data.statistics import add_statistics
-
-    add_statistics(locations, cfg.data.files.statistics)
-    return
+    return (CRS,)
 
 
 @app.cell(hide_code=True)
@@ -225,51 +202,6 @@ def _():
     ### Enhance node features
     """)
     return
-
-
-@app.cell
-def _(gpd, locations, statistics, utm_crs):
-    def add_pop_empl_stats(
-        locations: gpd.GeoDataFrame,
-        statistics: gpd.GeoDataFrame,
-        utm_crs,
-        normalise=True,
-    ):
-        original_locations = locations
-        locations = (
-            locations.reset_index()[["loc_id", "geometry"]].to_crs(utm_crs).copy()
-        )
-        locations["area"] = locations.geometry.area
-
-        intersection = locations.sjoin(
-            statistics.to_crs(utm_crs), how="left", predicate="intersects"
-        )
-        stats_by_sector = intersection.groupby("loc_id")[
-            ["population", "jobs"]
-        ].sum()
-
-        if normalise:
-            stats_by_sector = stats_by_sector.merge(
-                locations[["loc_id", "area"]], on="loc_id"
-            )
-            stats_by_sector["population"] = (
-                stats_by_sector["population"] / stats_by_sector["area"]
-            )
-            stats_by_sector["jobs"] = (
-                stats_by_sector["jobs"] / stats_by_sector["area"]
-            )
-            stats_by_sector = stats_by_sector.drop(columns=["area"])
-
-        stats_by_sector = original_locations.merge(
-            stats_by_sector, on="loc_id", how="right"
-        )
-        stats_by_sector["area"] = stats_by_sector.to_crs(utm_crs).geometry.area
-
-        return stats_by_sector
-
-
-    add_pop_empl_stats(locations, statistics, utm_crs)
-    return (add_pop_empl_stats,)
 
 
 @app.cell(hide_code=True)
@@ -290,101 +222,13 @@ def _():
 
     processed_path.mkdir(parents=True, exist_ok=True)
     network_path.mkdir(parents=True, exist_ok=True)
-    return c2g, dataset_path, network_path
+    return c2g, dataset_path
 
 
 @app.cell
 def _(visits):
     user_ids = visits["user_id"].unique().sort()
     return (user_ids,)
-
-
-@app.cell
-def _(
-    CRS,
-    add_land_uses,
-    add_poi_counts,
-    add_pop_empl_stats,
-    c2g,
-    gpd,
-    land_use,
-    locations,
-    network_path,
-    pd,
-    places,
-    statistics,
-    utm_crs,
-):
-    def build_network_graph(
-        locations: gpd.GeoDataFrame,
-        places: gpd.GeoDataFrame,
-        land_use: gpd.GeoDataFrame,
-        statistics: gpd.GeoDataFrame,
-        utm_crs,
-    ):
-        locations = locations.to_crs(utm_crs)
-
-        network_locations = add_pop_empl_stats(locations, statistics, utm_crs)
-        network_locations = add_poi_counts(network_locations, places, utm_crs)
-        network_locations = add_land_uses(network_locations, land_use, utm_crs)
-
-        network_locations = network_locations.set_index("loc_id")
-
-        nodes, edges = c2g.contiguity_graph(
-            network_locations, set_point_nodes=True
-        )
-
-        # Connect disconnected subsectors to main graph
-        island_loc_ids = [
-            "subsector-174",
-            "subsector-141",
-            "subsector-10",
-            "subsector-325",
-        ]
-        cross_lake_loc_ids = ["subsector-243", "subsector-261", "subsector-54"]
-        island_nodes = nodes[nodes.index.isin(island_loc_ids)]
-        mainland_nodes = nodes[
-            ~nodes.index.isin(island_loc_ids)
-            & ~nodes.index.isin(cross_lake_loc_ids)
-        ]
-
-        _, island_edges = c2g.knn_graph(
-            island_nodes, k=3, target_gdf=mainland_nodes
-        )
-        island_edges = island_edges.reset_index()
-        island_edges["source"] = island_edges["source"].str[1]
-        island_edges["target"] = island_edges["target"].str[1]
-        island_edges = island_edges.set_index(["source", "target"])
-
-        nodes = nodes.to_crs(CRS)
-        edges = pd.concat([edges, island_edges]).to_crs(CRS)
-
-        return nodes, edges
-
-
-    mo.stop(False)
-
-    _network_nodes, _network_edges = build_network_graph(
-        locations, places, land_use, statistics, utm_crs
-    )
-
-    _network_nodes.to_parquet(network_path / "nodes.parquet")
-    _network_edges.to_parquet(network_path / "edges.parquet")
-    return
-
-
-@app.cell
-def _(gpd, network_path):
-    network_nodes = gpd.read_parquet(network_path / "nodes.parquet")
-    network_edges = gpd.read_parquet(network_path / "edges.parquet")
-    return network_edges, network_nodes
-
-
-@app.cell
-def _():
-    run_gen = mo.ui.run_button()
-    run_gen
-    return (run_gen,)
 
 
 @app.cell
@@ -397,7 +241,6 @@ def _(
     run_gen,
     user_ids,
 ):
-    from tqdm import tqdm
     import pickle
 
     import torch_geometric.transforms as T
@@ -419,12 +262,9 @@ def _(
 
     node_counts = []
 
-
     def build_graph(user_id):
         indiv_nodes = add_user_cols(network_nodes, user_id)
-        node_feature_cols = [
-            col for col in indiv_nodes.columns if col not in _excluded_feature_cols
-        ]
+        node_feature_cols = [col for col in indiv_nodes.columns if col not in _excluded_feature_cols]
 
         indiv_graph = c2g.gdf_to_pyg(
             indiv_nodes,
@@ -448,13 +288,9 @@ def _(
 
         return transforms(indiv_graph)
 
-
     mo.stop(not run_gen.value)
 
-    _graphs = Parallel(n_jobs=-1)(
-        delayed(build_graph)(user_id) for user_id in user_ids
-    )
-
+    _graphs = Parallel(n_jobs=-1)(delayed(build_graph)(user_id) for user_id in user_ids)
 
     with open(dataset_path, "wb") as _f:
         pickle.dump(_graphs, _f)
@@ -464,17 +300,15 @@ def _(
 @app.cell
 def _(dataset_path):
     with open(dataset_path, "rb") as _f:
-        pass #graphs = pickle.load(_f)
+        pass  # graphs = pickle.load(_f)
 
-    #graphs
+    # graphs
     return
 
 
 @app.cell
 def _(user_id, user_ids):
-    select_user_id = mo.ui.dropdown(
-        user_ids, value=user_id, label="User ID:", searchable=True
-    )
+    select_user_id = mo.ui.dropdown(user_ids, value=user_id, label="User ID:", searchable=True)
     return (select_user_id,)
 
 
@@ -487,9 +321,7 @@ def _(add_user_cols, network_nodes, select_user_id):
 
 @app.cell
 def _(user_nodes):
-    select_node_col = mo.ui.dropdown(
-        list(user_nodes.columns), searchable=True, label="Column:", value="purpose"
-    )
+    select_node_col = mo.ui.dropdown(list(user_nodes.columns), searchable=True, label="Column:", value="purpose")
     return (select_node_col,)
 
 
@@ -507,20 +339,12 @@ def _(
     toggle_polygons,
     user_nodes,
 ):
-    _nodes = (
-        user_nodes.set_geometry("original_geometry")
-        if toggle_polygons.value
-        else user_nodes
-    )
+    _nodes = user_nodes.set_geometry("original_geometry") if toggle_polygons.value else user_nodes
     _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
-    _m = _nodes.explore(
-        m=_m, column=select_node_col.value, marker_kwds={"radius": 5}
-    )
+    _m = _nodes.explore(m=_m, column=select_node_col.value, marker_kwds={"radius": 5})
 
     mo.vstack([
-        mo.hstack(
-            [select_user_id, select_node_col, toggle_polygons], justify="start"
-        ),
+        mo.hstack([select_user_id, select_node_col, toggle_polygons], justify="start"),
         _m,
     ])
     return
@@ -536,8 +360,6 @@ def _():
 
 @app.cell
 def _():
-    import numpy as np
-
     return
 
 
@@ -563,7 +385,6 @@ def _(train_dataset):
 
     mlp = build_mlp(train_dataset, 3, 128, 0.2)
     mlp.load_state_dict(torch.load(project_root / "models" / "MLP.pth", weights_only=True))
-
 
     gat, mlp
     return (gat,)
@@ -604,20 +425,12 @@ def _(
     _pred_nodes = user_nodes.copy().sort_index()
     _pred_nodes["predictions"] = preds
 
-    nodes = (
-        _pred_nodes.set_geometry("original_geometry")
-        if toggle_polygons.value
-        else _pred_nodes
-    )
+    nodes = _pred_nodes.set_geometry("original_geometry") if toggle_polygons.value else _pred_nodes
     _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
-    _m = nodes.explore(
-        m=_m, column="predictions", marker_kwds={"radius": 5}
-    )
+    _m = nodes.explore(m=_m, column="predictions", marker_kwds={"radius": 5})
 
     mo.vstack([
-        mo.hstack(
-            [select_user_id, select_node_col, toggle_polygons], justify="start"
-        ),
+        mo.hstack([select_user_id, select_node_col, toggle_polygons], justify="start"),
         _m,
     ])
     return (nodes,)

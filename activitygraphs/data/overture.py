@@ -6,7 +6,7 @@ import geopandas as gpd
 import pandas as pd
 
 from activitygraphs.base import CRS
-from activitygraphs.config import OvertureFiles
+from activitygraphs.config import OvertureInputs
 
 
 class Overture:
@@ -88,7 +88,7 @@ class Overture:
 
     @classmethod
     def load(
-        cls, locations: gpd.GeoDataFrame | gpd.GeoSeries, cfg: OvertureFiles, project_root: Path | None = None
+        cls, locations: gpd.GeoDataFrame | gpd.GeoSeries, cfg: OvertureInputs, project_root: Path | None = None
     ) -> Self:
         project_root: Path = project_root if project_root is not None else Path(".")
 

@@ -132,17 +132,17 @@ def load_files(cfg: GenevaDataConfig, project_root: Path | None = None) -> Genev
     def parse_gtfs_date(*cols: str) -> pl.Expr:
         return pl.col(*cols).cast(pl.String).str.to_date("%Y%m%d")
 
-    project_root = project_root if project_root is not None else Path(".")
+    project_root: Path = project_root if project_root is not None else Path(".")
 
     raw_path = project_root / cfg.paths.raw
 
-    boundaries_path = project_root / cfg.paths.boundaries
-    boundaries_files = cfg.files.boundaries
+    boundaries_path = project_root / cfg.inputs.boundaries.directory
+    boundaries_files = cfg.inputs.boundaries
 
     gtfs_path = project_root / cfg.paths.gtfs
-    gtfs_files = cfg.files.gtfs
+    gtfs_files = cfg.inputs.gtfs
 
-    raw_journeys_df = pl.read_parquet(raw_path / cfg.files.raw_journeys)
+    raw_journeys_df = pl.read_parquet(raw_path / cfg.inputs.raw_journeys)
 
     subsectors_gdf = gpd.read_file(boundaries_path / boundaries_files.geneva_subsectors).to_crs(CRS)
     postcodes_gdf = gpd.read_file(boundaries_path / boundaries_files.swiss_postcodes).to_crs(CRS)
@@ -627,7 +627,7 @@ def _read_raw_data(data_cfg: DataConfig, project_root=None) -> pl.DataFrame:
     data_path = project_root / data_cfg.paths.raw
 
     raw_geneva_df = dp.read_from_parquet(
-        data_path / data_cfg.files.raw_journeys,
+        data_path / data_cfg.inputs.raw_journeys,
         schema={
             "id_utilisateur": pl.String,
             "id_deplacement": pl.Categorical,

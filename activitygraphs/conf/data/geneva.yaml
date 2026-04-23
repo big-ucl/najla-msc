@@ -1,7 +1,7 @@
 # @package data
 name: GenevaTPG
 
-files:
+inputs:
   raw_journeys: tpg_od.parquet
 
   overture:
@@ -12,6 +12,8 @@ files:
   statistics: ${..paths.external}/statistics/${..name}/AGGLO_CARREAU_200-SHP.zip
 
   boundaries:
+    directory: ${...paths.external}/boundaries
+
     geneva_subsectors: GEO_GIREC-SHP/GEO_GIREC.shp
     french_postcodes: code_postaux_V5/codes_postaux_region.shp
     swiss_postcodes: ortschaftenverzeichnis_plz_2056.shp/AMTOVZ_SHP_LV95/AMTOVZ_ZIP.shp
@@ -36,7 +38,6 @@ paths:
 
   external: data/external
   gtfs: ${..paths.external}/gtfs
-  boundaries: ${..paths.external}/boundaries
 
   act_dataset: ${..paths.processed}/act_dataset
   graphs: ${..paths.processed}/graphs

@@ -42,7 +42,7 @@ def _(mo):
 
 @app.cell
 def _(cfg, pl, project_root):
-    raw_path = project_root / cfg.data.paths.raw / cfg.data.files.raw_trips
+    raw_path = project_root / cfg.data.paths.raw / cfg.data.inputs.raw_trips
 
     df = pl.read_parquet(raw_path)
     df
@@ -320,7 +320,8 @@ def _(french_path, gpd, pl, postcodes_path, stops_path, subsectors_path):
 @app.cell
 def _(gpd, stops, subsectors_gdf, swiss_boundaries_path):
     geneva_gdf = (
-        gpd.read_file(swiss_boundaries_path, layer="swissBOUNDARIES3D_1_5_TLM_KANTONSGEBIET")
+        gpd
+        .read_file(swiss_boundaries_path, layer="swissBOUNDARIES3D_1_5_TLM_KANTONSGEBIET")
         .to_crs("EPSG:4326")
         .query("NAME == 'Genève'")
     )

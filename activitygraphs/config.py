@@ -6,7 +6,7 @@ from omegaconf import OmegaConf
 
 
 @dataclass
-class GTFSFiles:
+class GTFSInputs:
     directory: str
 
     stops: str
@@ -20,14 +20,16 @@ class GTFSFiles:
 
 
 @dataclass
-class OvertureFiles:
+class OvertureInputs:
     directory: str
     land_use: str
     place: str
 
 
 @dataclass
-class GenevaBoundaryFiles:
+class GenevaBoundaryInputs:
+    directory: str
+
     geneva_subsectors: str
     french_postcodes: str
     swiss_postcodes: str
@@ -36,13 +38,13 @@ class GenevaBoundaryFiles:
 
 
 @dataclass
-class InputFiles:
+class Inputs:
     raw_journeys: str
-    overture: OvertureFiles
+    overture: OvertureInputs
 
 
 @dataclass
-class LTDSInputFiles(InputFiles):
+class LTDSInputs(Inputs):
     raw_household: str
     raw_person: str
     raw_trip: str
@@ -50,9 +52,9 @@ class LTDSInputFiles(InputFiles):
 
 
 @dataclass
-class GenevaInputFiles(InputFiles):
-    boundaries: GenevaBoundaryFiles
-    gtfs: GTFSFiles
+class GenevaInputs(Inputs):
+    boundaries: GenevaBoundaryInputs
+    gtfs: GTFSInputs
     statistics: Path
 
 
@@ -63,7 +65,6 @@ class DataPaths:
 
     external: Path
     gtfs: Path
-    boundaries: Path
 
     act_dataset: Path
     graphs: Path
@@ -73,18 +74,18 @@ class DataPaths:
 @dataclass
 class DataConfig:
     name: str
-    files: InputFiles
+    inputs: Inputs
     paths: DataPaths
 
 
 @dataclass
 class LTDSDataConfig(DataConfig):
-    files: LTDSInputFiles
+    inputs: LTDSInputs
 
 
 @dataclass
 class GenevaDataConfig(DataConfig):
-    files: GenevaInputFiles
+    inputs: GenevaInputs
 
 
 @dataclass

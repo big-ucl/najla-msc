@@ -3,7 +3,7 @@ from pathlib import Path
 import geopandas as gpd
 
 
-def add_statistics(
+def add_population_job_statistics(
     locations: gpd.GeoDataFrame, path: Path, normalise: bool = True, project_root: Path | None = None
 ) -> gpd.GeoDataFrame:
     project_root: Path = project_root if project_root is not None else Path(".")

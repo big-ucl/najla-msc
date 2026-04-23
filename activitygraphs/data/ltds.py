@@ -197,14 +197,14 @@ def _read_raw_data(data_cfg: DataConfig, project_root=None) -> tuple[pl.DataFram
     data_path = project_root / data_cfg.paths.raw
 
     raw_household_df = dp.read_from_parquet(
-        data_path / data_cfg.files.raw_household,
+        data_path / data_cfg.inputs.raw_household,
         schema={
             "hhid": pl.String,
         },
     )
 
     raw_person_df = dp.read_from_parquet(
-        data_path / data_cfg.files.raw_person,
+        data_path / data_cfg.inputs.raw_person,
         schema={
             "phid": pl.String,
             "ppid": pl.String,
@@ -212,7 +212,7 @@ def _read_raw_data(data_cfg: DataConfig, project_root=None) -> tuple[pl.DataFram
     )
 
     raw_trip_df = dp.read_from_parquet(
-        data_path / data_cfg.files.raw_trip,
+        data_path / data_cfg.inputs.raw_trip,
         schema={
             "thid": pl.String,
             "tpid": pl.String,
@@ -361,7 +361,8 @@ def _create_location_df(
     ]).unique()
 
     return (
-        pl.concat([hh_locs, person_locs, trip_locs])
+        pl
+        .concat([hh_locs, person_locs, trip_locs])
         .unique()
         .filter(is_ltds_entry_valid("loc_id") & is_ltds_entry_valid("ltds_muni_id", dtype="int"))
         .with_columns(
