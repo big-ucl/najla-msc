@@ -81,6 +81,30 @@ class NetworkData(ABC):
 
         return all_visits.group_by("user_id", "purpose", "loc_id").agg(num_visits=pl.len()).sort("user_id")
 
+    @cached_property
+    def location_visits_by_purpose(self) -> pl.DataFrame:
+        return self.location_visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
+
+    @cached_property
+    def home_locations(self) -> pl.DataFrame:
+        return self.location_visits_by_purpose.filter(purpose="od_lieu_domicile").with_columns(
+            pl.col("loc_id").list.first()
+        )
+
+    @cached_property
+    def work_locations(self) -> pl.DataFrame:
+        return self.location_visits_by_purpose.filter(purpose="od_lieu_travail").with_columns(
+            pl.col("loc_id").list.len()
+        )
+
+    @cached_property
+    def edu_locations(self) -> pl.DataFrame:
+        return self.location_visits_by_purpose.filter(purpose="od_lieu_etude").with_columns(pl.col("loc_id").list.len())
+
+    @cached_property
+    def user_ids(self) -> pl.Series:
+        return self.location_visits["user_id"].unique().sort()
+
     def with_filter(self, loc_types: str | list[str]) -> Self:
         filters = [loc_types] if isinstance(loc_types, str) else loc_types
         return self._copy(filters)

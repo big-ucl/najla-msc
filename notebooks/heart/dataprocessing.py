@@ -34,240 +34,69 @@ def _(gva_data):
     return network_edges, network_nodes
 
 
+@app.cell(hide_code=True)
+def _():
+    run_graph_gen = mo.ui.run_button(kind="warn", label="Load PyG Graphs")
+    run_graph_gen
+    return (run_graph_gen,)
+
+
 @app.cell
+def _(gva_data, network_edges, network_nodes, run_graph_gen):
+    from activitygraphs.dataprocessing import load_pyg_dataset
+
+    mo.stop(not run_graph_gen.value)
+
+    graphs = load_pyg_dataset(gva_data, network_nodes, network_edges, cfg.data, project_root)
+    graphs
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Visualising network and individual graphs
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(gva_data):
-    visits = gva_data.with_filter("subsector").location_visits
-    visits_by_purpose = visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
-    visits_by_purpose
-    return visits, visits_by_purpose
+    from activitygraphs.dataprocessing import add_user_cols
+
+    user_ids = gva_data.with_filter("subsector").user_ids
+    select_user_id = mo.ui.dropdown(user_ids, value=user_ids[0], label="User ID:", searchable=True)
+    return add_user_cols, select_user_id
 
 
 @app.cell
-def _(gva_data, home_locations):
-    home_locations2 = gva_data.location_visits_by_purpose.filter(purpose="od_lieu_domicile").with_columns(pl.col("loc_id").list.first())
-
-    home_locations.equals(gva_data.filter_by_loc_type(home_locations2, "subsector"))
-    return
-
-
-@app.cell
-def _(gva_data):
-    gva_data.locations_df
-    return
-
-
-@app.cell
-def _(gpd, locations, visits, visits_by_purpose):
-    home_locations = visits_by_purpose.filter(purpose="od_lieu_domicile").with_columns(pl.col("loc_id").list.first())
-    work_locations = visits_by_purpose.filter(purpose="od_lieu_travail").with_columns(pl.col("loc_id").list.len())
-    edu_locations = visits_by_purpose.filter(purpose="od_lieu_etude").with_columns(pl.col("loc_id").list.len())
-
-    def add_user_cols(nodes: gpd.GeoDataFrame, user_id: str) -> pl.DataFrame:
-        nodes = nodes.copy().reset_index()
-
-        home_location = home_locations.filter(user_id=user_id)["loc_id"].to_list()
-        work_location = work_locations.filter(user_id=user_id)["loc_id"].to_list()
-        edu_location = edu_locations.filter(user_id=user_id)["loc_id"].to_list()
-        user_visits = visits.filter(user_id=user_id)["loc_id"].to_list()
-
-        nodes["is_home"] = nodes["loc_id"].isin(home_location).astype(int)
-        nodes["is_work"] = nodes["loc_id"].isin(work_location).astype(int)
-        nodes["is_edu"] = nodes["loc_id"].isin(edu_location).astype(int)
-        nodes["is_visited"] = nodes["loc_id"].isin(user_visits).astype(int)
-
-        visit_purposes = (
-            visits
-            .filter(user_id=user_id)
-            .select("loc_id", pl.col("purpose"))
-            .group_by("loc_id")
-            .agg(pl.col("purpose").str.join(", "))
-            .to_pandas()
-        )
-        nodes = nodes.merge(visit_purposes, on="loc_id", how="left")
-        nodes = nodes.set_index("loc_id").sort_index()
-
-        return nodes
-
-    _user_id = "20704"
-    add_user_cols(locations, _user_id)
-    return add_user_cols, home_locations
+def _(add_user_cols, gva_data, network_nodes, select_user_id):
+    indiv_nodes = add_user_cols(select_user_id.value, network_nodes, gva_data.location_visits, gva_data.home_locations, gva_data.work_locations, gva_data.edu_locations)
+    indiv_nodes
+    return (indiv_nodes,)
 
 
 @app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ## Adding POI and land use information
-    """)
-    return
-
-
-@app.cell
-def _():
-    import geopandas as gpd
-    import pandas as pd
-
-    return (gpd,)
-
-
-@app.cell
-def _(locations):
-    CRS = "EPSG:4326"
-    utm_crs = locations.estimate_utm_crs()
-    return (CRS,)
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Load external data
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Enhance node features
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ## Individual graph creation
-    """)
-    return
-
-
-@app.cell
-def _():
-    import city2graph as c2g
-
-    processed_path = project_root / cfg.data.paths.processed / "GenevaTPG2"
-    dataset_path = processed_path / "dataset.pickle"
-    network_path = processed_path / "networkgraph"
-
-    processed_path.mkdir(parents=True, exist_ok=True)
-    network_path.mkdir(parents=True, exist_ok=True)
-    return c2g, dataset_path
-
-
-@app.cell
-def _(visits):
-    user_ids = visits["user_id"].unique().sort()
-    return (user_ids,)
-
-
-@app.cell
-def _(
-    add_user_cols,
-    c2g,
-    dataset_path,
-    network_edges,
-    network_nodes,
-    run_gen,
-    user_ids,
-):
-    import pickle
-
-    import torch_geometric.transforms as T
-
-    from joblib import Parallel, delayed
-
-    _excluded_feature_cols = [
-        "loc_name",
-        "type",
-        "lon",
-        "lat",
-        "is_work",
-        "is_edu",
-        "is_visited",
-        "purpose",
-        "geometry",
-        "original_geometry",
-    ]
-
-    node_counts = []
-
-    def build_graph(user_id):
-        indiv_nodes = add_user_cols(network_nodes, user_id)
-        node_feature_cols = [col for col in indiv_nodes.columns if col not in _excluded_feature_cols]
-
-        indiv_graph = c2g.gdf_to_pyg(
-            indiv_nodes,
-            network_edges,
-            node_feature_cols=node_feature_cols,
-            node_label_cols=["is_visited"],
-            edge_feature_cols=["weight"],
-            keep_geom=False,
-            device="cpu",
-        )
-
-        indiv_graph.user_id = user_id
-
-        if indiv_graph.num_nodes != 469:
-            raise ValueError(user_id, len(indiv_nodes))
-
-        transforms = T.Compose([
-            T.AddRandomWalkPE(walk_length=20, attr_name=None),
-            T.AddLaplacianEigenvectorPE(k=8, attr_name=None),
-        ])
-
-        return transforms(indiv_graph)
-
-    mo.stop(not run_gen.value)
-
-    _graphs = Parallel(n_jobs=-1)(delayed(build_graph)(user_id) for user_id in user_ids)
-
-    with open(dataset_path, "wb") as _f:
-        pickle.dump(_graphs, _f)
-    return
-
-
-@app.cell
-def _(dataset_path):
-    with open(dataset_path, "rb") as _f:
-        pass  # graphs = pickle.load(_f)
-
-    # graphs
-    return
-
-
-@app.cell
-def _(user_id, user_ids):
-    select_user_id = mo.ui.dropdown(user_ids, value=user_id, label="User ID:", searchable=True)
-    return (select_user_id,)
-
-
-@app.cell
-def _(add_user_cols, network_nodes, select_user_id):
-    _user_id = select_user_id.value
-    user_nodes = add_user_cols(network_nodes, _user_id)
-    return (user_nodes,)
-
-
-@app.cell
-def _(user_nodes):
-    select_node_col = mo.ui.dropdown(list(user_nodes.columns), searchable=True, label="Column:", value="purpose")
+def _(indiv_nodes):
+    select_node_col = mo.ui.dropdown(list(indiv_nodes.columns), searchable=True, label="Column:")
     return (select_node_col,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     toggle_polygons = mo.ui.switch(value=False, label="Show subsectors")
     return (toggle_polygons,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
+    indiv_nodes,
     network_edges,
     select_node_col,
     select_user_id,
     toggle_polygons,
-    user_nodes,
 ):
-    _nodes = user_nodes.set_geometry("original_geometry") if toggle_polygons.value else user_nodes
+    _nodes = indiv_nodes.set_geometry("original_geometry") if toggle_polygons.value else indiv_nodes
     _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
     _m = _nodes.explore(m=_m, column=select_node_col.value, marker_kwds={"radius": 5})
 
@@ -288,6 +117,7 @@ def _():
 
 @app.cell
 def _():
+    # TODO Move to new file
     return
 
 
@@ -324,7 +154,7 @@ def _(test_dataset):
     data = test_dataset[index]
     user_id = data.user_id
     data
-    return data, user_id
+    return (data,)
 
 
 @app.cell

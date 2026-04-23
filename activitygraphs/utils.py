@@ -14,6 +14,11 @@ TDataFrame = TypeVar("TDataFrame", gpd.GeoDataFrame, pl.DataFrame)
 TSchema = TypeVar("TSchema", pl.Schema, PandasSchema)
 
 
+def get_project_root(project_root: Path | None = None) -> Path:
+    project_root: Path = project_root if project_root is not None else Path(".")
+    return project_root
+
+
 def check_schema(df: TDataFrame, schema: TSchema, ignore_extra_cols: bool = False) -> TDataFrame:
     """Checks that a DataFrame matches provided Schema.
 
