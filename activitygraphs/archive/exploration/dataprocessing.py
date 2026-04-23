@@ -9,26 +9,6 @@ from pyproj import Transformer
 from activitygraphs.utils import check_schema
 
 
-def convert_excel_to_parquet(data_path: Path, *files: Path) -> list[Path]:
-    new_files = []
-
-    for file in files:
-        df = pl.read_excel(data_path / file)
-
-        new_file = file.with_suffix(".parquet")
-        df.write_parquet(data_path / new_file)
-        new_files.append(new_file)
-
-    return new_files
-
-
-def read_from_parquet(path: Path, schema: dict = None) -> pl.DataFrame:
-    schema = {} if schema is None else schema
-
-    df = pl.read_parquet(path)
-    return pl.DataFrame(df, schema_overrides=schema)
-
-
 def bng_to_lat_long(df: pl.DataFrame, eastings_col: str, northings_col: str) -> tuple[np.ndarray, np.ndarray]:
     bng_epsg_code = 27700
     lat_long_epsg_code = 4326

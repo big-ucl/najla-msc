@@ -8,6 +8,7 @@ app = marimo.App(width="medium")
 def _():
     import marimo as mo
     import plotting
+
     return mo, plotting
 
 
@@ -16,6 +17,7 @@ def _():
     import math
     import torch
     import torch.nn.functional as F
+
     return F, math, torch
 
 
@@ -42,10 +44,9 @@ def _(mo):
 
 @app.cell
 def _():
-    import networkx as nx
     import numpy as np
-    import polars as pl
     import matplotlib.pyplot as plt
+
     return np, plt
 
 
@@ -195,13 +196,11 @@ def _(mo, n_samples):
 
 @app.cell(hide_code=True)
 def _(mo, plotting, schedules, selected_person):
-    mo.vstack(
-        [
-            mo.md("Generated schedules: "),
-            selected_person,
-            plotting.draw_synthetic_trip(schedules, selected_person.value),
-        ]
-    )
+    mo.vstack([
+        mo.md("Generated schedules: "),
+        selected_person,
+        plotting.draw_synthetic_trip(schedules, selected_person.value),
+    ])
     return
 
 
@@ -258,7 +257,7 @@ def _(mo):
 
 @app.cell
 def _(dataset):
-    from models import SimpleGCN
+    from ml.models import SimpleGCN
 
     gcn = SimpleGCN(in_channels=dataset.num_features, hidden_channels=32, out_channels=dataset.num_features)
     gcn
@@ -267,7 +266,7 @@ def _(dataset):
 
 @app.cell
 def _(dataset):
-    from models import MLP
+    from ml.models import MLP
 
     mlp = MLP(n_nodes=dataset.num_nodes, n_graph_x=1, hidden_channels=32, num_layers=2)
     mlp
@@ -282,7 +281,7 @@ def _(mo):
 
 @app.cell
 def _(test_set, train_set):
-    from experiment import Experiment, run_experiment
+    from ml.experiment import Experiment, run_experiment
 
     experiment = Experiment(
         train_set=train_set,
@@ -319,8 +318,8 @@ def _(synth_graph):
 
 @app.cell
 def _(synth_graph):
-    from models import EqualProbability, BestGuess
-    from experiment import compute_benchmark
+    from ml.models import EqualProbability, BestGuess
+    from ml.experiment import compute_benchmark
 
     equal_model = EqualProbability()
     best_model = BestGuess.from_graph(synth_graph)
@@ -419,13 +418,11 @@ def _(
 ):
     sample = experiment.test_set[get_prediction_idx()]
 
-    mo.vstack(
-        [
-            mo.md("Comparison of predictions between models and benchmarks: "),
-            mo.hstack([prev_btn, mo.md(f"Sample #{get_prediction_idx()}/{n_test_samples - 1}"), next_btn], align="center"),
-            plot_models(sample, [gcn, mlp], [best_model]),
-        ]
-    )
+    mo.vstack([
+        mo.md("Comparison of predictions between models and benchmarks: "),
+        mo.hstack([prev_btn, mo.md(f"Sample #{get_prediction_idx()}/{n_test_samples - 1}"), next_btn], align="center"),
+        plot_models(sample, [gcn, mlp], [best_model]),
+    ])
     return
 
 
@@ -446,7 +443,6 @@ def _(experiment, mo):
         next_button = mo.ui.button(on_click=_increase, label="Next")
 
         return prev_button, next_button, get_prediction
-
 
     n_test_samples = len(experiment.test_set)
     prev_btn, next_btn, get_prediction_idx = create_prev_next_buttons(n_test_samples)
@@ -492,6 +488,7 @@ def _(F, math, plotting, plt, synth_graph, torch):
         fig.suptitle("Comparison of predictions")
 
         return fig
+
     return (plot_models,)
 
 

@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 from torch_geometric.data.data import BaseData
 from tqdm import tqdm
 
-from activitygraphs.baselines import (
+from ml.baselines import (
     UniformBaseline,
     GlobalBaseline,
     NodeBaseline,
@@ -17,8 +17,8 @@ from activitygraphs.baselines import (
     IS_HOME_COL_IDX,
 )
 from activitygraphs.config import Config
-from activitygraphs.experiment import run_experiment, evaluate_baseline, compute_training_weights
-from activitygraphs.models import GATSkip, NodeMLP, GraphTransformer
+from ml.experiment import run_experiment, evaluate_baseline, compute_training_weights
+from ml.models import GATSkip, NodeMLP, GraphTransformer
 
 
 class GenevaDataset(pyg.data.InMemoryDataset):
@@ -85,7 +85,7 @@ def load_dataset(cfg: Config, test_size: float, seed: int) -> tuple[GenevaDatase
     e_scaler = StandardScaler()
     e_scaler.fit(train_edge_attr)
 
-    print(f"Fitted scalers. Processing dataset:")
+    print("Fitted scalers. Processing dataset:")
 
     # Transform both splits
     for g in tqdm(train_dataset):
@@ -94,7 +94,7 @@ def load_dataset(cfg: Config, test_size: float, seed: int) -> tuple[GenevaDatase
     for g in tqdm(test_dataset):
         replace_scaled_features(g, e_scaler, x_scaler, non_home_cols)
 
-    print(f"Writing processed datasets")
+    print("Writing processed datasets")
 
     with open(train_path, "wb") as f:
         pickle.dump(train_dataset, f)
@@ -102,7 +102,7 @@ def load_dataset(cfg: Config, test_size: float, seed: int) -> tuple[GenevaDatase
     with open(test_path, "wb") as f:
         pickle.dump(test_dataset, f)
 
-    print(f"Done.")
+    print("Done.")
 
     return train_dataset, test_dataset
 

@@ -7,9 +7,7 @@ with app.setup:
     import marimo as mo
     import geopandas as gpd
 
-    import marimo as mo
     import polars as pl
-    import polars.selectors as cs
     from pathlib import Path
 
     from activitygraphs.config import load_config
@@ -102,14 +100,12 @@ def _(gva_data):
 
 @app.cell
 def _(gva_data, walk_travel_time_f):
-    from activitygraphs.network import Network
+    from archive.network import Network
     from activitygraphs.data.gtfs import build_pt_layer_edges
     from activitygraphs.base import PTNodeType
 
-
     def build_gva_pt_layer(locations_gdf: gpd.GeoDataFrame, pt_node_type: PTNodeType):
         return build_pt_layer_edges(locations_gdf, gva_data.gtfs, pt_node_type, drop_null_headways=True)
-
 
     def build_gva_network(name: str, pt_node_type: PTNodeType = PTNodeType.ONE_PER_ROUTE):
         network = (
@@ -144,7 +140,6 @@ def _(gva_data, walk_travel_time_f):
             return Network.load(cfg.data, project_root, name)
 
         return build_gva_network(name, pt_node_type)
-
 
     network_expanded_routes = load_gva_network("routes", PTNodeType.ONE_PER_ROUTE)
     network_collapsed_routes = load_gva_network("stops", PTNodeType.ONE_PER_STOP)
@@ -255,7 +250,9 @@ def _(network):
         "Table: Links between French municipalities and PT stops": network.get_links(
             "municipality_french", "public_transport"
         ),
-        "Table: Links between Geneva municipalities and subsectors": network.get_links("municipality_geneva", "subsector"),
+        "Table: Links between Geneva municipalities and subsectors": network.get_links(
+            "municipality_geneva", "subsector"
+        ),
     })
     return
 

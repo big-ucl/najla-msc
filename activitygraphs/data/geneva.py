@@ -7,7 +7,6 @@ import polars as pl
 from polars import selectors as cs
 from rapidfuzz import fuzz, process
 
-import activitygraphs.exploration.dataprocessing as dp
 from activitygraphs import utils
 from activitygraphs.base import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, USER_JOURNEY_SCHEMA, Mode
 from activitygraphs.config import DataConfig, GenevaDataConfig
@@ -89,13 +88,24 @@ class GenevaInputs:
 
 
 class GenevaData(NetworkData):
-    def __init__(self, inputs: GenevaInputs, locations_gdf: gpd.GeoDataFrame, user_journeys_df: pl.DataFrame):
-        self.inputs = inputs
-        self.user_journeys_df = check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)
-        self.locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
+    def __init__(
+        self,
+        inputs: GenevaInputs,
+        locations_gdf: gpd.GeoDataFrame,
+        user_journeys_df: pl.DataFrame,
+        filters: list[str] | None = None,
+    ):
+        super().__init__(
+            user_journeys_df,
+            locations_gdf,
+            filters,
+        )
 
-        self.locations_df = utils.gdf_to_polars(self.locations_gdf)
+        self.inputs = inputs
         self.gtfs = self.inputs.gtfs
+
+    def _copy(self, filters: list[str] | None = None):
+        return GenevaData(self.inputs, self._locations_gdf, self._user_journeys_df, filters)
 
     @classmethod
     def _dirs(
@@ -626,7 +636,7 @@ def _read_raw_data(data_cfg: DataConfig, project_root=None) -> pl.DataFrame:
     project_root = project_root if project_root is not None else Path(".")
     data_path = project_root / data_cfg.paths.raw
 
-    raw_geneva_df = dp.read_from_parquet(
+    raw_geneva_df = utils.read_from_parquet(
         data_path / data_cfg.inputs.raw_journeys,
         schema={
             "id_utilisateur": pl.String,

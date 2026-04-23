@@ -29,6 +29,7 @@ def _(mo):
 def _():
     import marimo as mo
     import polars as pl
+
     return mo, pl
 
 
@@ -48,8 +49,8 @@ def _(mo):
 
 @app.cell
 def _(cfg):
-    from exploration.dataprocessing import ActivityDataset
-    from exploration.graphs import ActivityGraph
+    from archive.exploration.dataprocessing import ActivityDataset
+    from archive.exploration import ActivityGraph
 
     dataset = ActivityDataset.load(cfg.data.paths.act_dataset, cfg.data.name)
     graph = ActivityGraph.from_dataset(dataset)
@@ -65,7 +66,7 @@ def _(mo):
 
 @app.cell
 def _(cfg, graph, pl, reprocess_button):
-    from exploration.metrics import AllMetrics, WeightColumn
+    from archive.exploration.metrics import AllMetrics, WeightColumn
     from pathlib import Path
 
     metrics_dir = Path(cfg.data.paths.metrics)
@@ -149,7 +150,6 @@ def _(mean_stats_by_postcode):
 def _(Path, selected_postcode_split):
     import geopandas as gpd
 
-
     def read_geo_postcode_shapes(postcode_split: str):
         path = Path("data/external/uk-postcodes/")
         gdf = None
@@ -163,7 +163,6 @@ def _(Path, selected_postcode_split):
                 path = path / "Sectors.shp"
 
         return gpd.read_file(path)
-
 
     geo_postcode_shapes = read_geo_postcode_shapes(selected_postcode_split.value)
     return geo_postcode_shapes, gpd
@@ -180,11 +179,11 @@ def _(dataset, pl, results, selected_postcode_split):
             case "sector":
                 return pl.col(col_name).str.head(-2).alias("sector")
 
-
     _hh_person_df = dataset.hh_person_df.select("hh_id", split_postcode_col(selected_postcode_split.value))
 
     mean_stats_by_postcode = (
-        results.join(_hh_person_df, on="hh_id")
+        results
+        .join(_hh_person_df, on="hh_id")
         .drop("hh_id")
         .group_by(selected_postcode_split.value)
         .agg(pl.len().alias("n_samples"), pl.all().mean())
@@ -231,7 +230,8 @@ def _(dataset, pl, results):
     _location_df = dataset.location_df
 
     mean_stats_by_municipality = (
-        results.join(_hh_person_df, on="hh_id")
+        results
+        .join(_hh_person_df, on="hh_id")
         .join(_location_df, left_on="loc_home_loc_id", right_on="loc_id", how="left")
         .drop("hh_id", "loc_home_loc_id")
         .group_by(["municipality_id", "municipality_name"])

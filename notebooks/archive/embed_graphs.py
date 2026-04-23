@@ -18,7 +18,6 @@ def _():
     import marimo as mo
     import polars as pl
 
-    from pathlib import Path
     return mo, pl
 
 
@@ -38,8 +37,8 @@ def _(mo):
 
 @app.cell
 def _(cfg):
-    from exploration.dataprocessing import ActivityDataset
-    from exploration.graphs import ActivityGraph
+    from archive.exploration.dataprocessing import ActivityDataset
+    from archive.exploration import ActivityGraph
 
     dataset = ActivityDataset.load(cfg.data.paths.act_dataset, cfg.data.name)
     graph = ActivityGraph.from_dataset(dataset)
@@ -54,14 +53,15 @@ def _(mo):
 
 @app.cell
 def _():
-    import networkx as nx
     from plotting import draw_hh_graph
+
     return (draw_hh_graph,)
 
 
 @app.cell
 def _():
     import matplotlib.pyplot as plt
+
     return (plt,)
 
 
@@ -70,13 +70,13 @@ def _():
     import grakel as gk
     from grakel.kernels import GraphletSampling, WeisfeilerLehman, VertexHistogram
     import itertools
+
     return GraphletSampling, VertexHistogram, WeisfeilerLehman, gk, itertools
 
 
 @app.cell
 def _(graph):
     _g = graph.to_nxs()
-
 
     hh_id_1, G1 = next(_g)
     hh_id_2, G2 = next(_g)
@@ -127,20 +127,17 @@ def _(
 
         edge_labels = subgraph.edge_df.select("loc_origin_loc_id", "loc_dest_loc_id", "person_id").rows_by_key(
             ["loc_origin_loc_id", "loc_dest_loc_id"], unique=True
-        ) # TODO remove
+        )  # TODO remove
 
         return gk.Graph(edgelist, node_labels=node_labels, edge_labels=edge_labels)
-
 
     def compute_graphlet_kernel(*subgraphs: ActivityGraph):
         gk = GraphletSampling(random_state=1, k=4, sampling={"a": -1}, normalize=True)
         return gk.fit_transform(map(generate_graph, subgraphs))
 
-
     def compute_wl_kernel(*subgraphs: ActivityGraph, n_iter=2):
         gk = WeisfeilerLehman(n_iter=3, normalize=True, base_graph_kernel=VertexHistogram)
         return gk.fit_transform(map(generate_graph, subgraphs))
-
 
     kernel_matrix = compute_wl_kernel(*hh_graphs, n_iter=n_kernel_iter)
     return (kernel_matrix,)
@@ -173,15 +170,13 @@ def _(extra_data, hh_ids, kernel_matrix, n_clusters, pl):
     results_np = pca.fit_transform(kernel_matrix)
     cluster_np = cluster.fit_predict(results_np)
 
-    results = pl.DataFrame(
-        {
-            "hh_id": hh_ids,
-            "x": results_np[:, 0],
-            "y": results_np[:, 1],
-            "z": results_np[:, 2],
-            "c": cluster_np,
-        }
-    ).join(extra_data, on="hh_id")
+    results = pl.DataFrame({
+        "hh_id": hh_ids,
+        "x": results_np[:, 0],
+        "y": results_np[:, 1],
+        "z": results_np[:, 2],
+        "c": cluster_np,
+    }).join(extra_data, on="hh_id")
     return (results,)
 
 
@@ -234,19 +229,18 @@ def _(results):
 
 @app.cell
 def _(hh_graphs, hh_ids, pl):
-    extra_data = pl.DataFrame(
-        {
-            "hh_id": hh_ids,
-            "n_nodes": [g.node_df.height for g in hh_graphs],
-            "n_edges": [g.edge_df.height for g in hh_graphs],
-        }
-    )
+    extra_data = pl.DataFrame({
+        "hh_id": hh_ids,
+        "n_nodes": [g.node_df.height for g in hh_graphs],
+        "n_edges": [g.edge_df.height for g in hh_graphs],
+    })
     return (extra_data,)
 
 
 @app.cell
 def _():
     import altair as alt
+
     return (alt,)
 
 
@@ -272,7 +266,8 @@ def _(alt, extra_data):
         }
 
         main = (
-            alt.Chart(extra_data)
+            alt
+            .Chart(extra_data)
             .mark_rect()
             .encode(
                 **main_kwargs,
@@ -284,14 +279,14 @@ def _(alt, extra_data):
 
         return main + text
 
-
     def plot_heatmap(similarities):
         select_hh_1 = alt.selection_point(on="pointerover", fields=["hh_id_1"], empty=False)
 
         select_hh_2 = alt.selection_point(on="pointerover", fields=["hh_id_2"], empty=False)
 
         heatmap = (
-            alt.Chart(similarities)
+            alt
+            .Chart(similarities)
             .mark_rect()
             .encode(
                 y="hh_id_1:N",
@@ -310,6 +305,7 @@ def _(alt, extra_data):
         ).resolve_scale(x="shared", color="independent")
 
         return chart
+
     return (plot_heatmap,)
 
 

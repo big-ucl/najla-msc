@@ -16,7 +16,7 @@ from tqdm import tqdm
 from activitygraphs.base import USER_JOURNEY_SCHEMA, Mode
 from activitygraphs.config import DataConfig
 from activitygraphs.data.gtfs import PARENT_STOP_ROUTE_ID
-from activitygraphs.network import LayerType, Network
+from archive.network import LayerType, Network
 from activitygraphs.utils import check_schema
 
 type Encoder = Callable[[pd.Series | pl.Series], torch.Tensor]
@@ -180,7 +180,7 @@ class ActivityDataset(Dataset):
 
     @classmethod
     def _dir(cls, cfg: DataConfig, project_root: Path | None = None, name: str | None = None):
-        project_root = project_root if project_root is not None else Path("..")
+        project_root = project_root if project_root is not None else Path("../..")
         suffix = "" if name is None else f"-{name}"
         return project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
 

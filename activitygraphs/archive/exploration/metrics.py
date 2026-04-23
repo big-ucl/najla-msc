@@ -6,7 +6,7 @@ from typing import Iterator
 
 import networkx as nx
 import polars as pl
-from exploration.graphs import ActivityGraph
+from archive.exploration.graphs import ActivityGraph
 from tqdm.auto import tqdm
 
 # Enums

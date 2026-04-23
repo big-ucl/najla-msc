@@ -1,6 +1,6 @@
 from typing import Iterator, Self
 
-import exploration.dataprocessing as dp
+from archive import exploration as dp
 import networkx as nx
 import polars as pl
 
@@ -142,7 +142,8 @@ def _generate_node_attribute_df(hh_person_df: pl.DataFrame, trip_df: pl.DataFram
     ).unique()
 
     work_nodes = (
-        hh_person_df.filter(pl.col("loc_work_loc_id") != "-1")
+        hh_person_df
+        .filter(pl.col("loc_work_loc_id") != "-1")
         .select(
             hh_id="hh_id",
             loc_id="loc_work_loc_id",

@@ -45,7 +45,7 @@ def _():
 
 @app.cell
 def _():
-    from activitygraphs.network import Network
+    from archive.network import Network
 
     network_name = "routes"
     gva_network = Network.load(cfg.data, project_root, network_name)
@@ -65,7 +65,7 @@ def _():
 
 @app.cell
 def _(gva_network):
-    from activitygraphs.locations.geometric import network_to_pyg
+    from archive.locations import network_to_pyg
 
     base_data = network_to_pyg(gva_network)
     base_data
@@ -84,7 +84,7 @@ def _():
 
 @app.cell
 def _(base_data, gva_data, network_name):
-    from activitygraphs.locations.geometric import ActivityGraphBuilder, ActivityDataset
+    from archive.locations import ActivityGraphBuilder, ActivityDataset
 
     try:
         dataset = ActivityDataset.from_files(cfg.data, project_root, name=network_name)

@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from datasets import BasicLocationsDataset, train_test_split
-from models import Benchmark
+from ml.models import Benchmark
 from torch_geometric.loader import DataLoader
 from torch_geometric.utils import to_dense_batch
 from utils import check_schema

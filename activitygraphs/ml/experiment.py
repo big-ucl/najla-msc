@@ -3,8 +3,8 @@ import torch.nn.functional as F
 import torch_geometric as pyg
 from torch_geometric.logging import log
 
-from activitygraphs.loss import LossFn
-from activitygraphs.metrics import precision_at_k, recall_at_k, mean_reciprocal_rank, ndcg_at_k
+from ml.loss import LossFn
+from ml.metrics import precision_at_k, recall_at_k, mean_reciprocal_rank, ndcg_at_k
 
 
 def compute_training_weights(loader: pyg.loader.DataLoader) -> torch.Tensor:
@@ -173,7 +173,6 @@ def evaluate_baseline(
         "mrr": [metrics["mrr"]],
         "ndcg@5": [metrics["ndcg@5"]],
     }
-
 
 
 def run_experiment(

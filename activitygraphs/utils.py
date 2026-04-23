@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TypeVar
 
 import geopandas as gpd
@@ -138,3 +139,23 @@ def extract_unique_loc_ids(*edge_dfs: TDataFrame) -> list[str]:
         loc_dfs.append(edge_df["dest_loc_id"])
 
     return pl.concat(loc_dfs).unique().to_list()
+
+
+def convert_excel_to_parquet(data_path: Path, *files: Path) -> list[Path]:
+    new_files = []
+
+    for file in files:
+        df = pl.read_excel(data_path / file)
+
+        new_file = file.with_suffix(".parquet")
+        df.write_parquet(data_path / new_file)
+        new_files.append(new_file)
+
+    return new_files
+
+
+def read_from_parquet(path: Path, schema: dict = None) -> pl.DataFrame:
+    schema = {} if schema is None else schema
+
+    df = pl.read_parquet(path)
+    return pl.DataFrame(df, schema_overrides=schema)

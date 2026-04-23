@@ -117,7 +117,7 @@ def _():
 
 @app.cell
 def _(hidden_channels, latent_channels, train_set):
-    from models import VAE, MLPDecoder, MLPEncoder
+    from ml.models import VAE, MLPDecoder, MLPEncoder
 
     mlp_encoder = MLPEncoder(
         in_num_nodes=train_set[0].num_nodes,
@@ -175,7 +175,7 @@ def _():
 
 @app.cell
 def _():
-    from models import EarlyStopping
+    from ml.models import EarlyStopping
 
     early_stop = EarlyStopping(verbose=True)
     return
@@ -207,7 +207,7 @@ def _(DataLoader, test_set, torch, train_set, vae, val_set):
 
 @app.cell
 def _():
-    from experiment import evaluate_model, train_vae_epoch
+    from ml.experiment import evaluate_model, train_vae_epoch
     from losses import make_elbo_loss, make_weighted_recon_loss
 
     return (
@@ -271,7 +271,7 @@ def _(n_epochs, plt, train_losses, val_losses):
 
 @app.cell
 def _():
-    from models import FiftyFifty
+    from ml.models import FiftyFifty
 
     return (FiftyFifty,)
 

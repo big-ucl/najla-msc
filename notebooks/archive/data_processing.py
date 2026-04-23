@@ -56,7 +56,7 @@ def _(mo):
 
 @app.cell
 def _(Path, cfg, mo, run_button):
-    from exploration.dataprocessing import convert_excel_to_parquet
+    from utils import convert_excel_to_parquet
 
     mo.stop(not run_button.value, mo.md("Click button above to run conversion"))
 
@@ -81,7 +81,7 @@ def _(mo):
 @app.cell
 def _(cfg, mo, reprocess_button):
 
-    from exploration.dataprocessing import ActivityDataset
+    from archive.exploration.dataprocessing import ActivityDataset
     from data.ltds import read_and_process_ltds
 
     _dataset_name = cfg.data.name
@@ -128,7 +128,7 @@ def _(mo):
 
 @app.cell
 def _(dataset):
-    from exploration.graphs import ActivityGraph
+    from archive.exploration import ActivityGraph
 
     graph = ActivityGraph.from_dataset(dataset)
 

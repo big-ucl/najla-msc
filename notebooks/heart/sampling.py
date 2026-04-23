@@ -5,17 +5,12 @@ app = marimo.App(width="medium")
 
 with app.setup:
     import marimo as mo
-    import pickle
 
     import torch
     import torch_geometric as pyg
 
-    import pandas as pd
     import geopandas as gpd
     import polars as pl
-
-    import city2graph as c2g
-    import pyproj
 
     from activitygraphs.config import load_config
     from pathlib import Path
@@ -54,7 +49,7 @@ def _():
 
 @app.cell
 def _():
-    from activitygraphs.run import build_gat, build_gps, build_mlp
+    from activitygraphs.run import build_gat, build_mlp
 
     return build_gat, build_mlp
 
@@ -75,14 +70,12 @@ def _(build_gat, build_mlp, models_path, train_set):
     gps_layers = 4
     mlp_layers = 3
 
-
     def load_model(file, builder, layers):
         path = models_path / file
 
         model = builder(train_set, layers, hidden_channels, dropout)
         model.load_state_dict(torch.load(path, weights_only=True))
         return model.cuda().eval()
-
 
     gat = load_model("GATSkip-8-res.pth", build_gat, gat_layers)
     mlp = load_model("MLP.pth", build_mlp, mlp_layers)
@@ -92,7 +85,7 @@ def _(build_gat, build_mlp, models_path, train_set):
 
 @app.cell
 def _(train_loader, train_set):
-    from activitygraphs.baselines import NodeBaseline, ConditionalNodeBaseline
+    from ml.baselines import NodeBaseline, ConditionalNodeBaseline
 
     node_baseline = NodeBaseline(train_set[0].num_nodes).fit(train_loader)
     cond_baseline = ConditionalNodeBaseline(train_set[0].num_nodes).fit(train_loader)
@@ -112,7 +105,7 @@ def _():
 @app.cell
 def _():
     from activitygraphs.data.geneva import GenevaData
-    from activitygraphs.network import Network
+    from archive.network import Network
 
     network_name = "routes"
 
@@ -135,9 +128,7 @@ def _(gva_data):
     _group_keys = ["user_id", "journey_id"]
 
     _locations = gva_data.locations_df.select("loc_id", "type")
-    _modes = gva_data.user_journeys_df.group_by(
-        _group_keys, maintain_order=True
-    ).agg(modes="leg_mode")
+    _modes = gva_data.user_journeys_df.group_by(_group_keys, maintain_order=True).agg(modes="leg_mode")
     _trips = (
         gva_data.user_journeys_df
         .group_by(_group_keys, maintain_order=True)
@@ -154,7 +145,6 @@ def _(gva_data):
             pl.col("arr_purpose").list.last(),
         )
     )
-
 
     trips = (
         _trips
@@ -180,27 +170,18 @@ def _(gva_data):
         .sort("user_id")
     )
 
-    visits_by_purpose = (
-        visits
-        .group_by("user_id", "purpose")
-        .agg(pl.col("loc_id").unique())
-        .sort("user_id")
-    )
+    visits_by_purpose = visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
     return visits, visits_by_purpose
 
 
 @app.cell
 def _(visits, visits_by_purpose):
     def add_user_cols(nodes: gpd.GeoDataFrame, user_id: str) -> pl.DataFrame:
-        home_locations = visits_by_purpose.filter(
-            purpose="od_lieu_domicile"
-        ).with_columns(pl.col("loc_id").list.first())
-        work_locations = visits_by_purpose.filter(
-            purpose="od_lieu_travail"
-        ).with_columns(pl.col("loc_id").list.len())
-        edu_locations = visits_by_purpose.filter(
-            purpose="od_lieu_etude"
-        ).with_columns(pl.col("loc_id").list.len())
+        home_locations = visits_by_purpose.filter(purpose="od_lieu_domicile").with_columns(
+            pl.col("loc_id").list.first()
+        )
+        work_locations = visits_by_purpose.filter(purpose="od_lieu_travail").with_columns(pl.col("loc_id").list.len())
+        edu_locations = visits_by_purpose.filter(purpose="od_lieu_etude").with_columns(pl.col("loc_id").list.len())
 
         nodes = nodes.copy().reset_index()
 
@@ -271,18 +252,16 @@ def _(
 ):
     batch = next(iter(pyg.loader.DataLoader([data]))).cuda()
 
-
     def predict_and_sample(model, batch, n=15):
         logits = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
         probs = torch.sigmoid(logits)
 
-        generator = None #torch.Generator(device="cuda").manual_seed(seed)
+        generator = None  # torch.Generator(device="cuda").manual_seed(seed)
 
         poisson = poisson_sampling(logits, generator)
         pps = pps_sampling(n, logits, batch.batch, generator)
 
         return logits, probs, poisson, pps
-
 
     logits, probs, poisson, pps = predict_and_sample(gat, batch)
     mlp_logits, mlp_probs, mlp_poisson, mlp_pps = predict_and_sample(mlp, batch)
@@ -339,14 +318,11 @@ def _(
 
         return nodes
 
-
     user_nodes = add_user_cols(network_nodes, user_id)
     user_nodes = add_preds_and_sample(user_nodes, probs, poisson, pps)
     user_nodes = add_preds_and_sample(user_nodes, mlp_probs, mlp_poisson, mlp_pps, prefix="mlp_")
     user_nodes = add_preds_and_sample(user_nodes, node_probs, node_poisson, node_pps, prefix="node_")
     user_nodes = add_preds_and_sample(user_nodes, cond_probs, cond_poisson, cond_pps, prefix="cond_")
-
-
 
     user_nodes
     return (user_nodes,)
@@ -354,24 +330,16 @@ def _(
 
 @app.cell
 def _(user_nodes):
-    select_node_col = mo.ui.dropdown(
-        list(user_nodes.columns), searchable=True, label="Column:", value="preds"
-    )
+    select_node_col = mo.ui.dropdown(list(user_nodes.columns), searchable=True, label="Column:", value="preds")
     toggle_polygons = mo.ui.switch(value=True, label="Show subsectors")
     return select_node_col, toggle_polygons
 
 
 @app.cell
 def _(network_edges, select_node_col, toggle_polygons, user_nodes):
-    _nodes = (
-        user_nodes.set_geometry("original_geometry")
-        if toggle_polygons.value
-        else user_nodes
-    )
+    _nodes = user_nodes.set_geometry("original_geometry") if toggle_polygons.value else user_nodes
     _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
-    _m = _nodes.explore(
-        m=_m, column=select_node_col.value, marker_kwds={"radius": 5}, cmap="OrRd"
-    )
+    _m = _nodes.explore(m=_m, column=select_node_col.value, marker_kwds={"radius": 5}, cmap="OrRd")
 
     mo.vstack([
         mo.hstack([select_node_col, toggle_polygons], justify="start"),
@@ -409,25 +377,18 @@ def _(CRS, cx):
         nodes = nodes if as_points else nodes.set_geometry("original_geometry")
         nodes = nodes.to_crs(CRS)
 
-
         figsize = (7, 7) if ax is None else None
 
         if not as_points:
             ax = nodes.boundary.plot(ax=ax, color="gray", linewidth=0.3)
 
         if edges is not None:
-            ax = edges.plot(
-                ax=ax,
-                figsize=figsize,
-                color="gray", 
-                legend=True,
-                linewidth=0.3
-            )
+            ax = edges.plot(ax=ax, figsize=figsize, color="gray", legend=True, linewidth=0.3)
 
         cmap = "Reds" if not as_points else "viridis_r"
         gamma = 0.7 if not as_points else 0.3
-        label = "Predicted probability of visit $\\hat{y}_{i,n}$" if not as_points else "Per-node visit frequency" 
-    
+        label = "Predicted probability of visit $\\hat{y}_{i,n}$" if not as_points else "Per-node visit frequency"
+
         ax = nodes.plot(
             ax=ax,
             column=col,
@@ -481,12 +442,7 @@ def _(
         edges=network_edges,
     )
 
-    plot_visited(
-        user_nodes,
-        "is_visited",
-        "Visited nodes for example individual",
-        ax=_axs[1]
-    )
+    plot_visited(user_nodes, "is_visited", "Visited nodes for example individual", ax=_axs[1])
 
     _fig.savefig(project_root / cfg.paths.figures / "gva_struct.png")
     _fig
@@ -497,19 +453,9 @@ def _(
 def _(double_figsize, plot_preds, plt, user_nodes):
     _fig, _axs = plt.subplots(1, 2, figsize=double_figsize, constrained_layout=True)
 
-    plot_preds(
-        user_nodes,
-        "mlp_preds",
-        "MLP predicted visit probabilities for example individual",
-        ax=_axs[0]
-    )
+    plot_preds(user_nodes, "mlp_preds", "MLP predicted visit probabilities for example individual", ax=_axs[0])
 
-    plot_preds(
-        user_nodes,
-        "preds",
-        "GATSkipRes predicted visit probabilities for example individual",
-        ax=_axs[1]
-    )
+    plot_preds(user_nodes, "preds", "GATSkipRes predicted visit probabilities for example individual", ax=_axs[1])
 
     _fig.savefig(project_root / cfg.paths.figures / "gva_preds.png")
     _fig
@@ -527,29 +473,25 @@ def _():
 def _(CRS, cx, sns):
     from matplotlib.colors import ListedColormap
 
-    def plot_visited(nodes, col, title, ax=None, legend_name="Visited", as_points=False, edges=None, include_unvisited=False):
+    def plot_visited(
+        nodes, col, title, ax=None, legend_name="Visited", as_points=False, edges=None, include_unvisited=False
+    ):
         nodes = nodes if as_points else nodes.set_geometry("original_geometry")
         nodes = nodes.to_crs(CRS).copy()
 
         if include_unvisited:
             nodes.loc[nodes[col] == 0, "visit"] = "Unvisited"
-    
+
         nodes.loc[nodes[col] == 1, "visit"] = legend_name
         nodes.loc[nodes["is_home"] == 1, "visit"] = "Home"
-    
+
         figsize = (7, 7) if ax is None else None
 
         if not as_points:
             ax = nodes.boundary.plot(ax=ax, color="gray", linewidth=0.3)
-    
-        if edges is not None:
-            ax = edges.to_crs(CRS).plot(
-                ax=ax,
-                figsize=figsize,
-                color="gray", 
-                linewidth=0.3
-            )
 
+        if edges is not None:
+            ax = edges.to_crs(CRS).plot(ax=ax, figsize=figsize, color="gray", linewidth=0.3)
 
         tab10 = sns.color_palette()
         categories = [legend_name, "Home"] + (["Unvisited"] if include_unvisited else [])

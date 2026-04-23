@@ -36,96 +36,24 @@ def _(gva_data):
 
 @app.cell
 def _(gva_data):
-    _group_keys = ["user_id", "journey_id"]
-
-    _locations = gva_data.locations_df.select("loc_id", "type")
-    _modes = gva_data.user_journeys_df.group_by(_group_keys, maintain_order=True).agg(modes="leg_mode")
-    _trips = (
-        gva_data.user_journeys_df
-        .group_by(_group_keys, maintain_order=True)
-        .agg(pl.all().gather([0, -1]))
-        .select(
-            "user_id",
-            "journey_id",
-            (pl.col("leg_id").list.last() + 1).alias("num_legs"),
-            pl.col("dep_day").list.first(),
-            pl.col("dep_time").list.first(),
-            pl.col("dep_purpose").list.first(),
-            pl.col("dep_loc_id").list.first(),
-            pl.col("arr_loc_id").list.last(),
-            pl.col("arr_purpose").list.last(),
-        )
-    )
-
-    trips = (
-        _trips
-        .join(_modes, on=_group_keys)
-        .join(
-            _locations.select(dep_loc_id="loc_id", dep_loc_type="type"),
-            on="dep_loc_id",
-        )
-        .join(
-            _locations.select(arr_loc_id="loc_id", arr_loc_type="type"),
-            on="arr_loc_id",
-        )
-        .filter(dep_loc_type="subsector", arr_loc_type="subsector")
-    )
-
-    trips
-    return (trips,)
-
-
-@app.cell
-def _(trips):
-    visits = (
-        pl
-        .concat([
-            trips.select("user_id", purpose="dep_purpose", loc_id="dep_loc_id"),
-            trips.select("user_id", purpose="arr_purpose", loc_id="arr_loc_id"),
-        ])
-        .unique()
-        .sort("user_id")
-    )
-
+    visits = gva_data.with_filter("subsector").location_visits
     visits_by_purpose = visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
     visits_by_purpose
     return visits, visits_by_purpose
 
 
 @app.cell
-def _(visits):
-    num_visits_per_person = visits.group_by("user_id").agg(num_locs=pl.len())
-    num_visits_per_person["num_locs"].value_counts().sort("num_locs")
-    return (num_visits_per_person,)
+def _(gva_data, home_locations):
+    home_locations2 = gva_data.location_visits_by_purpose.filter(purpose="od_lieu_domicile").with_columns(pl.col("loc_id").list.first())
 
-
-@app.cell
-def _(num_visits_per_person, visits):
-    avg_visits_per_person = num_visits_per_person.select("num_locs").mean().item()
-    avg_non_hwe_visits_per_person = (
-        visits
-        .filter(
-            ~pl.col("purpose").is_in([
-                "od_lieu_domicile",
-                "od_lieu_travail",
-                "od_lieu_etude",
-            ])
-        )
-        .group_by("user_id")
-        .agg(num_locs=pl.len())
-        .select("num_locs")
-        .mean()
-        .item()
-    )
-
-    f"Average: {avg_visits_per_person:.3f}, average without home/work/edu: {avg_non_hwe_visits_per_person}"
+    home_locations.equals(gva_data.filter_by_loc_type(home_locations2, "subsector"))
     return
 
 
 @app.cell
 def _(gva_data):
-    locations = gva_data.locations_gdf.query("type == 'subsector'")
-    return (locations,)
+    gva_data.locations_df
+    return
 
 
 @app.cell
@@ -162,7 +90,7 @@ def _(gpd, locations, visits, visits_by_purpose):
 
     _user_id = "20704"
     add_user_cols(locations, _user_id)
-    return (add_user_cols,)
+    return add_user_cols, home_locations
 
 
 @app.cell(hide_code=True)

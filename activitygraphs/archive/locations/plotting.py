@@ -9,9 +9,9 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
 import polars as pl
-from exploration.dataprocessing import Purpose
-from exploration.graphs import ActivityGraph
-from exploration.metrics import Metrics
+from archive.exploration.dataprocessing import Purpose
+from archive.exploration import ActivityGraph
+from archive.exploration.metrics import Metrics
 from matplotlib.axes import Axes
 
 PURPOSE_IMPORTANCE = [Purpose.HOME, Purpose.WORK, Purpose.EDUCATION]
@@ -208,7 +208,8 @@ def geo_plot_mean_stat_by_postcode(
 
     if postcode_split != "sector":
         return (
-            alt.Chart(mean_gdf, title=title)
+            alt
+            .Chart(mean_gdf, title=title)
             .mark_geoshape()
             .encode(color=stat, tooltip=["name", stat, "n_samples"])
             .properties(width=500, height=500)
@@ -241,7 +242,8 @@ def geo_plot_mean_stat_by_municipality(
     title = f"Average HH Graph {stat} by municipality"
 
     return (
-        alt.Chart(mean_gdf, title=title)
+        alt
+        .Chart(mean_gdf, title=title)
         .mark_geoshape()
         .encode(color=stat, tooltip=["municipality_id", "municipality_name", stat, "n_samples"])
         .properties(width=500, height=500)
@@ -278,12 +280,10 @@ def build_dash_graph_scatter(results: pl.DataFrame, graph: ActivityGraph):
 
     app = Dash()
 
-    app.layout = html.Div(
-        [
-            dcc.Graph(id="graph-basic-2", figure=_fig, clear_on_unhover=True),
-            dcc.Tooltip(id="graph-tooltip"),
-        ]
-    )
+    app.layout = html.Div([
+        dcc.Graph(id="graph-basic-2", figure=_fig, clear_on_unhover=True),
+        dcc.Tooltip(id="graph-tooltip"),
+    ])
 
     @callback(
         Output("graph-tooltip", "show"),
@@ -438,12 +438,11 @@ def draw_synthetic_trip(schedules: Schedules, person_id: int, full=False, ax: Ax
     trips = schedules.trip_df.filter(pl.col("person_id") == person_id)
     edgelist = trips.select("from_loc_id", "to_loc_id").rows()
     node_colours = (
-        pl.concat(
-            [
-                trips.select("from_loc_id", "from_type").rename({"from_loc_id": "loc_id", "from_type": "type"}),
-                trips.select("to_loc_id", "to_type").rename({"to_loc_id": "loc_id", "to_type": "type"}),
-            ]
-        )
+        pl
+        .concat([
+            trips.select("from_loc_id", "from_type").rename({"from_loc_id": "loc_id", "from_type": "type"}),
+            trips.select("to_loc_id", "to_type").rename({"to_loc_id": "loc_id", "to_type": "type"}),
+        ])
         .group_by("loc_id")
         .agg(pl.col("type").map_elements(_activities_to_colors, return_dtype=pl.String).first())
         .join(pl.DataFrame({"loc_id": list(G.nodes())}), on="loc_id", how="right")

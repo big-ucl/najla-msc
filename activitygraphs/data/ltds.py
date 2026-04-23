@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import exploration.dataprocessing as dp
+from archive import exploration as dp
 import polars as pl
 from config import DataConfig
 

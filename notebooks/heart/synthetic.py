@@ -21,20 +21,17 @@ def _():
     import matplotlib.colors as mcolors
 
     import torch
-    import torch_geometric as pyg
     import torch.nn.functional as F
-
 
     def sigmoid(z, s=1.0):
         return 1 / (1 + np.exp(-z / s))
-
 
     def torch_sigmoid(z, s=1.0):
         return 1 / (1 + np.exp(-z / s))
 
     import os
-    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     SEED = 512
     return F, SEED, cm, mcolors, mo, np, nx, pl, sigmoid, torch
@@ -48,10 +45,14 @@ def _(mo):
     slider_N = mo.ui.slider(
         steps=[i**2 for i in range(10)], value=5**2, show_value=True, label="Number of nodes $N =$", debounce=True
     )
-    slider_asc = mo.ui.slider(start=0, stop=1, step=0.05, value=0.15, show_value=True, label="$\\alpha=$", debounce=True)
+    slider_asc = mo.ui.slider(
+        start=0, stop=1, step=0.05, value=0.15, show_value=True, label="$\\alpha=$", debounce=True
+    )
     slider_bn = mo.ui.slider(start=0, stop=5, step=0.05, value=2, show_value=True, label="$\\beta_1=$", debounce=True)
     slider_bh = mo.ui.slider(start=0, stop=5, step=0.05, value=0.8, show_value=True, label="$\\beta_2=$", debounce=True)
-    slider_dist = mo.ui.slider(start=0, stop=5, step=0.05, value=0.5, show_value=True, label="$\\beta_d=$", debounce=True)
+    slider_dist = mo.ui.slider(
+        start=0, stop=5, step=0.05, value=0.5, show_value=True, label="$\\beta_d=$", debounce=True
+    )
     return slider_I, slider_N, slider_asc, slider_bh, slider_bn, slider_dist
 
 
@@ -181,7 +182,7 @@ def _(
 
 @app.cell
 def _(sns):
-    cmap = sns.color_palette("vlag_r", as_cmap=True)#cm.BrBG
+    cmap = sns.color_palette("vlag_r", as_cmap=True)  # cm.BrBG
     best_i = 26
     return (cmap,)
 
@@ -201,7 +202,6 @@ def _(
     utility,
 ):
     fig_indiv_util, _ax = plt.subplots(figsize=figsize, constrained_layout=True)
-
 
     _i = slider_indiv.value
     _home_node = home_locations[_i].item()
@@ -226,8 +226,8 @@ def _(
         pos=pos,
         node_color=tab10[1],
         node_shape="s",
-        #edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
-        #linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        # edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        # linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
 
@@ -249,7 +249,7 @@ def _(
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
     _sm.set_array(utility[_i])
-    _cbar = fig_indiv_util.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar = fig_indiv_util.colorbar(_sm, ax=_ax, location="bottom", shrink=0.8)
     _cbar.set_label("Individual-specific node utility $\\eta_{{i, n}}$")
 
     _ax.set_axis_off()
@@ -300,8 +300,8 @@ def _(
         pos=pos,
         node_color=tab10[1],
         node_shape="s",
-        #edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
-        #linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        # edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        # linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
 
@@ -323,7 +323,7 @@ def _(
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
     _sm.set_array(utility[_i])
-    _cbar = fig_indiv_util.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar = fig_indiv_util.colorbar(_sm, ax=_ax, location="bottom", shrink=0.8)
     _cbar.set_label("Noise $\\varepsilon_{i, n} \\sim \\text{Gumbel}(0,0.1)$")
 
     _ax.set_axis_off()
@@ -361,14 +361,7 @@ def _(
 
     _cmap = cmap
 
-    nx.draw_networkx_nodes(
-        G,
-        nodelist=_unvisited_nodes,
-        pos=pos,
-        node_color="white",
-        ax=_ax,
-        edgecolors="lightgray"
-    )
+    nx.draw_networkx_nodes(G, nodelist=_unvisited_nodes, pos=pos, node_color="white", ax=_ax, edgecolors="lightgray")
 
     nx.draw_networkx_nodes(
         G,
@@ -397,15 +390,15 @@ def _(
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
     _sm.set_array(utility[_i])
-    _cbar = fig_visit.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar = fig_visit.colorbar(_sm, ax=_ax, location="bottom", shrink=0.8)
 
     _cbar.solids.set_alpha(0)
     _cbar.outline.set_alpha(0)
-    _cbar.ax.tick_params(labelcolor='none', color='none')
+    _cbar.ax.tick_params(labelcolor="none", color="none")
     _cbar.set_label("")
 
     _ax.set_axis_off()
-    _ax.set_title(f"Nodes visited by example individual $i$")
+    _ax.set_title("Nodes visited by example individual $i$")
 
     None
     return (fig_visit,)
@@ -475,7 +468,7 @@ def _(
 
 @app.cell
 def _(fig_poisson, fig_pps, fig_preds, mo):
-    mo.hstack([fig_preds, fig_poisson, fig_pps], justify="start"),
+    (mo.hstack([fig_preds, fig_poisson, fig_pps], justify="start"),)
     return
 
 
@@ -521,7 +514,6 @@ def _(G, distances, home_locations, indi_feature, np, torch, visited_nodes):
     from torch_geometric.utils import from_networkx
 
     base_data = from_networkx(G, group_node_attrs=["node_feature"])
-
 
     class SyntheticDataset(InMemoryDataset):
         def __init__(
@@ -573,7 +565,6 @@ def _(G, distances, home_locations, indi_feature, np, torch, visited_nodes):
                 distances=distances,
             )
 
-
     dataset = SyntheticDataset(base_data, indi_feature, home_locations, visited_nodes, distances)
     dataset
     return (dataset,)
@@ -611,7 +602,7 @@ def _(mo):
 
 @app.cell
 def _(dataset):
-    from activitygraphs.models import NodeMLP, GCN, GCNPlus, GCNRes, GCNSkip, GATSkip
+    from ml.models import NodeMLP, GCN, GCNPlus, GCNRes, GCNSkip, GATSkip
 
     hidden_channels = 64
     lr = 0.01
@@ -744,7 +735,7 @@ def _(
     train_loader,
     verbose,
 ):
-    from activitygraphs.experiment import run_experiment
+    from ml.experiment import run_experiment
 
     mo.stop(not btn_run_experiments.value)
 
@@ -765,7 +756,6 @@ def _(
 def _(pl):
     _results = pl.read_parquet("reports/data/synthetic-results.parquet")
     # _results = results
-
 
     results_aug = _results.with_columns(type=pl.col("name").str.split("-").list.first())
     results_aug
@@ -791,7 +781,6 @@ def _(results_aug):
             )
             .properties(title=title, width=600, height=450)
         )
-
 
     plot_results(results_aug, "Training loss", "train") | plot_results(results_aug, "Test loss", "test")
     return (plot_results,)
@@ -821,7 +810,6 @@ def _(dropdown_type, mo, pl, plot_results, results_aug):
 
     if dropdown_type.value:
         _results = _results.filter((pl.col("type") == dropdown_type.value) | (pl.col("type") == "MLP"))
-
 
     _fig = plot_results(_results, "Training loss", "train", color="layers", detail="name", scheme=None) | plot_results(
         _results, "Test loss", "test", color="layers", detail="name"
@@ -863,7 +851,6 @@ def _(F, noise_scale, pl, results_aug, sigmoid, torch, utility, visited_nodes):
         "test": _random_guessing_loss,
         "type": "Baseline",
     })
-
 
     _best_models = (
         results_aug
@@ -985,7 +972,7 @@ def _(
 @app.cell
 def _(DataLoader, dataset, gat, slider_indiv, torch):
     _i = slider_indiv.value
-    _loader = DataLoader(dataset[_i:_i + 1])
+    _loader = DataLoader(dataset[_i : _i + 1])
     batch = next(iter(_loader)).cuda()
 
     _logits = gat(batch.x, batch.edge_index)
@@ -1032,8 +1019,8 @@ def _(
         pos=pos,
         node_color=tab10[1],
         node_shape="s",
-        #edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
-        #linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
+        # edgecolors="green" if visited_nodes[_i, _home_node].item() else None,
+        # linewidths=1.5 if visited_nodes[_i, _home_node].item() else None,
         ax=_ax,
     )
 
@@ -1055,11 +1042,11 @@ def _(
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=0, vmax=1))
     _sm.set_array(probs)
-    _cbar = fig_preds.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar = fig_preds.colorbar(_sm, ax=_ax, location="bottom", shrink=0.8)
     _cbar.set_label("Node visit probability $\\hat{y}_{{i, n}}$")
 
     _ax.set_axis_off()
-    _ax.set_title(f"GATSkip predicted visit probabilites for example individual $i$")
+    _ax.set_title("GATSkip predicted visit probabilites for example individual $i$")
 
     fig_preds
     return (fig_preds,)
@@ -1117,14 +1104,7 @@ def _(
 
     _cmap = cmap
 
-    nx.draw_networkx_nodes(
-        G,
-        nodelist=_unvisited_nodes,
-        pos=pos,
-        node_color="white",
-        ax=_ax,
-        edgecolors="lightgray"
-    )
+    nx.draw_networkx_nodes(G, nodelist=_unvisited_nodes, pos=pos, node_color="white", ax=_ax, edgecolors="lightgray")
 
     nx.draw_networkx_nodes(
         G,
@@ -1153,11 +1133,11 @@ def _(
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
     _sm.set_array(utility[_i])
-    _cbar = fig_poisson.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar = fig_poisson.colorbar(_sm, ax=_ax, location="bottom", shrink=0.8)
 
     _cbar.solids.set_alpha(0)
     _cbar.outline.set_alpha(0)
-    _cbar.ax.tick_params(labelcolor='none', color='none')
+    _cbar.ax.tick_params(labelcolor="none", color="none")
     _cbar.set_label("")
 
     _ax.set_axis_off()
@@ -1203,14 +1183,7 @@ def _(
 
     _cmap = cmap
 
-    nx.draw_networkx_nodes(
-        G,
-        nodelist=_unvisited_nodes,
-        pos=pos,
-        node_color="white",
-        ax=_ax,
-        edgecolors="lightgray"
-    )
+    nx.draw_networkx_nodes(G, nodelist=_unvisited_nodes, pos=pos, node_color="white", ax=_ax, edgecolors="lightgray")
 
     nx.draw_networkx_nodes(
         G,
@@ -1239,11 +1212,11 @@ def _(
 
     _sm = cm.ScalarMappable(cmap=_cmap, norm=mcolors.Normalize(vmin=-1, vmax=1))
     _sm.set_array(utility[_i])
-    _cbar = fig_poisson.colorbar(_sm, ax=_ax, location='bottom', shrink=0.8)
+    _cbar = fig_poisson.colorbar(_sm, ax=_ax, location="bottom", shrink=0.8)
 
     _cbar.solids.set_alpha(0)
     _cbar.outline.set_alpha(0)
-    _cbar.ax.tick_params(labelcolor='none', color='none')
+    _cbar.ax.tick_params(labelcolor="none", color="none")
     _cbar.set_label("")
 
     _ax.set_axis_off()

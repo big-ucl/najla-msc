@@ -17,7 +17,7 @@ with app.setup:
 
 @app.cell
 def _():
-    from activitygraphs.locations.geometric import ActivityDataset
+    from archive.locations import ActivityDataset
 
     network_name = "stops"
 
@@ -31,7 +31,6 @@ def _():
     import torch.nn.functional as F
     from torch_geometric.nn import HeteroConv, Linear, GATConv
 
-
     class HeteroGNN(torch.nn.Module):
         def __init__(self, metadata, hidden_channels, out_channels, num_layers, output_types=None):
             super().__init__()
@@ -40,13 +39,15 @@ def _():
 
             self.convs = torch.nn.ModuleList()
             for _ in range(num_layers):
-                conv = HeteroConv({edge_type: GATConv((-1, -1), hidden_channels, add_self_loops=False) for edge_type in edge_types})
+                conv = HeteroConv({
+                    edge_type: GATConv((-1, -1), hidden_channels, add_self_loops=False) for edge_type in edge_types
+                })
                 self.convs.append(conv)
 
             self.lin = Linear(hidden_channels, out_channels)
             self.output_types = output_types if output_types is not None else node_types
 
-        def forward(self, x_dict, edge_index_dict, edge_attr_dict):  
+        def forward(self, x_dict, edge_index_dict, edge_attr_dict):
             for conv in self.convs:
                 x_dict = conv(x_dict, edge_index_dict, edge_attr_dict=edge_attr_dict)
                 x_dict = {key: F.leaky_relu(x) for key, x in x_dict.items()}
@@ -68,7 +69,7 @@ def _(F, HeteroGNN, dataset):
     from tqdm import tqdm
     from torch_geometric.loader import DataLoader
 
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     loader = DataLoader(dataset, batch_size=32)
     data = next(iter(loader)).to(device)
@@ -130,7 +131,6 @@ def _():
 @app.cell
 def _(data, model):
     _x_dict = {k: x.float() for k, x in data.x_dict.items()}
-
 
     model(_x_dict, data.edge_index_dict, data.edge_attr_dict)
     return
