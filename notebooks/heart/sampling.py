@@ -21,22 +21,12 @@ with app.setup:
 
 @app.cell
 def _():
-    models_path = project_root / "models"
-    processed_path = project_root / cfg.data.paths.processed / "GenevaTPG2"
-    dataset_path = processed_path / "dataset.pickle"
-    network_path = processed_path / "networkgraph"
+    models_path = project_root / cfg.paths.models
 
     batch_size = 64
     test_size = 0.2
     seed = 42
     return batch_size, models_path, seed, test_size
-
-
-@app.cell
-def _():
-    from activitygraphs.run import load_dataset
-
-    return (load_dataset,)
 
 
 @app.cell(hide_code=True)
@@ -49,9 +39,10 @@ def _():
 
 @app.cell
 def _():
+    from activitygraphs.ml.dataset import load_dataset
     from activitygraphs.run import build_gat, build_mlp
 
-    return build_gat, build_mlp
+    return build_gat, build_mlp, load_dataset
 
 
 @app.cell

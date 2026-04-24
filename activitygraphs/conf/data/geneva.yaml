@@ -39,6 +39,8 @@ paths:
   external: data/external
   gtfs: ${..paths.external}/gtfs
 
+  pyg_datasets: ${..paths.processed}/PyGDatasets
+
   act_dataset: ${..paths.processed}/act_dataset
   graphs: ${..paths.processed}/graphs
   metrics: ${..paths.processed}/metrics

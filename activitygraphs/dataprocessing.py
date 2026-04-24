@@ -133,21 +133,21 @@ def add_user_cols(
     return network_nodes
 
 
-def load_pyg_dataset(
+def load_pyg_graphs(
     network_data: NetworkData,
     network_nodes: gpd.GeoDataFrame,
     network_edges: gpd.GeoDataFrame,
     cfg: GenevaDataConfig,
     project_root: Path | None = None,
-    name: str = "PyGDataset",
+    name: str = "Graphs",
 ):
-    dataset_path = get_project_root(project_root) / cfg.paths.processed / f"{name}.pickle"
+    dataset_path = get_project_root(project_root) / cfg.paths.pyg_datasets / f"{name}.pickle"
 
     if dataset_path.exists():
         with open(dataset_path, "rb") as f:
             return pickle.load(f)
 
-    graphs = convert_to_pyg_dataset(network_data, network_nodes, network_edges)
+    graphs = convert_to_pyg_graphs(network_data, network_nodes, network_edges)
 
     dataset_path.parent.mkdir(parents=True, exist_ok=True)
     with open(dataset_path, "wb") as f:
@@ -156,7 +156,7 @@ def load_pyg_dataset(
     return graphs
 
 
-def convert_to_pyg_dataset(
+def convert_to_pyg_graphs(
     network_data: NetworkData,
     network_nodes: gpd.GeoDataFrame,
     network_edges: gpd.GeoDataFrame,

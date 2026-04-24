@@ -67,6 +67,7 @@ class DataPaths:
     gtfs: Path
 
     act_dataset: Path
+    pyg_datasets: Path
     graphs: Path
     metrics: Path
 
@@ -92,6 +93,7 @@ class GenevaDataConfig(DataConfig):
 class OutputPaths:
     reports: Path
     figures: Path
+    models: Path
 
 
 @dataclass

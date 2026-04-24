@@ -9,8 +9,6 @@ with app.setup:
     import torch
     import torch_geometric as pyg
 
-    import polars as pl
-
     from activitygraphs.config import load_config
     from pathlib import Path
 
@@ -43,11 +41,11 @@ def _():
 
 @app.cell
 def _(gva_data, network_edges, network_nodes, run_graph_gen):
-    from activitygraphs.dataprocessing import load_pyg_dataset
+    from activitygraphs.dataprocessing import load_pyg_graphs
 
     mo.stop(not run_graph_gen.value)
 
-    graphs = load_pyg_dataset(gva_data, network_nodes, network_edges, cfg.data, project_root)
+    graphs = load_pyg_graphs(gva_data, network_nodes, network_edges, cfg.data, project_root)
     graphs
     return
 
@@ -71,7 +69,8 @@ def _(gva_data):
 
 @app.cell
 def _(add_user_cols, gva_data, network_nodes, select_user_id):
-    indiv_nodes = add_user_cols(select_user_id.value, network_nodes, gva_data.location_visits, gva_data.home_locations, gva_data.work_locations, gva_data.edu_locations)
+    indiv_nodes = add_user_cols(select_user_id.value, network_nodes, gva_data.location_visits, gva_data.home_locations,
+                                gva_data.work_locations, gva_data.edu_locations)
     indiv_nodes
     return (indiv_nodes,)
 

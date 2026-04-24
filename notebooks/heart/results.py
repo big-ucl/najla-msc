@@ -5,17 +5,11 @@ app = marimo.App(width="medium")
 
 with app.setup:
     import marimo as mo
-    import pickle
 
     import torch
     import torch_geometric as pyg
 
-    import pandas as pd
-    import geopandas as gpd
     import polars as pl
-
-    import city2graph as c2g
-    import pyproj
 
     from activitygraphs.config import load_config
     from pathlib import Path
@@ -26,7 +20,7 @@ with app.setup:
 
 @app.cell
 def _():
-    from activitygraphs.run import load_dataset
+    from activitygraphs.ml.dataset import load_dataset
 
     test_size = 0.2
     seed = 42
@@ -44,7 +38,6 @@ def _(train_dataset):
 
     mlp = build_mlp(train_dataset, 3, 128, 0.2)
     mlp.load_state_dict(torch.load(project_root / "models" / "MLP.pth", weights_only=True))
-
 
     gat, mlp
     return (gat,)
@@ -146,7 +139,8 @@ def _(gva_data):
 
 @app.cell
 def _(add_user_cols, gva_data, network_nodes, select_user_id):
-    indiv_nodes = add_user_cols(select_user_id.value, network_nodes, gva_data.location_visits, gva_data.home_locations, gva_data.work_locations, gva_data.edu_locations)
+    indiv_nodes = add_user_cols(select_user_id.value, network_nodes, gva_data.location_visits, gva_data.home_locations,
+                                gva_data.work_locations, gva_data.edu_locations)
     indiv_nodes
     return (indiv_nodes,)
 
