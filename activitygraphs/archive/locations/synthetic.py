@@ -181,7 +181,8 @@ class SyntheticGraph:
     def distance_matrix_df(self):
         """Returns a polars DataFrame of the distances between nodes in the graph, in long form"""
         return (
-            pl.DataFrame(self.distance_matrix, schema=list(self.nodes))
+            pl
+            .DataFrame(self.distance_matrix, schema=list(self.nodes))
             .with_columns(from_loc_id=pl.Series(self.nodes))
             .unpivot(index="from_loc_id", variable_name="to_loc_id", value_name="distance")
         )
@@ -208,7 +209,8 @@ class SyntheticSchedules:
         distances_df = graph.distance_matrix_df
 
         trip_df = (
-            self.schedule_df.sort(by=["person_id", "sequence_num"])
+            self.schedule_df
+            .sort(by=["person_id", "sequence_num"])
             .with_columns(_shifted("loc_id"), _shifted("type"), _shifted("person_id"))
             .filter(pl.col("person_id") == pl.col("to_person_id"))
             .drop("to_person_id")
@@ -345,7 +347,8 @@ class SyntheticGenerator(ABC):
         schedules = np.hstack([home_col, schedules, home_col])
 
         self._schedule_df = (
-            pl.DataFrame(schedules, schema=["1", "2", "3", "4", "5"])
+            pl
+            .DataFrame(schedules, schema=["1", "2", "3", "4", "5"])
             .with_row_index("person_id")
             .unpivot(index="person_id", variable_name="numpy_seq", value_name="type")
             .sort(by=["person_id", "numpy_seq"])
@@ -593,7 +596,8 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
     scheds[~flipped_mask] = "-"
 
     schedule_df = (
-        pl.DataFrame(scheds, schema=["1", "2", "3", "4", "5"], orient="row")
+        pl
+        .DataFrame(scheds, schema=["1", "2", "3", "4", "5"], orient="row")
         .with_row_index("person_id")
         .unpivot(index="person_id", variable_name="numpy_seq", value_name="loc_id")
         .sort(by=["person_id", "numpy_seq"])
@@ -607,7 +611,8 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
 
     s = SyntheticSchedules(0, graph, None, None, schedule_df)
     features = (
-        s.trip_df.group_by("person_id")
+        s.trip_df
+        .group_by("person_id")
         .agg(pl.col("from_loc_id").unique(maintain_order=True))
         .explode("from_loc_id")
         .with_columns(pl.int_range(pl.len()).over("person_id").alias("sequence_num"))

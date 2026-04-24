@@ -32,7 +32,7 @@ def _():
     seed = 42
 
     train_dataset, test_dataset = load_dataset(cfg, test_size, seed)
-    return (train_dataset,)
+    return test_dataset, train_dataset
 
 
 @app.cell
@@ -47,7 +47,7 @@ def _(train_dataset):
 
 
     gat, mlp
-    return
+    return (gat,)
 
 
 @app.cell
@@ -99,8 +99,84 @@ def _(alt, figures_path, results):
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Visualising prediction on the map
+    """)
+    return
+
+
 @app.cell
 def _():
+    from activitygraphs.data.geneva import GenevaData
+    from activitygraphs.dataprocessing import load_gva_network_graph
+
+    gva_data = GenevaData.load(cfg.data, project_root)
+    network_nodes, network_edges = load_gva_network_graph(gva_data, cfg.data, project_root)
+    return gva_data, network_edges, network_nodes
+
+
+@app.cell
+def _(test_dataset):
+    index = 1
+    data = test_dataset[index]
+    user_id = data.user_id
+    data
+    return (data,)
+
+
+@app.cell
+def _(data, gat):
+    _batch = next(iter(pyg.loader.DataLoader([data])))
+    preds = torch.sigmoid(gat(_batch.x, _batch.edge_index, _batch.edge_attr, _batch.batch)).detach().cpu().numpy()
+    preds.T
+    return (preds,)
+
+
+@app.cell
+def _(gva_data):
+    from activitygraphs.dataprocessing import add_user_cols
+
+    user_ids = gva_data.with_filter("subsector").user_ids
+    select_user_id = mo.ui.dropdown(user_ids, value=user_ids[0], label="User ID:", searchable=True)
+    toggle_polygons = mo.ui.switch(value=False, label="Show subsectors")
+    return add_user_cols, select_user_id, toggle_polygons
+
+
+@app.cell
+def _(add_user_cols, gva_data, network_nodes, select_user_id):
+    indiv_nodes = add_user_cols(select_user_id.value, network_nodes, gva_data.location_visits, gva_data.home_locations, gva_data.work_locations, gva_data.edu_locations)
+    indiv_nodes
+    return (indiv_nodes,)
+
+
+@app.cell
+def _(indiv_nodes):
+    select_node_col = mo.ui.dropdown(list(indiv_nodes.columns), searchable=True, label="Column:", value="purpose")
+    return (select_node_col,)
+
+
+@app.cell
+def _(
+    indiv_nodes,
+    network_edges,
+    preds,
+    select_node_col,
+    select_user_id,
+    toggle_polygons,
+):
+    _pred_nodes = indiv_nodes.copy().sort_index()
+    _pred_nodes["predictions"] = preds
+
+    nodes = _pred_nodes.set_geometry("original_geometry") if toggle_polygons.value else _pred_nodes
+    _m = network_edges.explore(color="gray", tiles="Cartodb Positron")
+    _m = nodes.explore(m=_m, column="predictions", marker_kwds={"radius": 5})
+
+    mo.vstack([
+        mo.hstack([select_user_id, select_node_col, toggle_polygons], justify="start"),
+        _m,
+    ])
     return
 
 

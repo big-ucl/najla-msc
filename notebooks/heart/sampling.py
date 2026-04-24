@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.0"
+__generated_with = "0.21.1"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -29,7 +29,7 @@ def _():
     batch_size = 64
     test_size = 0.2
     seed = 42
-    return batch_size, models_path, network_path, seed, test_size
+    return batch_size, models_path, seed, test_size
 
 
 @app.cell
@@ -85,7 +85,7 @@ def _(build_gat, build_mlp, models_path, train_set):
 
 @app.cell
 def _(train_loader, train_set):
-    from ml.baselines import NodeBaseline, ConditionalNodeBaseline
+    from activitygraphs.ml.baselines import NodeBaseline, ConditionalNodeBaseline
 
     node_baseline = NodeBaseline(train_set[0].num_nodes).fit(train_loader)
     cond_baseline = ConditionalNodeBaseline(train_set[0].num_nodes).fit(train_loader)
@@ -105,110 +105,11 @@ def _():
 @app.cell
 def _():
     from activitygraphs.data.geneva import GenevaData
-    from archive.network import Network
-
-    network_name = "routes"
+    from activitygraphs.dataprocessing import load_gva_network_graph
 
     gva_data = GenevaData.load(cfg.data, project_root)
-    gva_network = Network.load(cfg.data, project_root, network_name)
-    return (gva_data,)
-
-
-@app.cell
-def _(network_path):
-    network_nodes = gpd.read_parquet(network_path / "nodes.parquet")
-    network_edges = gpd.read_parquet(network_path / "edges.parquet")
-
-    network_nodes
-    return network_edges, network_nodes
-
-
-@app.cell
-def _(gva_data):
-    _group_keys = ["user_id", "journey_id"]
-
-    _locations = gva_data.locations_df.select("loc_id", "type")
-    _modes = gva_data.user_journeys_df.group_by(_group_keys, maintain_order=True).agg(modes="leg_mode")
-    _trips = (
-        gva_data.user_journeys_df
-        .group_by(_group_keys, maintain_order=True)
-        .agg(pl.all().gather([0, -1]))
-        .select(
-            "user_id",
-            "journey_id",
-            (pl.col("leg_id").list.last() + 1).alias("num_legs"),
-            pl.col("dep_day").list.first(),
-            pl.col("dep_time").list.first(),
-            pl.col("dep_purpose").list.first(),
-            pl.col("dep_loc_id").list.first(),
-            pl.col("arr_loc_id").list.last(),
-            pl.col("arr_purpose").list.last(),
-        )
-    )
-
-    trips = (
-        _trips
-        .join(_modes, on=_group_keys)
-        .join(
-            _locations.select(dep_loc_id="loc_id", dep_loc_type="type"),
-            on="dep_loc_id",
-        )
-        .join(
-            _locations.select(arr_loc_id="loc_id", arr_loc_type="type"),
-            on="arr_loc_id",
-        )
-        .filter(dep_loc_type="subsector", arr_loc_type="subsector")
-    )
-
-    visits = (
-        pl
-        .concat([
-            trips.select("user_id", purpose="dep_purpose", loc_id="dep_loc_id"),
-            trips.select("user_id", purpose="arr_purpose", loc_id="arr_loc_id"),
-        ])
-        .unique()
-        .sort("user_id")
-    )
-
-    visits_by_purpose = visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
-    return visits, visits_by_purpose
-
-
-@app.cell
-def _(visits, visits_by_purpose):
-    def add_user_cols(nodes: gpd.GeoDataFrame, user_id: str) -> pl.DataFrame:
-        home_locations = visits_by_purpose.filter(purpose="od_lieu_domicile").with_columns(
-            pl.col("loc_id").list.first()
-        )
-        work_locations = visits_by_purpose.filter(purpose="od_lieu_travail").with_columns(pl.col("loc_id").list.len())
-        edu_locations = visits_by_purpose.filter(purpose="od_lieu_etude").with_columns(pl.col("loc_id").list.len())
-
-        nodes = nodes.copy().reset_index()
-
-        home_location = home_locations.filter(user_id=user_id)["loc_id"].to_list()
-        work_location = work_locations.filter(user_id=user_id)["loc_id"].to_list()
-        edu_location = edu_locations.filter(user_id=user_id)["loc_id"].to_list()
-        user_visits = visits.filter(user_id=user_id)["loc_id"].to_list()
-
-        nodes["is_home"] = nodes["loc_id"].isin(home_location).astype(int)
-        nodes["is_work"] = nodes["loc_id"].isin(work_location).astype(int)
-        nodes["is_edu"] = nodes["loc_id"].isin(edu_location).astype(int)
-        nodes["is_visited"] = nodes["loc_id"].isin(user_visits).astype(int)
-
-        visit_purposes = (
-            visits
-            .filter(user_id=user_id)
-            .select("loc_id", pl.col("purpose"))
-            .group_by("loc_id")
-            .agg(pl.col("purpose").str.join(", "))
-            .to_pandas()
-        )
-        nodes = nodes.merge(visit_purposes, on="loc_id", how="left")
-        nodes = nodes.set_index("loc_id").sort_index()
-
-        return nodes
-
-    return (add_user_cols,)
+    network_nodes, network_edges = load_gva_network_graph(gva_data, cfg.data, project_root)
+    return gva_data, network_edges, network_nodes
 
 
 @app.cell(hide_code=True)
@@ -235,7 +136,7 @@ def _(test_set):
 
 @app.cell
 def _():
-    from activitygraphs.sampling import poisson_sampling, pps_sampling
+    from activitygraphs.ml.sampling import poisson_sampling, pps_sampling
 
     return poisson_sampling, pps_sampling
 
@@ -292,11 +193,19 @@ def _():
 
 
 @app.cell
+def _():
+    from activitygraphs.dataprocessing import add_user_cols
+
+    return (add_user_cols,)
+
+
+@app.cell
 def _(
     add_user_cols,
     cond_poisson,
     cond_pps,
     cond_probs,
+    gva_data,
     mlp_poisson,
     mlp_pps,
     mlp_probs,
@@ -318,7 +227,7 @@ def _(
 
         return nodes
 
-    user_nodes = add_user_cols(network_nodes, user_id)
+    user_nodes = add_user_cols(user_id, network_nodes, gva_data.location_visits, gva_data.home_locations, gva_data.work_locations, gva_data.edu_locations)
     user_nodes = add_preds_and_sample(user_nodes, probs, poisson, pps)
     user_nodes = add_preds_and_sample(user_nodes, mlp_probs, mlp_poisson, mlp_pps, prefix="mlp_")
     user_nodes = add_preds_and_sample(user_nodes, node_probs, node_poisson, node_pps, prefix="node_")

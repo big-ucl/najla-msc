@@ -1054,7 +1054,7 @@ def _(
 
 @app.cell
 def _(SEED, batch, gat, torch):
-    from activitygraphs.sampling import poisson_sampling, pps_sampling
+    from ml.sampling import poisson_sampling, pps_sampling
 
     _logits = gat(batch.x, batch.edge_index).detach()
     _generator = torch.Generator(device="cuda").manual_seed(SEED)

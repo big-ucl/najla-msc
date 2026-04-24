@@ -9,20 +9,20 @@ from sklearn.preprocessing import StandardScaler
 from torch_geometric.data.data import BaseData
 from tqdm import tqdm
 
-from ml.baselines import (
+from activitygraphs.config import Config
+from activitygraphs.ml.baselines import (
     UniformBaseline,
     GlobalBaseline,
     NodeBaseline,
     ConditionalNodeBaseline,
     IS_HOME_COL_IDX,
 )
-from activitygraphs.config import Config
-from ml.experiment import run_experiment, evaluate_baseline, compute_training_weights
-from ml.models import GATSkip, NodeMLP, GraphTransformer
+from activitygraphs.ml.experiment import run_experiment, evaluate_baseline, compute_training_weights
+from activitygraphs.ml.models import GATSkip, NodeMLP, GraphTransformer
 
 
 class GenevaDataset(pyg.data.InMemoryDataset):
-    def __init__(self, dataset_path):
+    def __init__(self, dataset_path: Path):
         super().__init__()
 
         print("Loading dataset...")
@@ -47,6 +47,7 @@ class GenevaDataset(pyg.data.InMemoryDataset):
         return self._graphs[idx]
 
 
+# noinspection PyTypeChecker
 def load_dataset(cfg: Config, test_size: float, seed: int) -> tuple[GenevaDataset, GenevaDataset]:
     processed_path = Path(cfg.data.paths.processed) / "GenevaTPG2"
     dataset_path = processed_path / "dataset.pickle"
@@ -56,10 +57,10 @@ def load_dataset(cfg: Config, test_size: float, seed: int) -> tuple[GenevaDatase
 
     if train_path.exists() and test_path.exists():
         with open(train_path, "rb") as f:
-            train_dataset = pickle.load(f)
+            train_dataset: GenevaDataset = pickle.load(f)
 
         with open(test_path, "rb") as f:
-            test_dataset = pickle.load(f)
+            test_dataset: GenevaDataset = pickle.load(f)
 
         return train_dataset, test_dataset
 
@@ -68,8 +69,9 @@ def load_dataset(cfg: Config, test_size: float, seed: int) -> tuple[GenevaDatase
     dataset = GenevaDataset(dataset_path)
     train_indices, test_indices = train_test_split(range(len(dataset)), test_size=test_size, random_state=seed)
 
-    train_dataset = dataset[train_indices]
-    test_dataset = dataset[test_indices]
+    # noinspection PyTypeChecker
+    train_dataset: GenevaDataset = dataset[train_indices]
+    test_dataset: GenevaDataset = dataset[test_indices]
 
     print(f"Train size: {len(train_dataset)}. Splitting dataset: ")
 

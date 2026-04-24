@@ -78,7 +78,7 @@ def _(add_user_cols, gva_data, network_nodes, select_user_id):
 
 @app.cell(hide_code=True)
 def _(indiv_nodes):
-    select_node_col = mo.ui.dropdown(list(indiv_nodes.columns), searchable=True, label="Column:")
+    select_node_col = mo.ui.dropdown(list(indiv_nodes.columns), searchable=True, label="Column:", value="purpose")
     return (select_node_col,)
 
 
@@ -113,25 +113,6 @@ def _():
     # Sampling and visualising predictions
     """)
     return
-
-
-@app.cell
-def _():
-    # TODO Move to new file
-    return
-
-
-@app.cell
-def _():
-    from activitygraphs.run import load_dataset
-
-    mo.stop(True)
-
-    test_size = 0.2
-    seed = 42
-
-    train_dataset, test_dataset = load_dataset(cfg, test_size, seed)
-    return test_dataset, train_dataset
 
 
 @app.cell

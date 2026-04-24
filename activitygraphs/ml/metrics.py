@@ -36,7 +36,7 @@ def ndcg_at_k(scores: torch.Tensor, labels: torch.Tensor, k: int) -> float:
     # Ideal DCG — best possible ranking
     num_pos = int(labels.sum().item())
     ideal_labels = torch.zeros(k, device=device)
-    ideal_labels[:min(num_pos, k)] = 1.0
+    ideal_labels[: min(num_pos, k)] = 1.0
     idcg = (ideal_labels * discounts).sum().item()
 
     if idcg == 0:

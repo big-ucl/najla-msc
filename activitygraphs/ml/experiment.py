@@ -3,8 +3,8 @@ import torch.nn.functional as F
 import torch_geometric as pyg
 from torch_geometric.logging import log
 
-from ml.loss import LossFn
-from ml.metrics import precision_at_k, recall_at_k, mean_reciprocal_rank, ndcg_at_k
+from activitygraphs.ml.loss import LossFn
+from activitygraphs.ml.metrics import precision_at_k, recall_at_k, mean_reciprocal_rank, ndcg_at_k
 
 
 def compute_training_weights(loader: pyg.loader.DataLoader) -> torch.Tensor:

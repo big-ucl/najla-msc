@@ -1,6 +1,11 @@
 import pickle
 from pathlib import Path
 
+import city2graph as c2g
+import geopandas as gpd
+import pandas as pd
+import polars as pl
+import torch_geometric.transforms as T
 from joblib import Parallel, delayed
 
 from activitygraphs.base import CRS
@@ -8,14 +13,6 @@ from activitygraphs.config import GenevaDataConfig
 from activitygraphs.data.geneva import GenevaData
 from activitygraphs.data.overture import Overture
 from activitygraphs.data.statistics import add_population_job_statistics
-
-import city2graph as c2g
-import pandas as pd
-import geopandas as gpd
-import polars as pl
-
-import torch_geometric.transforms as T
-
 from activitygraphs.network import NetworkData
 from activitygraphs.utils import get_project_root
 
@@ -34,7 +31,10 @@ COLS_EXCLUDED_FROM_FEATURES = [
 
 
 def load_gva_network_graph(
-    gva_data: GenevaData, cfg: GenevaDataConfig, project_root: Path | None = None, name: str = "NetworkGraph"
+    gva_data: GenevaData,
+    cfg: GenevaDataConfig,
+    project_root: Path | None = None,
+    name: str = "NetworkGraph",
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     root = get_project_root(project_root)
     network_path = root / cfg.paths.processed / name
@@ -114,8 +114,6 @@ def add_user_cols(
     work_location = work_locations.filter(user_id=user_id)["loc_id"].to_list()
     edu_location = edu_locations.filter(user_id=user_id)["loc_id"].to_list()
 
-    print(home_location, work_location, edu_location, user_visits)
-
     network_nodes["is_home"] = network_nodes["loc_id"].isin(home_location).astype(int)
     network_nodes["is_work"] = network_nodes["loc_id"].isin(work_location).astype(int)
     network_nodes["is_edu"] = network_nodes["loc_id"].isin(edu_location).astype(int)
@@ -158,7 +156,11 @@ def load_pyg_dataset(
     return graphs
 
 
-def convert_to_pyg_dataset(network_data: NetworkData, network_nodes: gpd.GeoDataFrame, network_edges: gpd.GeoDataFrame):
+def convert_to_pyg_dataset(
+    network_data: NetworkData,
+    network_nodes: gpd.GeoDataFrame,
+    network_edges: gpd.GeoDataFrame,
+):
     visits = network_data.location_visits
     home_locations = network_data.home_locations
     work_locations = network_data.work_locations
@@ -166,7 +168,13 @@ def convert_to_pyg_dataset(network_data: NetworkData, network_nodes: gpd.GeoData
 
     def build_graph(user_id: str):
         return build_user_pyg_graph(
-            user_id, network_nodes, network_edges, visits, home_locations, work_locations, edu_locations
+            user_id,
+            network_nodes,
+            network_edges,
+            visits,
+            home_locations,
+            work_locations,
+            edu_locations,
         )
 
     print("Starting graph generation... Total: ", len(network_data.user_ids))
@@ -188,7 +196,14 @@ def build_user_pyg_graph(
     work_locations: pl.DataFrame,
     edu_locations: pl.DataFrame,
 ):
-    indiv_nodes = add_user_cols(user_id, network_nodes, location_visits, home_locations, work_locations, edu_locations)
+    indiv_nodes = add_user_cols(
+        user_id,
+        network_nodes,
+        location_visits,
+        home_locations,
+        work_locations,
+        edu_locations,
+    )
     node_feature_cols = [col for col in indiv_nodes.columns if col not in COLS_EXCLUDED_FROM_FEATURES]
 
     indiv_graph = c2g.gdf_to_pyg(

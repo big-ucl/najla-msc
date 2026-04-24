@@ -61,7 +61,8 @@ class TravelTimeCalculator:
             raise ValueError("All locations in `edge_df` must exist in the router locations")
 
         edge_coords_df = (
-            edge_df.select("orig_loc_id", "dest_loc_id")
+            edge_df
+            .select("orig_loc_id", "dest_loc_id")
             .join(self._origins, on="orig_loc_id")
             .join(self._destinations, on="dest_loc_id")
         )
@@ -89,7 +90,8 @@ class OSRMRouter(Router):
         check_schema(edge_coords_df, EDGE_COORDS_SCHEMA)
 
         locations = (
-            pl.concat([
+            pl
+            .concat([
                 edge_coords_df.select(loc_id="orig_loc_id", lon="orig_lon", lat="orig_lat"),
                 edge_coords_df.select(loc_id="dest_loc_id", lon="dest_lon", lat="dest_lat"),
             ])
@@ -152,7 +154,8 @@ class CachedRouter(Router):
         cache_hits_tt = cache_hits.select(
             "orig_loc_id",
             "dest_loc_id",
-            travel_time_min=pl.concat_list("orig_loc_id", "dest_loc_id")
+            travel_time_min=pl
+            .concat_list("orig_loc_id", "dest_loc_id")
             .replace(self.cache)
             .list.item()
             .cast(pl.Float64),
