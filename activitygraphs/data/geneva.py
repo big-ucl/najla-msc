@@ -16,7 +16,7 @@ from activitygraphs.network import (
     NA_LON,
     NetworkData,
 )
-from activitygraphs.utils import check_schema
+from activitygraphs.utils import DataFrameStore, add_lon_lat_from_centroid, check_schema
 
 GENEVA_CANTON_CODE = 25
 
@@ -70,7 +70,6 @@ MODE_MAPPING = {
     "mode_voiture_passager": Mode.VEH_PASS,
 }
 
-
 FUZZY_MATCH_THRESHOLD = 65
 
 
@@ -87,7 +86,7 @@ class GenevaInputs:
     gtfs: GTFSInputs
 
 
-class GenevaData(NetworkData):
+class GenevaData(NetworkData, DataFrameStore):
     def __init__(
         self,
         inputs: GenevaInputs,
@@ -108,16 +107,6 @@ class GenevaData(NetworkData):
         return GenevaData(self.inputs, self._locations_gdf, self._user_journeys_df, filters)
 
     @classmethod
-    def _dirs(
-        cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None
-    ) -> tuple[Path, Path]:
-        project_root: Path = project_root if project_root is not None else Path(".")
-        suffix = "" if name is None else f"-{name}"
-        data_dir = project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
-
-        return project_root, data_dir
-
-    @classmethod
     def load(cls, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None) -> "GenevaData":
         project_root, data_dir = cls._dirs(cfg, project_root, name)
         gva_inputs = load_files(cfg, project_root)
@@ -128,6 +117,9 @@ class GenevaData(NetworkData):
 
             return cls(gva_inputs, locations_gdf, user_journeys_df)
         else:
+            data = build_geneva_data(gva_inputs)
+            data.save(cfg, project_root, name)
+
             return build_geneva_data(gva_inputs)
 
     def save(self, cfg: GenevaDataConfig, project_root: Path | None = None, name: str | None = None):
@@ -299,7 +291,7 @@ def _build_pt_locations(stops: pl.DataFrame) -> gpd.GeoDataFrame:
 
 
 def _build_subsector_locations(subsectors_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    subsector_locations = _add_lon_lat_from_centroid(subsectors_gdf, index_col="OBJECTID")
+    subsector_locations = add_lon_lat_from_centroid(subsectors_gdf, index_col="OBJECTID")
 
     subsector_locations["loc_id"] = "subsector-" + subsector_locations["OBJECTID"].astype(str)
     subsector_locations["type"] = "subsector"
@@ -331,7 +323,7 @@ def _build_municipality_swiss_locations(
     localities_gdf["in_geneva"] = localities_gdf["in_geneva"] | localities_gdf.within(geneva_shape)
 
     postcodes_gdf = postcodes_gdf[["FK_LOCALIT", "ZIP_ID", "ZIP4", "geometry"]]
-    postcodes_gdf = _add_lon_lat_from_centroid(postcodes_gdf, index_col="ZIP_ID")
+    postcodes_gdf = add_lon_lat_from_centroid(postcodes_gdf, index_col="ZIP_ID")
     municipality_locations = localities_gdf.drop(columns=["geometry"]).merge(
         postcodes_gdf, left_on="LOCALITYID", right_on="FK_LOCALIT"
     )
@@ -350,28 +342,12 @@ def _build_municipality_swiss_locations(
 
 
 def _build_municipality_french_locations(french_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    french_locations = _add_lon_lat_from_centroid(french_gdf, index_col="ID")
+    french_locations = add_lon_lat_from_centroid(french_gdf, index_col="ID")
     french_locations["loc_id"] = "FR-" + french_locations["ID"]
     french_locations["loc_name"] = french_locations["LIB"].str.upper() + " - " + french_locations["ID"]
     french_locations["type"] = "municipality_french"
 
     return french_locations[LOCATIONS_COLUMNS]
-
-
-def _add_lon_lat_from_centroid(
-    gdf: gpd.GeoDataFrame, index_col: str, lon_name="lon", lat_name="lat"
-) -> gpd.GeoDataFrame:
-    gdf = gdf.copy()
-
-    projected_crs = gdf.estimate_utm_crs()
-    centroids = gdf.to_crs(projected_crs).set_index(index_col).centroid.to_crs(CRS)
-    centroids = gpd.GeoDataFrame(centroids, columns=["centroid"])
-
-    gdf = gdf.join(centroids, on=index_col)
-    gdf[lon_name] = gdf["centroid"].x
-    gdf[lat_name] = gdf["centroid"].y
-
-    return gdf.drop(columns=["centroid"])
 
 
 def build_stop_names_to_loc_id_mapping(stops_df: pl.DataFrame) -> pl.DataFrame:

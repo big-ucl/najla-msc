@@ -2,19 +2,23 @@
 name: THATS
 
 inputs:
+  raw_person: indivs.parquet
+  raw_household: hhs.parquet
+  raw_activities: activs.parquet
   raw_journeys: trips.parquet
 
   boundaries:
-    directory: ${...paths.external}/boundaries
+    directory: ${...paths.external}/boundaries/canada
 
-    census_tracts: canada/lct_000b21a_e.zip
-    dissemination_areas: canada/lda_000b21a_e.zip
+    metropolitan_areas: lcma000b21a_e.zip
+    census_tracts: lct_000b21a_e.zip
+    dissemination_areas: lda_000b21a_e.zip
 
-  paths:
-    processed: data/processed/${..name}
-    raw: data/raw/${..name}
+paths:
+  processed: data/processed/${..name}
+  raw: data/raw/${..name}
 
-    external: data/external
-    gtfs: ${..paths.external}/gtfs
+  external: data/external
+  gtfs: ${..paths.external}/gtfs
 
-    pyg_datasets: ${..paths.processed}/PyGDatasets
+  pyg_datasets: ${..paths.processed}/PyGDatasets

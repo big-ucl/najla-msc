@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TypeVar
@@ -8,6 +9,7 @@ import polars as pl
 import torch
 
 from activitygraphs.base import CRS, EDGE_LIST_SCHEMA, LOCATIONS_SCHEMA
+from activitygraphs.config import DataConfig
 
 PandasSchema = Mapping[str, str]
 TDataFrame = TypeVar("TDataFrame", gpd.GeoDataFrame, pl.DataFrame)
@@ -164,3 +166,29 @@ def read_from_parquet(path: Path, schema: dict = None) -> pl.DataFrame:
 
     df = pl.read_parquet(path)
     return pl.DataFrame(df, schema_overrides=schema)
+
+
+def add_lon_lat_from_centroid(
+    gdf: gpd.GeoDataFrame, index_col: str, lon_name="lon", lat_name="lat"
+) -> gpd.GeoDataFrame:
+    gdf = gdf.copy()
+
+    projected_crs = gdf.estimate_utm_crs()
+    centroids = gdf.to_crs(projected_crs).set_index(index_col).centroid.to_crs(CRS)
+    centroids = gpd.GeoDataFrame(centroids, columns=["centroid"])
+
+    gdf = gdf.join(centroids, on=index_col)
+    gdf[lon_name] = gdf["centroid"].x
+    gdf[lat_name] = gdf["centroid"].y
+
+    return gdf.drop(columns=["centroid"])
+
+
+class DataFrameStore(ABC):
+    @classmethod
+    def _dirs(cls, cfg: DataConfig, project_root: Path | None = None, name: str | None = None) -> tuple[Path, Path]:
+        project_root: Path = project_root if project_root is not None else Path(".")
+        suffix = "" if name is None else f"-{name}"
+        data_dir = project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
+
+        return project_root, data_dir

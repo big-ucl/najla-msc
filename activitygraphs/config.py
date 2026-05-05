@@ -5,6 +5,10 @@ from typing import Literal
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
+# ===================================================
+# Small sub-inputs
+# ===================================================
+
 
 @dataclass
 class GTFSInputs:
@@ -39,6 +43,20 @@ class GenevaBoundaryInputs:
 
 
 @dataclass
+class TorontoBoundaryInputs:
+    directory: str
+
+    metropolitan_areas: str
+    census_tracts: str
+    dissemination_areas: str
+
+
+# ===================================================
+# Dataset-specific input
+# ===================================================
+
+
+@dataclass
 class Inputs:
     raw_journeys: str
     overture: OvertureInputs
@@ -60,6 +78,16 @@ class GenevaInputs(Inputs):
 
 
 @dataclass
+class TorontoInputs(Inputs):
+    boundaries: TorontoBoundaryInputs
+
+
+# ===================================================
+# Paths for datasets
+# ===================================================
+
+
+@dataclass
 class DataPaths:
     processed: Path
     raw: Path
@@ -68,6 +96,11 @@ class DataPaths:
     gtfs: Path
 
     pyg_datasets: Path
+
+
+# ===================================================
+# Data configs
+# ===================================================
 
 
 @dataclass
@@ -85,6 +118,16 @@ class LTDSDataConfig(DataConfig):
 @dataclass
 class GenevaDataConfig(DataConfig):
     inputs: GenevaInputs
+
+
+@dataclass
+class TorontoDataConfig(DataConfig):
+    inputs: TorontoInputs
+
+
+# ===================================================
+# Overall config (outputs + main)
+# ===================================================
 
 
 @dataclass
