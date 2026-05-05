@@ -1,0 +1,20 @@
+# @package data
+name: THATS
+
+inputs:
+  raw_journeys: trips.parquet
+
+  boundaries:
+    directory: ${...paths.external}/boundaries
+
+    census_tracts: canada/lct_000b21a_e.zip
+    dissemination_areas: canada/lda_000b21a_e.zip
+
+  paths:
+    processed: data/processed/${..name}
+    raw: data/raw/${..name}
+
+    external: data/external
+    gtfs: ${..paths.external}/gtfs
+
+    pyg_datasets: ${..paths.processed}/PyGDatasets

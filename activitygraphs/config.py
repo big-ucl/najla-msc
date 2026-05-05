@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
@@ -66,10 +67,7 @@ class DataPaths:
     external: Path
     gtfs: Path
 
-    act_dataset: Path
     pyg_datasets: Path
-    graphs: Path
-    metrics: Path
 
 
 @dataclass
@@ -106,11 +104,11 @@ class Config:
 # cs.store(name="ltds_config", node=Config)
 
 
-def load_config(project_root: Path, verbose=True) -> Config:
+def load_config(project_root: Path, verbose=True, data: Literal["ltds", "geneva", "toronto"] = "geneva") -> Config:
     _config_dir = str(project_root / "activitygraphs/conf")
 
     with initialize_config_dir(version_base=None, config_dir=_config_dir):
-        cfg = compose(config_name="config")
+        cfg = compose(config_name="config", overrides=[f"data={data}"])
 
     if verbose:
         print(f"Loaded config file \n{OmegaConf.to_yaml(cfg)}")
