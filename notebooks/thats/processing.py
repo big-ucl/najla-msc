@@ -6,9 +6,6 @@ app = marimo.App(width="medium")
 with app.setup:
     import marimo as mo
 
-    import torch
-    import torch_geometric as pyg
-
     from activitygraphs.config import load_config
     from pathlib import Path
 
@@ -39,7 +36,19 @@ def _():
 
 @app.cell
 def _(TorontoData):
-    toronto_data = TorontoData.load(cfg.data, project_root)
+    data = TorontoData.load(cfg.data, project_root)
+    return (data,)
+
+
+@app.cell
+def _(data):
+    data.user_journeys_df
+    return
+
+
+@app.cell
+def _(data):
+    data.locations_gdf.explore()
     return
 
 

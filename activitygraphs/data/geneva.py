@@ -12,9 +12,8 @@ from activitygraphs.base import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, USER_J
 from activitygraphs.config import DataConfig, GenevaDataConfig
 from activitygraphs.data.gtfs import GTFSInputs
 from activitygraphs.network import (
-    NA_LAT,
-    NA_LON,
     NetworkData,
+    build_special_locations,
 )
 from activitygraphs.utils import DataFrameStore, add_lon_lat_from_centroid, check_schema
 
@@ -243,7 +242,7 @@ def build_geneva_locations(
     swiss_boundaries: gpd.GeoDataFrame,
     french_gdf: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
-    special_locations = _build_special_locations()
+    special_locations = build_special_locations()
     pt_locations = _build_pt_locations(stops)
     subsector_locations = _build_subsector_locations(subsectors)
     municipality_swiss_locations = _build_municipality_swiss_locations(postcodes, localities, swiss_boundaries)
@@ -260,22 +259,6 @@ def build_geneva_locations(
             ],
             ignore_index=True,
         ),
-        crs=CRS,
-    )
-
-
-def _build_special_locations() -> gpd.GeoDataFrame:
-    na_location = {
-        "loc_id": "NA",
-        "loc_name": "NA",
-        "type": "na",
-        "lon": NA_LON,
-        "lat": NA_LAT,
-    }
-
-    return gpd.GeoDataFrame(
-        [na_location],
-        geometry=gpd.points_from_xy([NA_LON], [NA_LAT]),
         crs=CRS,
     )
 

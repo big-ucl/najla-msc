@@ -1,16 +1,17 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import cached_property
-from typing import TypeVar, Self
+from typing import Self, TypeVar
 
 import geopandas as gpd
 import polars as pl
 
 from activitygraphs import utils
 from activitygraphs.base import (
-    PTNodeType,
-    USER_JOURNEY_SCHEMA,
+    CRS,
     LOCATIONS_SCHEMA,
+    USER_JOURNEY_SCHEMA,
+    PTNodeType,
 )
 from activitygraphs.routing import TravelTimeCalculator
 from activitygraphs.utils import check_schema
@@ -126,3 +127,19 @@ class NetworkData(ABC):
 
     @abstractmethod
     def _copy(self, filters: list[str] | None = None): ...
+
+
+def build_special_locations() -> gpd.GeoDataFrame:
+    na_location = {
+        "loc_id": "NA",
+        "loc_name": "NA",
+        "type": "na",
+        "lon": NA_LON,
+        "lat": NA_LAT,
+    }
+
+    return gpd.GeoDataFrame(
+        [na_location],
+        geometry=gpd.points_from_xy([NA_LON], [NA_LAT]),
+        crs=CRS,
+    )

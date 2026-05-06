@@ -24,6 +24,22 @@ class Mode(StrEnum):
     CAR = "mode_car"
 
 
+class Purpose(StrEnum):
+    OTHER = "purp_other"
+    UNKNOWN = "purp_unknown"
+    HOME = "purp_home"
+    WORK_MAIN = "purp_work"
+    WORK_OTHER = "purp_work_other"
+    STUDY = "purp_study"
+    VISIT = "purp_visit"
+    ESCORT = "purp_escort"
+    PERSONAL = "purp_personal"
+    SHOP = "purp_shopping"
+    ENTERTAINMENT = "purp_entertainment"
+    LEISURE_OTHER = "purp_leisure_other"
+    LONG_DISTANCE_TRIP = "purp_long_distance_trip"
+
+
 LOCATIONS_SCHEMA = {
     "loc_id": "object",
     "loc_name": "object",
