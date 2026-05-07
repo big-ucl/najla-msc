@@ -8,7 +8,7 @@ from polars import selectors as cs
 from rapidfuzz import fuzz, process
 
 from activitygraphs import utils
-from activitygraphs.base import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, USER_JOURNEY_SCHEMA, Mode
+from activitygraphs.base import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, USER_JOURNEY_SCHEMA, Mode, Purpose
 from activitygraphs.config import DataConfig, GenevaDataConfig
 from activitygraphs.data.gtfs import GTFSInputs
 from activitygraphs.network import (
@@ -67,6 +67,19 @@ MODE_MAPPING = {
     "mode_velo": Mode.CYCLE,
     "mode_voiture_conducteur": Mode.CAR,
     "mode_voiture_passager": Mode.VEH_PASS,
+}
+
+PURPOSE_MAPPING = {
+    "od_lieu_achat": Purpose.SHOP,
+    "od_lieu_autre": Purpose.OTHER,
+    "od_lieu_autrelieutravail": Purpose.WORK_OTHER,
+    "od_lieu_autreloisir": Purpose.LEISURE_OTHER,
+    "od_lieu_domicile": Purpose.HOME,
+    "od_lieu_etude": Purpose.STUDY,
+    "od_lieu_resto": Purpose.ENTERTAINMENT,
+    "od_lieu_travail": Purpose.WORK_MAIN,
+    "od_lieu_visite": Purpose.VISIT,
+    "od_lieu_voyage_longue_distance": Purpose.LONG_DISTANCE_TRIP,
 }
 
 FUZZY_MATCH_THRESHOLD = 65
@@ -213,10 +226,10 @@ def build_geneva_data(inputs: GenevaInputs) -> GenevaData:
         leg_line=pl.col("ligne_trajet").cast(pl.String),
         dep_day=pl.col("jour_depart").str.to_date("%+"),
         dep_time=pl.col("date").str.split(" - ").list.first().str.to_time("%R"),
-        dep_purpose=pl.col("motif_depart").cast(pl.Categorical),
+        dep_purpose=pl.col("motif_depart").replace_strict(PURPOSE_MAPPING).cast(pl.Categorical),
         dep_loc_id="dep_loc_id",
         arr_loc_id="arr_loc_id",
-        arr_purpose=pl.col("motif_arrivee").cast(pl.Categorical),
+        arr_purpose=pl.col("motif_arrivee").replace_strict(PURPOSE_MAPPING).cast(pl.Categorical),
     )
     user_journeys_df = check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)
 

@@ -12,6 +12,7 @@ from activitygraphs.base import (
     LOCATIONS_SCHEMA,
     USER_JOURNEY_SCHEMA,
     PTNodeType,
+    Purpose,
 )
 from activitygraphs.routing import TravelTimeCalculator
 from activitygraphs.utils import check_schema
@@ -88,19 +89,17 @@ class NetworkData(ABC):
 
     @cached_property
     def home_locations(self) -> pl.DataFrame:
-        return self.location_visits_by_purpose.filter(purpose="od_lieu_domicile").with_columns(
-            pl.col("loc_id").list.first()
-        )
+        return self.location_visits_by_purpose.filter(purpose=Purpose.HOME).with_columns(pl.col("loc_id").list.first())
 
     @cached_property
     def work_locations(self) -> pl.DataFrame:
-        return self.location_visits_by_purpose.filter(purpose="od_lieu_travail").with_columns(
+        return self.location_visits_by_purpose.filter(purpose=Purpose.WORK_MAIN).with_columns(
             pl.col("loc_id").list.len()
         )
 
     @cached_property
     def edu_locations(self) -> pl.DataFrame:
-        return self.location_visits_by_purpose.filter(purpose="od_lieu_etude").with_columns(pl.col("loc_id").list.len())
+        return self.location_visits_by_purpose.filter(purpose=Purpose.STUDY).with_columns(pl.col("loc_id").list.len())
 
     @cached_property
     def user_ids(self) -> pl.Series:
