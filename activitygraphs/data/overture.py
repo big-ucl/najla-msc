@@ -27,8 +27,8 @@ class Overture:
         locations["area"] = locations.geometry.area
 
         places = self.place.copy()
-        places[category] = places["taxonomy"].str.extract(
-            r'hierarchy[\'"]:\s?\[[\'"]([^\'"]+)[\'"]'
+        places[category] = (
+            places["taxonomy"].astype(str).str.extract(r'hierarchy[\'"]:\s?\[[\'"]([^\'"]+)[\'"]')
         )  # Extract the first element in the "hierarchy"
 
         intersection = locations.sjoin(places.to_crs(utm_crs), predicate="intersects", how="left")
@@ -54,6 +54,9 @@ class Overture:
         locations: gpd.GeoDataFrame,
         normalise: bool = True,
     ) -> gpd.GeoDataFrame:
+        if not locations.geometry.geom_type.isin(["Polygon", "MultiPolygon"]).all():
+            raise ValueError("Locations geometries must all be Polygons or MultiPolygons")
+
         utm_crs = locations.estimate_utm_crs()
         original_locations = locations
 

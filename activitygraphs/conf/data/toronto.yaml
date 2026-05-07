@@ -7,6 +7,11 @@ inputs:
   raw_activities: activs.parquet
   raw_journeys: trips.parquet
 
+  overture:
+    directory: ${...paths.external}/overture/${...name}
+    land_use: land_use.geojson
+    place: place.geojson
+
   boundaries:
     directory: ${...paths.external}/boundaries/canada
 

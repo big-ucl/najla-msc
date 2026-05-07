@@ -30,25 +30,21 @@ def _():
 @app.cell
 def _():
     from activitygraphs.data.toronto import TorontoData
+    from activitygraphs.data.overture import Overture
+    from activitygraphs.dataprocessing import build_toronto_network_graph
 
-    return (TorontoData,)
+    return Overture, TorontoData
 
 
 @app.cell
 def _(TorontoData):
-    data = TorontoData.load(cfg.data, project_root)
+    data = TorontoData.load(cfg.data, project_root).with_filter("subsector")
     return (data,)
 
 
 @app.cell
-def _(data):
-    data.user_journeys_df
-    return
-
-
-@app.cell
-def _(data):
-    data.locations_gdf.explore()
+def _(Overture, data):
+    overture = Overture.load(data.locations_gdf, cfg.data.inputs.overture)
     return
 
 
@@ -119,7 +115,7 @@ def _():
 @app.cell
 def _(alt, data, pl):
     _mode_label_freq = data.inputs.raw_journeys_df.group_by("app_id").agg(pct_labeled=pl.col("manual_mode").is_not_null().sum() / pl.len())
-    
+
     _chart = _mode_label_freq.plot.bar(x=alt.X("pct_labeled", bin=alt.Bin(maxbins=20)), y="count()").properties(title="Distribution of proportion of manually-labeled trip modes per user")
     _chart
     return

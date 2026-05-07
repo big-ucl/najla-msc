@@ -1,5 +1,6 @@
 import pickle
 from pathlib import Path
+from typing import Callable
 
 import city2graph as c2g
 import geopandas as gpd
@@ -9,10 +10,11 @@ import torch_geometric.transforms as T
 from joblib import Parallel, delayed
 
 from activitygraphs.base import CRS
-from activitygraphs.config import GenevaDataConfig
+from activitygraphs.config import DataConfig
 from activitygraphs.data.geneva import GenevaData
 from activitygraphs.data.overture import Overture
 from activitygraphs.data.statistics import add_population_job_statistics
+from activitygraphs.data.toronto import TorontoData
 from activitygraphs.network import NetworkData
 from activitygraphs.utils import get_project_root
 
@@ -29,10 +31,13 @@ COLS_EXCLUDED_FROM_FEATURES = [
     "original_geometry",
 ]
 
+type NetworkGraphBuilder = Callable[[gpd.GeoDataFrame, Overture, Path], tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]]
 
-def load_gva_network_graph(
-    gva_data: GenevaData,
-    cfg: GenevaDataConfig,
+
+def load_network_graph(
+    data: NetworkData,
+    cfg: DataConfig,
+    build_network_graph: NetworkGraphBuilder,
     project_root: Path | None = None,
     name: str = "NetworkGraph",
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
@@ -47,17 +52,35 @@ def load_gva_network_graph(
 
         return network_nodes, network_edges
 
-    overture = Overture.load(gva_data.locations_gdf, cfg.inputs.overture, root)
+    overture = Overture.load(data.locations_gdf, cfg.inputs.overture, root)
     stats_path = root / cfg.inputs.statistics
 
-    subsector_gva_data = gva_data.with_filter("subsector")
-    network_nodes, network_edges = build_gva_network_graph(subsector_gva_data.locations_gdf, overture, stats_path)
+    subsector_gva_data = data.with_filter("subsector")
+    network_nodes, network_edges = build_network_graph(subsector_gva_data.locations_gdf, overture, stats_path)
 
     network_path.mkdir(parents=True, exist_ok=True)
     network_nodes.to_parquet(nodes_path)
     network_edges.to_parquet(edges_path)
 
     return network_nodes, network_edges
+
+
+def load_gva_network_graph(
+    gva_data: GenevaData,
+    cfg: DataConfig,
+    project_root: Path | None = None,
+    name: str = "NetworkGraph",
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    return load_network_graph(gva_data, cfg, build_gva_network_graph, project_root, name)
+
+
+def load_toronto_network_graph(
+    toronto_data: TorontoData,
+    cfg: DataConfig,
+    project_root: Path | None = None,
+    name: str = "NetworkGraph",
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    return load_network_graph(toronto_data, cfg, build_toronto_network_graph, project_root, name)
 
 
 def build_gva_network_graph(
@@ -94,6 +117,28 @@ def build_gva_network_graph(
 
     nodes = nodes.to_crs(CRS)
     edges: gpd.GeoDataFrame = pd.concat([edges, island_edges])
+    edges = edges.to_crs(CRS)
+
+    return nodes, edges
+
+
+def build_toronto_network_graph(
+    locations: gpd.GeoDataFrame,
+    overture: Overture,
+    stats_path: Path,
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    utm_crs = locations.estimate_utm_crs()
+    locations = locations.to_crs(utm_crs)
+
+    network_locations = locations  # add_population_job_statistics(locations, stats_path)
+    network_locations = overture.add_poi_counts(network_locations)
+    network_locations = overture.add_land_uses(network_locations)
+    network_locations = network_locations.set_index("loc_id")
+
+    nodes, edges = c2g.contiguity_graph(network_locations, set_point_nodes=True)
+
+    nodes = nodes.to_crs(CRS)
+    edges: gpd.GeoDataFrame = pd.concat([edges])
     edges = edges.to_crs(CRS)
 
     return nodes, edges
@@ -137,7 +182,7 @@ def load_pyg_graphs(
     network_data: NetworkData,
     network_nodes: gpd.GeoDataFrame,
     network_edges: gpd.GeoDataFrame,
-    cfg: GenevaDataConfig,
+    cfg: DataConfig,
     project_root: Path | None = None,
     name: str = "Graphs",
 ):
