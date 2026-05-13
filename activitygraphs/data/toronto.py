@@ -4,6 +4,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 import polars as pl
+import polars.selectors as cs
 
 from activitygraphs.base import CRS, LOCATIONS_COLUMNS, LOCATIONS_SCHEMA, USER_JOURNEY_SCHEMA, Mode, Purpose
 from activitygraphs.config import TorontoDataConfig
@@ -12,8 +13,8 @@ from activitygraphs.utils import (
     DataFrameStore,
     add_lon_lat_from_centroid,
     check_schema,
-    gdf_to_polars,
     get_project_root,
+    invert_mapping,
 )
 
 TORONTO_CMA = 535
@@ -107,11 +108,28 @@ PURPOSE_MAP = {
     # More can be added
 }
 
+ACTIVITY_MAP = invert_mapping({
+    Purpose.OTHER: [41],
+    Purpose.UNKNOWN: [43],
+    Purpose.HOME: [*range(1, 14)],
+    Purpose.WORK_MAIN: [14],
+    Purpose.WORK_OTHER: [],
+    Purpose.STUDY: [15],
+    Purpose.VISIT: [17, 40],
+    Purpose.ESCORT: [26],
+    Purpose.PERSONAL: [*range(36, 40)],
+    Purpose.SHOP: [*range(29, 36)],
+    Purpose.ENTERTAINMENT: [16, 18, 22, 24],
+    Purpose.LEISURE_OTHER: [19, 20, 21, 23, 25, 27, 28],
+    Purpose.LONG_DISTANCE_TRIP: [42],
+})
+
 
 @dataclass(frozen=True)
 class TorontoInputs:
     raw_journeys_df: pl.DataFrame
     raw_person_df: pl.DataFrame
+    raw_activities_df: pl.LazyFrame
 
     metropolitan_areas_gdf: gpd.GeoDataFrame
     census_tracts_gdf: gpd.GeoDataFrame
@@ -124,13 +142,15 @@ class TorontoData(NetworkData, DataFrameStore):
         inputs: TorontoInputs,
         locations_gdf: gpd.GeoDataFrame,
         user_journeys_df: pl.DataFrame,
+        activities_df: pl.DataFrame,
         filters: list[str] | None = None,
     ):
         super().__init__(user_journeys_df, locations_gdf, filters)
         self.inputs = inputs
+        self.activities_df = activities_df
 
     def _copy(self, filters: list[str] | None = None):
-        return TorontoData(self.inputs, self._locations_gdf, self._user_journeys_df, filters)
+        return TorontoData(self.inputs, self._locations_gdf, self._user_journeys_df, self.activities_df, filters)
 
     @classmethod
     def load(cls, cfg: TorontoDataConfig, project_root: Path | None = None, name: str | None = None) -> "TorontoData":
@@ -140,8 +160,9 @@ class TorontoData(NetworkData, DataFrameStore):
         if data_dir.exists():
             locations_gdf = gpd.read_parquet(data_dir / "locations_gdf.parquet")
             user_journeys_df = pl.read_parquet(data_dir / "user_journeys_df.parquet", schema=USER_JOURNEY_SCHEMA)
+            activities_df = pl.read_parquet(data_dir / "activities_df.parquet")
 
-            return cls(toronto_inputs, locations_gdf, user_journeys_df)
+            return cls(toronto_inputs, locations_gdf, user_journeys_df, activities_df)
         else:
             data = build_toronto_data(toronto_inputs)
             data.save(cfg, project_root, name)
@@ -154,6 +175,7 @@ class TorontoData(NetworkData, DataFrameStore):
         data_dir.mkdir(parents=True, exist_ok=True)
         self.locations_gdf.to_parquet(data_dir / "locations_gdf.parquet")
         self.user_journeys_df.write_parquet(data_dir / "user_journeys_df.parquet")
+        self.activities_df.write_parquet(data_dir / "activities_df.parquet")
 
 
 def load_files(cfg: TorontoDataConfig, project_root: Path | None = None) -> TorontoInputs:
@@ -162,20 +184,27 @@ def load_files(cfg: TorontoDataConfig, project_root: Path | None = None) -> Toro
     raw_data_dir = project_root / cfg.paths.raw
     raw_journeys_df = pl.read_parquet(raw_data_dir / "trips.parquet")
     raw_persons_df = pl.read_parquet(raw_data_dir / "indivs.parquet")
+    raw_activities_df = pl.scan_parquet(raw_data_dir / "activs.parquet")
 
     boundaries_dir = project_root / cfg.inputs.boundaries.directory
     boundary_cma = gpd.read_file(boundaries_dir / cfg.inputs.boundaries.metropolitan_areas)
     boundary_ct = gpd.read_file(boundaries_dir / cfg.inputs.boundaries.census_tracts)
     boundary_da = gpd.read_file(boundaries_dir / cfg.inputs.boundaries.dissemination_areas)
 
-    return TorontoInputs(raw_journeys_df, raw_persons_df, boundary_cma, boundary_ct, boundary_da)
+    return TorontoInputs(raw_journeys_df, raw_persons_df, raw_activities_df, boundary_cma, boundary_ct, boundary_da)
 
 
 def build_toronto_data(inputs: TorontoInputs) -> TorontoData:
     locations_gdf = build_toronto_locations(inputs)
     user_journeys_df = build_toronto_journeys(inputs, locations_gdf)
+    activities_df = build_toronto_activities(inputs, user_journeys_df)
 
-    return TorontoData(inputs, locations_gdf, user_journeys_df)
+    return TorontoData(inputs, locations_gdf, user_journeys_df, activities_df)
+
+
+# =========================================
+# Locations
+# =========================================
 
 
 def build_toronto_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
@@ -191,6 +220,29 @@ def build_toronto_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
         ),
         crs=CRS,
     )
+
+
+def build_subsector_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
+    toronto_cma = inputs.metropolitan_areas_gdf.query(f"CMAUID == '{TORONTO_CMA}'")
+    utm_crs = toronto_cma.estimate_utm_crs()
+
+    boundaries_gdf = inputs.census_tracts_gdf
+    boundaries_gdf = boundaries_gdf.to_crs(utm_crs).sjoin(toronto_cma.to_crs(utm_crs))
+    boundaries_gdf = boundaries_gdf.drop(columns=["index_right"]).reset_index(drop=True).to_crs(CRS)
+
+    boundaries_gdf = boundaries_gdf.rename(columns={"CTUID": "loc_id", "CTNAME": "loc_name"})
+    boundaries_gdf["type"] = "subsector"
+    boundaries_gdf = add_lon_lat_from_centroid(boundaries_gdf, index_col="loc_id")
+
+    # noinspection PyTypeChecker
+    gdf: gpd.GeoDataFrame = boundaries_gdf[LOCATIONS_COLUMNS].copy()
+
+    return check_schema(gdf, LOCATIONS_SCHEMA)
+
+
+# =========================================
+# Journeys
+# =========================================
 
 
 def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFrame) -> pl.DataFrame:
@@ -227,12 +279,19 @@ def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFram
         leg_id=leg_rank_expr.cast(pl.Int8),
         leg_mode=pl.col("leg_mode").cast(pl.Categorical),
         leg_line=pl.lit(None, dtype=pl.String),
-        dep_day=pl.col("start_fmt_time_section").str.to_date(format="%+"),
-        dep_time=pl.col("start_fmt_time_section").str.to_time(format="%+"),
+        dep_datetime=pl.col("start_fmt_time_section").str.to_datetime(format="%+", time_zone="EST"),
         dep_loc_id=pl.col("start_loc_CT_section"),
         arr_loc_id=pl.col("end_loc_CT_section"),
+        arr_datetime=pl.col("end_fmt_time_section").str.to_datetime(format="%+", time_zone="EST"),
         arr_purpose=purpose_expr,
     )
+
+    # Handle duration and start times/dates
+    user_journeys_df = user_journeys_df.with_columns(
+        dep_day=pl.col("dep_datetime").dt.date(),
+        dep_time=pl.col("dep_datetime").dt.time(),
+        duration=pl.col("arr_datetime") - pl.col("dep_datetime"),
+    ).drop("dep_datetime", "arr_datetime")
 
     # Add departure purposes (purpose of previous trip)
     unique_trips = (
@@ -269,19 +328,137 @@ def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFram
     )
 
 
-def build_subsector_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
-    toronto_cma = inputs.metropolitan_areas_gdf.query(f"CMAUID == '{TORONTO_CMA}'")
-    utm_crs = toronto_cma.estimate_utm_crs()
+# =========================================
+# Activities
+# =========================================
 
-    boundaries_gdf = inputs.census_tracts_gdf
-    boundaries_gdf = boundaries_gdf.to_crs(utm_crs).sjoin(toronto_cma.to_crs(utm_crs))
-    boundaries_gdf = boundaries_gdf.drop(columns=["index_right"]).reset_index(drop=True).to_crs(CRS)
 
-    boundaries_gdf = boundaries_gdf.rename(columns={"CTUID": "loc_id", "CTNAME": "loc_name"})
-    boundaries_gdf["type"] = "subsector"
-    boundaries_gdf = add_lon_lat_from_centroid(boundaries_gdf, index_col="loc_id")
+def build_toronto_activities(inputs: TorontoInputs, user_journeys_df: pl.DataFrame):
+    # Move from a wide to long data format by adding an "index" column for activities that happen in the same hour
+    activities = unpivot_activities(inputs.raw_activities_df)
 
-    # noinspection PyTypeChecker
-    gdf: gpd.GeoDataFrame = boundaries_gdf[LOCATIONS_COLUMNS].copy()
+    # Only keep users with recorded trips
+    user_ids = user_journeys_df["user_id"].unique()
+    activities = activities.filter(pl.col("person_id").is_in(user_ids.implode()))
 
-    return check_schema(gdf, LOCATIONS_SCHEMA)
+    # Parse Hour column into a day and hour column
+    activities = (
+        activities
+        .with_columns(
+            act_hour=pl.col("Hour").str.split("-").list.first(),
+            act_day=pl.col("Hour").str.split("d").list.last().cast(int),
+        )
+        .with_columns(
+            (pl.col("act_hour").str.pad_start(2, "0") + ":00").str.to_time("%H:%M"), pl.col("act_day").cast(int)
+        )
+        .drop("Hour")
+    )
+
+    # Replace day numbering with actual activity dates
+    start_dates = inputs.raw_person_df.select(
+        "person_id", start_date=pl.col("THATS Experiment start date").str.to_date("%Y-%m-%d")
+    ).lazy()
+
+    activities = (
+        activities
+        .join(start_dates, on="person_id", how="left")
+        .with_columns(act_day=pl.col("start_date") + pl.duration(days="act_day"))
+        .drop("start_date")
+    )
+
+    row_index_cols = ["hh_id", "person_id", "act_day", "act_hour", "act_index"]
+    value_cols = [col for col in activities.collect_schema().names() if col not in row_index_cols]
+
+    activities = activities.sort(row_index_cols).select(*row_index_cols, *value_cols).rename({"act_day": "act_date"})
+
+    # Replace activity type with Purposes
+    activities = activities.with_columns(
+        pl.col("ActivityType").cast(float).cast(int).replace_strict(ACTIVITY_MAP, return_dtype=pl.Categorical)
+    ).rename({"ActivityType": "act_purpose"})
+
+    # Collapse hourly breakdown into list of activities with start and end time
+    activities = collapse_activities(activities)
+
+    # Filter out empty purpose activities
+    activities = activities.drop_nulls("act_purpose")
+
+    return activities.collect()
+
+
+def unpivot_activities(activity_df: pl.LazyFrame) -> pl.LazyFrame:
+    value_cols = [
+        "StrtTripID",
+        "EndTripID",
+        "ActivityType",
+        "ActivityTypeCategory",
+        "ActivityWithPartner",
+        "ActivityWithChild",
+        "ActivityWithOtherRel",
+        "ActivityWithFriends",
+        "ActivityWithOther",
+        "ActivityHorizon",
+        "ActivityExpenditure",
+    ]
+
+    row_indentifiers = ["hh_id", "person_id", "Hour"]
+    primary_key = [*row_indentifiers, "act_index"]
+    unpivoted_df = (
+        activity_df
+        .select(*row_indentifiers, act_index=list(range(1, 8)))
+        .explode("act_index")
+        .unique(maintain_order=True)
+    )
+
+    for value_name in value_cols:
+        df = (
+            activity_df
+            .select(*row_indentifiers, cs.ends_with(value_name))
+            .unpivot(
+                index=row_indentifiers,
+                variable_name="act_index",
+                value_name=value_name,
+            )
+            .with_columns(pl.col("act_index").str.slice(0, 1).cast(int))
+        )
+
+        unpivoted_df = unpivoted_df.join(df, on=primary_key, how="left")
+
+    return unpivoted_df
+
+
+def collapse_activities(activity_df: pl.LazyFrame) -> pl.LazyFrame:
+    # Find the hour of the previous activity with the same purpose that day
+    activities = activity_df.with_columns(
+        prev_hour_same_purpose=pl.col("act_hour").shift(1).over("hh_id", "person_id", "act_date", "act_purpose")
+    )
+
+    # Compute the hour gap between the current activity and the previous activity with the same purpose
+    activities = activities.with_columns(
+        hour_gap=pl
+        .when(pl.col("prev_hour_same_purpose").is_not_null())
+        .then(
+            (
+                pl.col("act_hour").cast(pl.Duration("ms")) - pl.col("prev_hour_same_purpose").cast(pl.Duration("ms"))
+            ).dt.total_hours()
+        )
+        .otherwise(None)
+    )
+
+    # Indicate if there is a change in activity (hour gap larger than 1) and identify the spans
+    activities = activities.with_columns(
+        is_new_span=pl.col("hour_gap").is_null() | (pl.col("hour_gap") > 1)
+    ).with_columns(span_id=pl.col("is_new_span").cum_sum().over("hh_id", "person_id", "act_date", "act_purpose"))
+
+    # Group by span and find the start, end times and duration
+    activities = (
+        activities
+        .group_by("hh_id", "person_id", "act_date", "act_purpose", "span_id")
+        .agg(
+            start_time=pl.col("act_hour").min(),
+            end_time=pl.col("act_hour").max(),
+            n_hours=pl.col("act_hour").n_unique(),
+        )
+        .drop("span_id")
+    )
+
+    return activities.sort("hh_id", "person_id", "act_date", "start_time")

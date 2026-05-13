@@ -56,6 +56,7 @@ USER_JOURNEY_SCHEMA = pl.Schema({
     "leg_id": pl.Int8,
     "leg_mode": pl.Categorical(),
     "leg_line": pl.String,
+    "duration": pl.Duration(),
     "dep_day": pl.Date,
     "dep_time": pl.Time,
     "dep_purpose": pl.Categorical(),

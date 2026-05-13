@@ -164,7 +164,7 @@ def _(alt, itertools, pl):
         df: pl.DataFrame, pred_col: str, actual_col: str, enum, scale_type="linear"
     ) -> alt.Chart:
         width, height = 400, 400
-    
+
         base = pl.DataFrame(
             list(itertools.product(enum, enum)),
             orient="row",
@@ -208,7 +208,7 @@ def _(alt, itertools, pl):
                 tooltip=[pred_col, actual_col, "count"],
             )
         )
-    
+
         row_boxes = (
             alt
             .Chart(row_totals)
@@ -216,7 +216,8 @@ def _(alt, itertools, pl):
             .encode(
                 y=alt.Y(f"{actual_col}:N", axis=None),
                 color=alt.Color(
-                    "count:Q", scale=alt.Scale(type=scale_type, domainMin=1),
+                    "count:Q",
+                    scale=alt.Scale(type=scale_type, domainMin=1),
                 ),
             )
         )
@@ -226,7 +227,9 @@ def _(alt, itertools, pl):
             .Chart(row_totals)
             .mark_text()
             .encode(
-                y=alt.Y(f"{actual_col}:N", ),
+                y=alt.Y(
+                    f"{actual_col}:N",
+                ),
                 text=alt.Text("count:Q"),
             )
         )
@@ -238,7 +241,8 @@ def _(alt, itertools, pl):
             .encode(
                 x=alt.X(f"{pred_col}:N", axis=None),
                 color=alt.Color(
-                    "count:Q", scale=alt.Scale(type=scale_type, domainMin=1),
+                    "count:Q",
+                    scale=alt.Scale(type=scale_type, domainMin=1),
                 ),
             )
         )
@@ -248,7 +252,9 @@ def _(alt, itertools, pl):
             .Chart(col_totals)
             .mark_text()
             .encode(
-                x=alt.X(f"{pred_col}:N", ),
+                x=alt.X(
+                    f"{pred_col}:N",
+                ),
                 text=alt.Text("count:Q"),
             )
         )
@@ -257,10 +263,14 @@ def _(alt, itertools, pl):
         rows = (row_boxes + row_labels).properties(width=30, height=height)
         cols = (col_boxes + col_labels).properties(width=width, height=30)
 
-        bottom = (main | rows).resolve_scale(y='shared')
+        bottom = (main | rows).resolve_scale(y="shared")
 
-        return (cols & bottom).resolve_scale(x='shared', color='shared').properties(
-            title="Confusion matrix of GPS predicted vs manually-entered modes",
+        return (
+            (cols & bottom)
+            .resolve_scale(x="shared", color="shared")
+            .properties(
+                title="Confusion matrix of GPS predicted vs manually-entered modes",
+            )
         )
 
     return (plot_enum_confusion_matrix,)
@@ -312,14 +322,6 @@ def _(
     return
 
 
-@app.cell
-def _():
-    # Purposes (1-2 hrs max)
-
-
-    return
-
-
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
@@ -332,17 +334,122 @@ def _():
 
 @app.cell
 def _(data):
-    dir(data)
+    from activitygraphs.data.toronto import build_toronto_activities
+
+    activs = build_toronto_activities(data.inputs, data.user_journeys_df)
+    print(activs.head())
     return
 
 
 @app.cell
-def _():
-    return
+def _(data, pl):
+    def compare_trip_to_activity(
+        activities: pl.DataFrame,
+        trips: pl.DataFrame,
+    ) -> pl.DataFrame:
+        """
+        Join trips to the collapsed activity that 'receives' each trip
+        (i.e. the activity whose end_trip_id matches the trip_id, or
+        failing that, the activity happening at the arrival hour with
+        the closest purpose match).
+
+        Returns the trips frame with extra columns:
+          - act_purpose        : purpose from the activity log
+          - purpose_match      : bool, whether arr_purpose == act_purpose
+          - match_method       : how the match was made
+        """    
+
+        # Combine trip legs into single trips
+        trip_summaries = (
+            trips
+            .sort("user_id", "journey_id", "leg_id")
+            .group_by("user_id", "journey_id", maintain_order=True)
+            .agg(
+                dep_day=pl.col("dep_day").first(),
+                dep_time=pl.col("dep_time").first(),
+                dep_purpose=pl.col("dep_purpose").first(),
+                arr_purpose=pl.col("arr_purpose").last(),
+                last_leg_dep=pl.col("dep_time").last(),
+                last_leg_duration=pl.col("duration").last(),
+                arr_day=pl.col("dep_day").last(),
+            )
+            .with_columns(
+                arr_time=(
+                    pl.col("arr_day").dt.combine(pl.col("last_leg_dep")) + pl.col("last_leg_duration")
+                ),
+            )
+            .with_columns(
+                arr_day=pl.col("arr_time").dt.date(),
+                arr_time=pl.col("arr_time").dt.time(),
+            )
+            .drop("last_leg_dep", "last_leg_duration")
+        )
+
+        # Join trips to activities where the arrival falls within the span.
+        # Since act_hour has 1hr resolution, an arrival at e.g. 16:30 should
+        # match an activity spanning 16:00–18:00.  We truncate arrival time
+        # to the hour for comparison.
+        matched = (
+            trip_summaries
+            .with_columns(arr_hour=pl.col("arr_time").dt.hour())
+            .join(
+                activities,
+                left_on=["user_id", "arr_day"],
+                right_on=["person_id", "act_date"],
+                how="left",
+                suffix="_act",
+            )
+            # Keep only activities whose span covers the arrival hour
+            .filter(
+                (pl.col("arr_hour") >= pl.col("start_time").dt.hour())
+                & (pl.col("arr_hour") <= pl.col("end_time").dt.hour())
+            )
+            # Score candidates: prefer purpose match
+            .with_columns(
+                purpose_match=(
+                    pl.col("arr_purpose") == pl.col("act_purpose")
+                ),
+            )
+            # Pick the best match per trip:
+            #   1. purpose match first
+            #   2. then shortest span (most specific activity)
+            .sort(
+                "user_id", "journey_id",
+                "purpose_match", "n_hours",
+                descending=[False, False, True, False],
+            )
+            .group_by("user_id", "journey_id")
+            .first()
+        )
+
+        # Re-attach trips that had no matching activity at all
+        unmatched = (
+            trip_summaries
+            .join(
+                matched.select("user_id", "journey_id"),
+                on=["user_id", "journey_id"],
+                how="anti",
+            )
+            .with_columns(
+                act_purpose=pl.lit(None, dtype=pl.Categorical),
+                purpose_match=pl.lit(None, dtype=pl.Boolean),
+                # Add columns that the matched frame has so concat works
+                start_time=pl.lit(None, dtype=pl.Time),
+                end_time=pl.lit(None, dtype=pl.Time),
+                n_hours=pl.lit(None, dtype=pl.UInt32),
+                hh_id=pl.lit(None, dtype=pl.Utf8),
+                arr_hour=pl.lit(None, dtype=pl.Int8),
+            )
+        )
+
+        # TODO Fix this
+    
+        return pl.concat([matched, unmatched], how="diagonal").sort(
+            "user_id", "dep_day", "dep_time"
+        )
 
 
-@app.cell
-def _():
+    compare_trip_to_activity(data.activities_df, data.user_journeys_df)
     return
 
 

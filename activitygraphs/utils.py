@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TypeVar
+from typing import Hashable, TypeVar
 
 import geopandas as gpd
 import pandas as pd
@@ -192,3 +192,16 @@ class DataFrameStore(ABC):
         data_dir = project_root / cfg.paths.processed / f"{cls.__name__}{suffix}"
 
         return project_root, data_dir
+
+
+def invert_mapping(mapping: dict[Hashable, list[Hashable]]) -> dict[Hashable, Hashable]:
+    inversion = {}
+
+    for k, vs in mapping.items():
+        for v in vs:
+            if v in inversion:
+                raise ValueError(f"Duplicate values in mapping for {k=}: v1={v} and v2={inversion[v]}")
+
+            inversion[v] = k
+
+    return inversion

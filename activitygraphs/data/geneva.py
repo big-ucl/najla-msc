@@ -224,6 +224,7 @@ def build_geneva_data(inputs: GenevaInputs) -> GenevaData:
         leg_id=pl.col("id_trajet").cast(pl.Int8),
         leg_mode=pl.col("mode").cast(pl.Categorical).replace(MODE_MAPPING),
         leg_line=pl.col("ligne_trajet").cast(pl.String),
+        duration=pl.duration(microseconds=0),
         dep_day=pl.col("jour_depart").str.to_date("%+"),
         dep_time=pl.col("date").str.split(" - ").list.first().str.to_time("%R"),
         dep_purpose=pl.col("motif_depart").replace_strict(PURPOSE_MAPPING).cast(pl.Categorical),
