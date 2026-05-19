@@ -9,7 +9,9 @@ inputs:
     land_use: land_use.geojson
     place: place.geojson
 
-  statistics: ${..paths.external}/statistics/${..name}/AGGLO_CARREAU_200-SHP.zip
+  statistics:
+    directory: ${...paths.external}/statistics/${...name}
+    file: AGGLO_CARREAU_200-SHP.zip
 
   boundaries:
     directory: ${...paths.external}/boundaries

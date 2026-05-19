@@ -51,6 +51,22 @@ class TorontoBoundaryInputs:
     dissemination_areas: str
 
 
+@dataclass
+class StatsInputs:
+    directory: str
+
+
+@dataclass
+class GenevaStatsInputs(StatsInputs):
+    file: str
+
+
+@dataclass
+class TorontoStatsInputs(StatsInputs):
+    population: str
+    jobs: str
+
+
 # ===================================================
 # Dataset-specific input
 # ===================================================
@@ -60,6 +76,7 @@ class TorontoBoundaryInputs:
 class Inputs:
     raw_journeys: str
     overture: OvertureInputs
+    statistics: StatsInputs
 
 
 @dataclass
@@ -74,7 +91,6 @@ class LTDSInputs(Inputs):
 class GenevaInputs(Inputs):
     boundaries: GenevaBoundaryInputs
     gtfs: GTFSInputs
-    statistics: Path
 
 
 @dataclass

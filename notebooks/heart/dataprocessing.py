@@ -25,6 +25,12 @@ def _():
 
 
 @app.cell
+def _(network_nodes):
+    network_nodes
+    return
+
+
+@app.cell
 def _(gva_data):
     from activitygraphs.dataprocessing import load_gva_network_graph
 

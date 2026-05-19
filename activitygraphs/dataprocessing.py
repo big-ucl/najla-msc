@@ -10,10 +10,13 @@ import torch_geometric.transforms as T
 from joblib import Parallel, delayed
 
 from activitygraphs.base import CRS
-from activitygraphs.config import DataConfig
+from activitygraphs.config import DataConfig, GenevaStatsInputs, StatsInputs, TorontoStatsInputs
 from activitygraphs.data.geneva import GenevaData
 from activitygraphs.data.overture import Overture
-from activitygraphs.data.statistics import add_population_job_statistics
+from activitygraphs.data.statistics import (
+    add_geneva_population_job_statistics,
+    add_toronto_population_job_statistics,
+)
 from activitygraphs.data.toronto import TorontoData
 from activitygraphs.network import NetworkData
 from activitygraphs.utils import get_project_root
@@ -31,7 +34,9 @@ COLS_EXCLUDED_FROM_FEATURES = [
     "original_geometry",
 ]
 
-type NetworkGraphBuilder = Callable[[gpd.GeoDataFrame, Overture, Path], tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]]
+type NetworkGraphBuilder = Callable[
+    [gpd.GeoDataFrame, Overture, StatsInputs], tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]
+]
 
 
 def load_network_graph(
@@ -53,10 +58,9 @@ def load_network_graph(
         return network_nodes, network_edges
 
     overture = Overture.load(data.locations_gdf, cfg.inputs.overture, root)
-    stats_path = root / cfg.inputs.statistics
 
-    subsector_gva_data = data.with_filter("subsector")
-    network_nodes, network_edges = build_network_graph(subsector_gva_data.locations_gdf, overture, stats_path)
+    subsector_data = data.with_filter("subsector")
+    network_nodes, network_edges = build_network_graph(subsector_data.locations_gdf, overture, cfg.inputs.statistics)
 
     network_path.mkdir(parents=True, exist_ok=True)
     network_nodes.to_parquet(nodes_path)
@@ -86,12 +90,14 @@ def load_toronto_network_graph(
 def build_gva_network_graph(
     locations: gpd.GeoDataFrame,
     overture: Overture,
-    stats_path: Path,
+    stats_cfg: StatsInputs,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     utm_crs = locations.estimate_utm_crs()
     locations = locations.to_crs(utm_crs)
 
-    network_locations = add_population_job_statistics(locations, stats_path)
+    stats_cfg: GenevaStatsInputs
+
+    network_locations = add_geneva_population_job_statistics(locations, stats_cfg)
     network_locations = overture.add_poi_counts(network_locations)
     network_locations = overture.add_land_uses(network_locations)
     network_locations = network_locations.set_index("loc_id")
@@ -125,12 +131,14 @@ def build_gva_network_graph(
 def build_toronto_network_graph(
     locations: gpd.GeoDataFrame,
     overture: Overture,
-    stats_path: Path,
+    stats_cfg: StatsInputs,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     utm_crs = locations.estimate_utm_crs()
     locations = locations.to_crs(utm_crs)
 
-    network_locations = locations  # add_population_job_statistics(locations, stats_path)
+    stats_cfg: TorontoStatsInputs
+
+    network_locations = add_toronto_population_job_statistics(locations, stats_cfg)
     network_locations = overture.add_poi_counts(network_locations)
     network_locations = overture.add_land_uses(network_locations)
     network_locations = network_locations.set_index("loc_id")

@@ -51,7 +51,7 @@ def _(Overture, data):
 @app.cell
 def _(build_toronto_network_graph, data, overture):
     network_nodes, network_edges = build_toronto_network_graph(
-        data.locations_gdf, overture, None
+        data.locations_gdf, overture, cfg.data.inputs.statistics
     )
     return network_edges, network_nodes
 
@@ -357,7 +357,7 @@ def _(data, pl):
           - act_purpose        : purpose from the activity log
           - purpose_match      : bool, whether arr_purpose == act_purpose
           - match_method       : how the match was made
-        """    
+        """
 
         # Combine trip legs into single trips
         trip_summaries = (
@@ -375,7 +375,8 @@ def _(data, pl):
             )
             .with_columns(
                 arr_time=(
-                    pl.col("arr_day").dt.combine(pl.col("last_leg_dep")) + pl.col("last_leg_duration")
+                    pl.col("arr_day").dt.combine(pl.col("last_leg_dep"))
+                    + pl.col("last_leg_duration")
                 ),
             )
             .with_columns(
@@ -399,58 +400,50 @@ def _(data, pl):
                 how="left",
                 suffix="_act",
             )
-            # Keep only activities whose span covers the arrival hour
             .filter(
                 (pl.col("arr_hour") >= pl.col("start_time").dt.hour())
                 & (pl.col("arr_hour") <= pl.col("end_time").dt.hour())
             )
-            # Score candidates: prefer purpose match
             .with_columns(
-                purpose_match=(
-                    pl.col("arr_purpose") == pl.col("act_purpose")
-                ),
+                purpose_match=(pl.col("arr_purpose") == pl.col("act_purpose")),
+                start_hour=pl.col("start_time").dt.hour(),
             )
-            # Pick the best match per trip:
-            #   1. purpose match first
-            #   2. then shortest span (most specific activity)
+            # Prefer: 1) purpose match, 2) latest start time (most recent activity)
             .sort(
-                "user_id", "journey_id",
-                "purpose_match", "n_hours",
-                descending=[False, False, True, False],
+                "user_id",
+                "journey_id",
+                "purpose_match",
+                "start_hour",
+                descending=[False, False, True, True],
             )
             .group_by("user_id", "journey_id")
             .first()
         )
 
         # Re-attach trips that had no matching activity at all
-        unmatched = (
-            trip_summaries
-            .join(
-                matched.select("user_id", "journey_id"),
-                on=["user_id", "journey_id"],
-                how="anti",
-            )
-            .with_columns(
-                act_purpose=pl.lit(None, dtype=pl.Categorical),
-                purpose_match=pl.lit(None, dtype=pl.Boolean),
-                # Add columns that the matched frame has so concat works
-                start_time=pl.lit(None, dtype=pl.Time),
-                end_time=pl.lit(None, dtype=pl.Time),
-                n_hours=pl.lit(None, dtype=pl.UInt32),
-                hh_id=pl.lit(None, dtype=pl.Utf8),
-                arr_hour=pl.lit(None, dtype=pl.Int8),
-            )
+        unmatched = trip_summaries.join(
+            matched.select("user_id", "journey_id"),
+            on=["user_id", "journey_id"],
+            how="anti",
+        ).with_columns(
+            act_purpose=pl.lit(None, dtype=pl.Categorical),
+            purpose_match=pl.lit(None, dtype=pl.Boolean),
+            # Add columns that the matched frame has so concat works
+            start_time=pl.lit(None, dtype=pl.Time),
+            end_time=pl.lit(None, dtype=pl.Time),
+            n_hours=pl.lit(None, dtype=pl.UInt32),
+            hh_id=pl.lit(None, dtype=pl.Utf8),
+            arr_hour=pl.lit(None, dtype=pl.Int8),
         )
 
-        # TODO Fix this
-    
         return pl.concat([matched, unmatched], how="diagonal").sort(
             "user_id", "dep_day", "dep_time"
         )
 
 
-    compare_trip_to_activity(data.activities_df, data.user_journeys_df)
-    return
+    compared = compare_trip_to_activity(data.activities_df, data.user_journeys_df)
+    compared
+    return (compared,)
 
 
 @app.cell(hide_code=True)
@@ -470,7 +463,155 @@ def _():
 
 
 @app.cell
-def _():
+def _(data):
+    trips = data.user_journeys_df
+    activities = data.activities_df
+    return activities, trips
+
+
+@app.cell
+def _(activities, trips):
+    trip_users = trips.select("user_id").unique()
+    act_users = activities.select("person_id").unique()
+    print("Trip users:", trip_users.height)
+    print("Activity persons:", act_users.height)
+    print(
+        "Overlap:",
+        trip_users.join(
+            act_users, left_on="user_id", right_on="person_id", how="inner"
+        ).height,
+    )
+    return
+
+
+@app.cell
+def _(activities, trips):
+    # Check 2: Do the dates overlap?
+    trip_dates = trips.select("dep_day").unique()
+    act_dates = activities.select("act_date").unique()
+    print("Trip dates:", trip_dates.height)
+    print("Activity dates:", act_dates.height)
+    print(
+        "Date overlap:",
+        trip_dates.join(
+            act_dates, left_on="dep_day", right_on="act_date", how="inner"
+        ).height,
+    )
+    return
+
+
+@app.cell
+def _(activities, trips):
+    # Per-user date coverage
+    trip_user_dates = (
+        trips.select("user_id", "dep_day").unique().rename({"dep_day": "date"})
+    )
+    act_user_dates = (
+        activities
+        .select("person_id", "act_date")
+        .unique()
+        .rename({"person_id": "user_id", "act_date": "date"})
+    )
+
+    per_user = (
+        trip_user_dates
+        .join(act_user_dates, on=["user_id", "date"], how="inner")
+        .group_by("user_id")
+        .len()
+    )
+    print(f"Users with at least 1 overlapping date: {per_user.height}")
+    print(f"Mean overlapping dates per user: {per_user['len'].mean():.1f}")
+    print(f"Users with 0 overlapping dates: {588 - per_user.height}")
+    return (act_user_dates,)
+
+
+@app.cell
+def _(pl, trips):
+    trip_summaries = (
+        trips
+        .sort("user_id", "journey_id", "leg_id")
+        .group_by("user_id", "journey_id", maintain_order=True)
+        .agg(
+            dep_day=pl.col("dep_day").first(),
+            dep_time=pl.col("dep_time").first(),
+            dep_purpose=pl.col("dep_purpose").first(),
+            arr_purpose=pl.col("arr_purpose").last(),
+            last_leg_dep=pl.col("dep_time").last(),
+            last_leg_duration=pl.col("duration").last(),
+            arr_day=pl.col("dep_day").last(),
+        )
+        .with_columns(
+            arr_time=(
+                pl.col("arr_day").dt.combine(pl.col("last_leg_dep"))
+                + pl.col("last_leg_duration")
+            ),
+        )
+        .with_columns(
+            arr_day=pl.col("arr_time").dt.date(),
+            arr_time=pl.col("arr_time").dt.time(),
+        )
+        .drop("last_leg_dep", "last_leg_duration")
+    )
+    return (trip_summaries,)
+
+
+@app.cell
+def _(act_user_dates, compared, pl, trip_summaries):
+    # Trips that are actually matchable (user + date exists in activities)
+    matchable_trips = trip_summaries.join(
+        act_user_dates,
+        left_on=["user_id", "arr_day"],
+        right_on=["user_id", "date"],
+        how="inner",
+    )
+    print(f"Matchable trips: {matchable_trips.height}")
+
+    matchable_compared = compared.join(
+        matchable_trips.select("user_id", "journey_id"),
+        on=["user_id", "journey_id"],
+        how="inner",
+    )
+    total = matchable_compared.height
+    matched = matchable_compared.filter(pl.col("act_purpose").is_not_null()).height
+    purpose_matched = matchable_compared.filter(
+        pl.col("purpose_match") == True
+    ).height
+    print(f"Matchable trips: {total}")
+    print(f"Matched to activity: {matched} ({matched / total:.1%})")
+    print(
+        f"Purpose agrees: {purpose_matched} ({purpose_matched / max(matched, 1):.1%} of matched)"
+    )
+
+    # How many matchable trips have null arr_hour?
+    null_arr = matchable_trips.filter(pl.col("arr_time").is_null()).height
+    print(
+        f"Matchable but null arr_hour: {null_arr} ({null_arr / matchable_trips.height:.1%})"
+    )
+    return (matchable_compared,)
+
+
+@app.cell
+def _(matchable_compared, pl):
+    # What are the most common mismatches?
+    mismatches = (
+        matchable_compared
+        .filter(pl.col("purpose_match") == False)
+        .group_by("arr_purpose", "act_purpose")
+        .len()
+        .sort("len", descending=True)
+    )
+    print("Top 15 purpose mismatches:")
+    print(mismatches.head(15))
+
+    # How many trip purposes are already unknown?
+    print(
+        matchable_compared.select(
+            arr_null=pl.col("arr_purpose").is_null().sum(),
+            arr_unknown=(pl.col("arr_purpose").cast(pl.Utf8) == "unknown").sum(),
+            act_null=pl.col("act_purpose").is_null().sum(),
+            act_unknown=(pl.col("act_purpose").cast(pl.Utf8) == "unknown").sum(),
+        )
+    )
     return
 
 
