@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 import geopandas as gpd
@@ -129,6 +130,7 @@ ACTIVITY_MAP = invert_mapping({
 class TorontoInputs:
     raw_journeys_df: pl.DataFrame
     raw_person_df: pl.DataFrame
+    raw_household_df: pl.DataFrame
     raw_activities_df: pl.LazyFrame
 
     metropolitan_areas_gdf: gpd.GeoDataFrame
@@ -143,14 +145,27 @@ class TorontoData(NetworkData, DataFrameStore):
         locations_gdf: gpd.GeoDataFrame,
         user_journeys_df: pl.DataFrame,
         activities_df: pl.DataFrame,
+        users_df: pl.DataFrame,
         filters: list[str] | None = None,
     ):
         super().__init__(user_journeys_df, locations_gdf, filters)
         self.inputs = inputs
         self.activities_df = activities_df
 
+        self.users_df = users_df
+
+    @property
+    def user_ids(self) -> pl.Series:
+        return self.users_df["user_id"].sort()
+
+    @cached_property
+    def home_locations(self) -> pl.DataFrame:
+        return self.users_df.select("user_id", loc_id="home_loc_id")
+
     def _copy(self, filters: list[str] | None = None):
-        return TorontoData(self.inputs, self._locations_gdf, self._user_journeys_df, self.activities_df, filters)
+        return TorontoData(
+            self.inputs, self._locations_gdf, self._user_journeys_df, self.activities_df, self.users_df, filters
+        )
 
     @classmethod
     def load(cls, cfg: TorontoDataConfig, project_root: Path | None = None, name: str | None = None) -> "TorontoData":
@@ -161,8 +176,9 @@ class TorontoData(NetworkData, DataFrameStore):
             locations_gdf = gpd.read_parquet(data_dir / "locations_gdf.parquet")
             user_journeys_df = pl.read_parquet(data_dir / "user_journeys_df.parquet", schema=USER_JOURNEY_SCHEMA)
             activities_df = pl.read_parquet(data_dir / "activities_df.parquet")
+            users_df = pl.read_parquet(data_dir / "users_df.parquet")
 
-            return cls(toronto_inputs, locations_gdf, user_journeys_df, activities_df)
+            return cls(toronto_inputs, locations_gdf, user_journeys_df, activities_df, users_df)
         else:
             data = build_toronto_data(toronto_inputs)
             data.save(cfg, project_root, name)
@@ -176,30 +192,35 @@ class TorontoData(NetworkData, DataFrameStore):
         self.locations_gdf.to_parquet(data_dir / "locations_gdf.parquet")
         self.user_journeys_df.write_parquet(data_dir / "user_journeys_df.parquet")
         self.activities_df.write_parquet(data_dir / "activities_df.parquet")
+        self.users_df.write_parquet(data_dir / "users_df.parquet")
 
 
 def load_files(cfg: TorontoDataConfig, project_root: Path | None = None) -> TorontoInputs:
     project_root = get_project_root(project_root)
 
     raw_data_dir = project_root / cfg.paths.raw
-    raw_journeys_df = pl.read_parquet(raw_data_dir / "trips.parquet")
-    raw_persons_df = pl.read_parquet(raw_data_dir / "indivs.parquet")
-    raw_activities_df = pl.scan_parquet(raw_data_dir / "activs.parquet")
+    raw_journeys_df = pl.read_parquet(raw_data_dir / cfg.inputs.raw_journeys)
+    raw_persons_df = pl.read_parquet(raw_data_dir / cfg.inputs.raw_person)
+    raw_household_df = pl.read_parquet(raw_data_dir / cfg.inputs.raw_household)
+    raw_activities_df = pl.scan_parquet(raw_data_dir / cfg.inputs.raw_activities)
 
     boundaries_dir = project_root / cfg.inputs.boundaries.directory
     boundary_cma = gpd.read_file(boundaries_dir / cfg.inputs.boundaries.metropolitan_areas)
     boundary_ct = gpd.read_file(boundaries_dir / cfg.inputs.boundaries.census_tracts)
     boundary_da = gpd.read_file(boundaries_dir / cfg.inputs.boundaries.dissemination_areas)
 
-    return TorontoInputs(raw_journeys_df, raw_persons_df, raw_activities_df, boundary_cma, boundary_ct, boundary_da)
+    return TorontoInputs(
+        raw_journeys_df, raw_persons_df, raw_household_df, raw_activities_df, boundary_cma, boundary_ct, boundary_da
+    )
 
 
 def build_toronto_data(inputs: TorontoInputs) -> TorontoData:
     locations_gdf = build_toronto_locations(inputs)
-    user_journeys_df = build_toronto_journeys(inputs, locations_gdf)
+    user_journeys_df = build_toronto_journeys(inputs)
     activities_df = build_toronto_activities(inputs, user_journeys_df)
+    users_df = build_toronto_users(inputs, user_journeys_df)
 
-    return TorontoData(inputs, locations_gdf, user_journeys_df, activities_df)
+    return TorontoData(inputs, locations_gdf, user_journeys_df, activities_df, users_df)
 
 
 # =========================================
@@ -245,7 +266,7 @@ def build_subsector_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
 # =========================================
 
 
-def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFrame) -> pl.DataFrame:
+def build_toronto_journeys(inputs: TorontoInputs) -> pl.DataFrame:
     trips = inputs.raw_journeys_df
     persons = inputs.raw_person_df
 
@@ -294,7 +315,8 @@ def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFram
     ).drop("dep_datetime", "arr_datetime")
 
     # Add departure purposes (purpose of previous trip)
-    unique_trips = (
+    # Not a valid assumption, as trips are not necessarily linked => comment out
+    """unique_trips = (
         user_journeys_df
         .sort("user_id", "dep_day", "dep_time")
         .unique(["user_id", "journey_id"], keep="first")
@@ -314,6 +336,11 @@ def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFram
     user_journeys_df = user_journeys_df.join(dep_purposes, on="journey_id", how="left").with_columns(
         pl.col("arr_purpose").cast(pl.Categorical),
         pl.col("dep_purpose").fill_null(Purpose.UNKNOWN).cast(pl.Categorical),
+    )"""
+
+    user_journeys_df = user_journeys_df.with_columns(
+        pl.col("arr_purpose").cast(pl.Categorical),
+        pl.lit(Purpose.UNKNOWN).alias("dep_purpose").cast(pl.Categorical),
     )
 
     # Replace null loc_ids with NA
@@ -462,3 +489,23 @@ def collapse_activities(activity_df: pl.LazyFrame) -> pl.LazyFrame:
     )
 
     return activities.sort("hh_id", "person_id", "act_date", "start_time")
+
+
+# =========================================
+# Users
+# =========================================
+
+
+def build_toronto_users(inputs: TorontoInputs, user_journeys_df: pl.DataFrame) -> pl.DataFrame:
+    persons = inputs.raw_person_df.select(
+        "person_id", "hh_id"
+    )  # TODO add demographics: HH role, age, gender, education, employment status, student status, driving license, PT pass.
+
+    hhs = inputs.raw_household_df.select(
+        "hh_id", home_loc_id="THATS HomeCT"
+    )  # TODO add HH demographics: HH size (num adults, num children), HH income, HH location, num vehicles, num bikes.
+
+    demographics = persons.join(hhs, on="hh_id", how="left").drop("hh_id")
+    user_ids = user_journeys_df.select("user_id").unique()
+
+    return user_ids.join(demographics, left_on="user_id", right_on="person_id")

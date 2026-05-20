@@ -31,9 +31,17 @@ def _():
 def _():
     from activitygraphs.data.toronto import TorontoData
     from activitygraphs.data.overture import Overture
-    from activitygraphs.dataprocessing import build_toronto_network_graph
+    from activitygraphs.dataprocessing import load_toronto_network_graph
 
-    return Overture, TorontoData, build_toronto_network_graph
+    return Overture, TorontoData, load_toronto_network_graph
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Data processing
+    """)
+    return
 
 
 @app.cell
@@ -45,15 +53,32 @@ def _(TorontoData):
 @app.cell
 def _(Overture, data):
     overture = Overture.load(data.locations_gdf, cfg.data.inputs.overture)
-    return (overture,)
+    return
 
 
 @app.cell
-def _(build_toronto_network_graph, data, overture):
-    network_nodes, network_edges = build_toronto_network_graph(
-        data.locations_gdf, overture, cfg.data.inputs.statistics
-    )
+def _(data, load_toronto_network_graph):
+    network_nodes, network_edges = load_toronto_network_graph(data, cfg.data, project_root)
     return network_edges, network_nodes
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    TODO rework load_pyg_graph to generate three tensors/ PyG objects:
+    1. network graph (PyG) - simple city2graph call on network_nodes & network_edges
+    2. user spatial features (Tensor, dim N_users x N_nodes x 1) - is_home indicator, to be concatenated with NG.x in dataset
+    3. user features (Tensor, dim N_users x N_features) - socio-demographics about users, can be concatenated with each row of NG.x
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Visualisation
+    """)
+    return
 
 
 @app.cell

@@ -97,6 +97,10 @@ class GenevaInputs(Inputs):
 class TorontoInputs(Inputs):
     boundaries: TorontoBoundaryInputs
 
+    raw_person: str
+    raw_household: str
+    raw_activities: str
+
 
 # ===================================================
 # Paths for datasets
