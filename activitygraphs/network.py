@@ -32,6 +32,8 @@ class NetworkData(ABC):
     def __init__(
         self, user_journeys_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame, filters: list[str] | None = None
     ):
+        locations_gdf = locations_gdf.sort_values("loc_id")
+
         self._user_journeys_df = check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)
         self._locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
 

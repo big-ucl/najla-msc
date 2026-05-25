@@ -6,6 +6,7 @@ import city2graph as c2g
 import geopandas as gpd
 import pandas as pd
 import polars as pl
+import torch
 import torch_geometric.transforms as T
 from joblib import Parallel, delayed
 
@@ -33,6 +34,10 @@ COLS_EXCLUDED_FROM_FEATURES = [
     "geometry",
     "original_geometry",
 ]
+
+# =========================================
+# A. Network graph
+# =========================================
 
 type NetworkGraphBuilder = Callable[
     [gpd.GeoDataFrame, Overture, StatsInputs], tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]
@@ -152,6 +157,11 @@ def build_toronto_network_graph(
     return nodes, edges
 
 
+# =========================================
+# B. Spatial demographics
+# =========================================
+
+
 def add_user_cols(
     user_id: str,
     network_nodes: gpd.GeoDataFrame,
@@ -184,6 +194,68 @@ def add_user_cols(
     network_nodes = network_nodes.set_index("loc_id").sort_index()
 
     return network_nodes
+
+
+def create_spatial_demographics(data: NetworkData) -> tuple[torch.Tensor, torch.Tensor]:
+    locations = data.locations_df.select("loc_id").with_row_index("loc_order")
+    all_users_and_locs = data.user_ids.to_frame().join(locations, how="cross").lazy()
+
+    n_users = len(data.user_ids)
+    n_locs = len(locations)
+
+    # Build spatial features (i.e. will be appended to PyG data.x)
+    feature_df = (
+        all_users_and_locs
+        .pipe(add_indicator_column, data.home_locations, "is_home")
+        .pipe(add_indicator_column, data.work_locations, "is_work")
+        .pipe(add_indicator_column, data.edu_locations, "is_edu")
+        .sort("user_id", "loc_order")
+        .drop("loc_order")
+        .collect()
+    )
+
+    feature_cols = ["is_home"]
+    spatial_features = torch.tensor(feature_df.select(feature_cols).to_numpy(), dtype=torch.float32).reshape(
+        n_users, n_locs, len(feature_cols)
+    )
+
+    # Build spatial demographics labels (i.e. will form PyG data.y)
+    label_df = (
+        all_users_and_locs
+        .pipe(add_indicator_column, data.location_visits, "is_visited")
+        .sort("user_id", "loc_order")
+        .drop("loc_order")
+        .collect()
+    )
+
+    label_cols = ["is_visited"]
+    spatial_labels = torch.tensor(label_df.select(label_cols).to_numpy(), dtype=torch.float32).reshape(
+        n_users, n_locs, len(label_cols)
+    )
+
+    return spatial_features, spatial_labels
+
+
+def add_indicator_column(feature_df: pl.LazyFrame, indicator_df: pl.DataFrame, col_name: str):
+    true_indicators = indicator_df.select("user_id", "loc_id", pl.lit(True).alias(col_name)).unique().lazy()
+
+    return feature_df.join(true_indicators, on=["user_id", "loc_id"], how="left").with_columns(
+        pl.col(col_name).fill_null(False)
+    )
+
+
+# =========================================
+# C. Individual demographics
+# =========================================
+
+
+def create_individual_demographics(data: NetworkData) -> torch.Tensor:
+    pass
+
+
+# =========================================
+# PyG / Torch creation
+# =========================================
 
 
 def load_pyg_graphs(
