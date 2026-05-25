@@ -151,16 +151,19 @@ class TorontoData(NetworkData, DataFrameStore):
         super().__init__(user_journeys_df, locations_gdf, filters)
         self.inputs = inputs
         self.activities_df = activities_df
-
-        self.users_df = users_df
-
-    @property
-    def user_ids(self) -> pl.Series:
-        return self.users_df["user_id"].sort()
+        self._users_df = users_df
 
     @cached_property
     def home_locations(self) -> pl.DataFrame:
         return self.users_df.select("user_id", loc_id="home_loc_id")
+
+    @cached_property
+    def users_df(self) -> pl.DataFrame:
+        return self._filter_loc_types(self._users_df, "home_loc_id").sort("user_id")
+
+    @cached_property
+    def user_ids(self) -> pl.Series:
+        return self.users_df["user_id"].sort()
 
     def _copy(self, filters: list[str] | None = None):
         return TorontoData(
@@ -216,9 +219,9 @@ def load_files(cfg: TorontoDataConfig, project_root: Path | None = None) -> Toro
 
 def build_toronto_data(inputs: TorontoInputs) -> TorontoData:
     locations_gdf = build_toronto_locations(inputs)
-    user_journeys_df = build_toronto_journeys(inputs)
+    user_journeys_df = build_toronto_journeys(inputs, locations_gdf)
     activities_df = build_toronto_activities(inputs, user_journeys_df)
-    users_df = build_toronto_users(inputs, user_journeys_df)
+    users_df = build_toronto_users(inputs, locations_gdf, user_journeys_df)
 
     return TorontoData(inputs, locations_gdf, user_journeys_df, activities_df, users_df)
 
@@ -266,7 +269,7 @@ def build_subsector_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
 # =========================================
 
 
-def build_toronto_journeys(inputs: TorontoInputs) -> pl.DataFrame:
+def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFrame) -> pl.DataFrame:
     trips = inputs.raw_journeys_df
     persons = inputs.raw_person_df
 
@@ -346,6 +349,13 @@ def build_toronto_journeys(inputs: TorontoInputs) -> pl.DataFrame:
     # Replace null loc_ids with NA
     user_journeys_df = user_journeys_df.with_columns(
         pl.col("dep_loc_id").fill_null(NA), pl.col("arr_loc_id").fill_null(NA)
+    )
+
+    # Replace unknown locations with NA
+    locations_ids = locations_gdf["loc_id"]
+    user_journeys_df = user_journeys_df.with_columns(
+        dep_loc_id=pl.when(pl.col("dep_loc_id").is_in(locations_ids)).then(pl.col("dep_loc_id")).otherwise(pl.lit(NA)),
+        arr_loc_id=pl.when(pl.col("arr_loc_id").is_in(locations_ids)).then(pl.col("dep_loc_id")).otherwise(pl.lit(NA)),
     )
 
     return user_journeys_df.select(USER_JOURNEY_SCHEMA.keys()).sort(
@@ -496,7 +506,9 @@ def collapse_activities(activity_df: pl.LazyFrame) -> pl.LazyFrame:
 # =========================================
 
 
-def build_toronto_users(inputs: TorontoInputs, user_journeys_df: pl.DataFrame) -> pl.DataFrame:
+def build_toronto_users(
+    inputs: TorontoInputs, locations_gdf: gpd.GeoDataFrame, user_journeys_df: pl.DataFrame
+) -> pl.DataFrame:
     persons = inputs.raw_person_df.select(
         "person_id", "hh_id"
     )  # TODO add demographics: HH role, age, gender, education, employment status, student status, driving license, PT pass.
@@ -507,5 +519,11 @@ def build_toronto_users(inputs: TorontoInputs, user_journeys_df: pl.DataFrame) -
 
     demographics = persons.join(hhs, on="hh_id", how="left").drop("hh_id")
     user_ids = user_journeys_df.select("user_id").unique()
+
+    # Replace unknown locations with NA
+    locations_ids = locations_gdf["loc_id"]
+    demographics = demographics.with_columns(
+        home_loc_id=pl.when(pl.col("home_loc_id").is_in(locations_ids)).then("home_loc_id").otherwise(pl.lit(NA))
+    ).with_columns(pl.col("home_loc_id").fill_null(NA))
 
     return user_ids.join(demographics, left_on="user_id", right_on="person_id")

@@ -36,11 +36,16 @@ class NetworkData(ABC):
         self._locations_gdf = check_schema(locations_gdf, LOCATIONS_SCHEMA)
 
         self._type_filters = None if filters is None else filters.copy()
+        self._aggregated_journeys = self._compute_agg_journeys(user_journeys_df)
+        self._location_visits = self._compute_location_visits(self._aggregated_journeys)
+        self._home_locations = self._compute_home_locations(self._location_visits)
 
     @cached_property
     def user_journeys_df(self) -> pl.DataFrame:
-        dep_filtered = self._filter_loc_types(self._user_journeys_df, loc_id_col="dep_loc_id")
-        return self._filter_loc_types(dep_filtered, loc_id_col="arr_loc_id")
+        dep_filtered = self._filter_loc_types(self._user_journeys_df, loc_id_col="dep_loc_id", filter_users=True)
+        arr_filtered = self._filter_loc_types(dep_filtered, loc_id_col="arr_loc_id")
+
+        return arr_filtered
 
     @cached_property
     def locations_gdf(self) -> gpd.GeoDataFrame:
@@ -52,8 +57,74 @@ class NetworkData(ABC):
 
     @cached_property
     def aggregated_journeys(self) -> pl.DataFrame:
+        filtered_trips = self._filter_loc_types(self._aggregated_journeys, loc_id_col="dep_loc_id", filter_users=True)
+        filtered_trips = self._filter_loc_types(filtered_trips, loc_id_col="arr_loc_id")
+
+        return filtered_trips
+
+    @cached_property
+    def location_visits(self) -> pl.DataFrame:
+        return self._filter_loc_types(self._location_visits, filter_users=True)
+
+    @cached_property
+    def home_locations(self) -> pl.DataFrame:
+        return self._filter_loc_types(self._home_locations, filter_users=True)
+
+    @cached_property
+    def work_locations(self) -> pl.DataFrame:
+        return self.location_visits.filter(purpose=Purpose.WORK_MAIN).select("user_id", "loc_id").unique()
+
+    @cached_property
+    def edu_locations(self) -> pl.DataFrame:
+        return self.location_visits.filter(purpose=Purpose.STUDY).select("user_id", "loc_id").unique()
+
+    @cached_property
+    def users_df(self) -> pl.DataFrame:
+        return self._filter_loc_types(self.home_locations).sort("user_id")
+
+    @cached_property
+    def user_ids(self) -> pl.Series:
+        if self._type_filters is None:
+            return self._home_locations["user_id"].unique().sort()
+
+        valid_locations = utils.gdf_to_polars(self._locations_gdf).filter(pl.col("type").is_in(self._type_filters))
+        valid_homes = self._home_locations.join(valid_locations.select("loc_id"), on="loc_id")
+
+        users = valid_homes["user_id"].unique().sort()
+        return users
+
+    def with_filter(self, loc_types: str | list[str]) -> Self:
+        filters = [loc_types] if isinstance(loc_types, str) else loc_types
+        return self._copy(filters)
+
+    def _filter_loc_types(self, df: TDataFrame, loc_id_col: str = "loc_id", filter_users: bool = False) -> TDataFrame:
+        if self._type_filters is None:
+            return df
+
+        locations_df = utils.gdf_to_polars(self._locations_gdf)
+        valid_loc_ids = locations_df.filter(pl.col("type").is_in(self._type_filters)).select(
+            pl.col("loc_id").alias(loc_id_col)
+        )
+
+        if filter_users and "user_id" not in df.columns:
+            raise ValueError(f"Cannot find column `user_id` in columns {df.columns}")
+        elif filter_users and isinstance(df, pl.DataFrame):
+            df = df.join(self.user_ids.to_frame(), on="user_id")
+        elif filter_users:
+            df = df.merge(self.user_ids.to_frame().to_pandas(), on="user_id")
+
+        if isinstance(df, pl.DataFrame):
+            return df.join(valid_loc_ids, on=loc_id_col)
+
+        return df.merge(valid_loc_ids.to_pandas(), on=loc_id_col)
+
+    @abstractmethod
+    def _copy(self, filters: list[str] | None = None): ...
+
+    @staticmethod
+    def _compute_agg_journeys(user_journeys_df: pl.DataFrame) -> pl.DataFrame:
         group_keys = ["user_id", "journey_id"]
-        grouped_journeys = self._user_journeys_df.group_by(group_keys, maintain_order=True)
+        grouped_journeys = user_journeys_df.group_by(group_keys, maintain_order=True)
 
         modes = grouped_journeys.agg(modes="leg_mode")
         trips = grouped_journeys.agg(pl.all().gather([0, -1])).select(
@@ -68,64 +139,24 @@ class NetworkData(ABC):
             pl.col("arr_purpose").list.last(),
         )
 
-        trips_with_modes = trips.join(modes, on=group_keys)
+        return trips.join(modes, on=group_keys)
 
-        filtered_trips = self._filter_loc_types(trips_with_modes, loc_id_col="dep_loc_id")
-        filtered_trips = self._filter_loc_types(filtered_trips, loc_id_col="arr_loc_id")
-
-        return filtered_trips
-
-    @cached_property
-    def location_visits(self) -> pl.DataFrame:
-        departures = self.aggregated_journeys.select("user_id", purpose="dep_purpose", loc_id="dep_loc_id")
-        arrivals = self.aggregated_journeys.select("user_id", purpose="arr_purpose", loc_id="arr_loc_id")
+    @staticmethod
+    def _compute_location_visits(agg_journeys: pl.DataFrame) -> pl.DataFrame:
+        departures = agg_journeys.select("user_id", purpose="dep_purpose", loc_id="dep_loc_id")
+        arrivals = agg_journeys.select("user_id", purpose="arr_purpose", loc_id="arr_loc_id")
         all_visits = pl.concat([departures, arrivals])
 
         return all_visits.group_by("user_id", "purpose", "loc_id").agg(num_visits=pl.len()).sort("user_id")
 
-    @cached_property
-    def location_visits_by_purpose(self) -> pl.DataFrame:
-        return self.location_visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
-
-    @cached_property
-    def home_locations(self) -> pl.DataFrame:
-        return self.location_visits_by_purpose.filter(purpose=Purpose.HOME).with_columns(pl.col("loc_id").list.first())
-
-    @cached_property
-    def work_locations(self) -> pl.DataFrame:
-        return self.location_visits_by_purpose.filter(purpose=Purpose.WORK_MAIN).with_columns(
-            pl.col("loc_id").list.len()
+    @staticmethod
+    def _compute_home_locations(location_visits: pl.DataFrame) -> pl.DataFrame:
+        locations_by_purpose = (
+            location_visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
         )
+        home_locations = locations_by_purpose.filter(purpose=Purpose.HOME).with_columns(pl.col("loc_id").list.first())
 
-    @cached_property
-    def edu_locations(self) -> pl.DataFrame:
-        return self.location_visits_by_purpose.filter(purpose=Purpose.STUDY).with_columns(pl.col("loc_id").list.len())
-
-    @cached_property
-    def user_ids(self) -> pl.Series:
-        return self.location_visits["user_id"].unique().sort()
-
-    def with_filter(self, loc_types: str | list[str]) -> Self:
-        filters = [loc_types] if isinstance(loc_types, str) else loc_types
-        return self._copy(filters)
-
-    def _filter_loc_types(self, df: TDataFrame, loc_id_col: str = "loc_id") -> TDataFrame:
-        if self._type_filters is None:
-            return df
-
-        locations_df = utils.gdf_to_polars(self._locations_gdf)
-
-        valid_loc_ids = locations_df.filter(pl.col("type").is_in(self._type_filters)).select(
-            pl.col("loc_id").alias(loc_id_col)
-        )
-
-        if isinstance(df, pl.DataFrame):
-            return df.join(valid_loc_ids, on=loc_id_col)
-
-        return df.merge(valid_loc_ids.to_pandas(), on=loc_id_col)
-
-    @abstractmethod
-    def _copy(self, filters: list[str] | None = None): ...
+        return home_locations
 
 
 def build_special_locations() -> gpd.GeoDataFrame:

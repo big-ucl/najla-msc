@@ -33,7 +33,7 @@ def _():
     from activitygraphs.data.overture import Overture
     from activitygraphs.dataprocessing import load_toronto_network_graph
 
-    return Overture, TorontoData, load_toronto_network_graph
+    return TorontoData, load_toronto_network_graph
 
 
 @app.cell(hide_code=True)
@@ -51,15 +51,104 @@ def _(TorontoData):
 
 
 @app.cell
-def _(Overture, data):
-    overture = Overture.load(data.locations_gdf, cfg.data.inputs.overture)
+def _(data, load_toronto_network_graph):
+    network_nodes, network_edges = load_toronto_network_graph(
+        data, cfg.data, project_root
+    )
+    return network_edges, network_nodes
+
+
+@app.cell
+def _():
+    import torch
+
+    return (torch,)
+
+
+@app.cell
+def _(data, network_nodes, pl, torch):
+    locations = pl.DataFrame({"loc_id": network_nodes.index}).with_row_index(
+        "loc_order"
+    )
+
+
+    def add_indicator_column(
+        feature_df: pl.LazyFrame, indicator_df: pl.DataFrame, col_name: str
+    ):
+        true_indicators = indicator_df.select(
+            "user_id", "loc_id", pl.lit(True).alias(col_name)
+        ).unique().lazy()
+
+        return feature_df.join(
+            true_indicators, on=["user_id", "loc_id"], how="left"
+        ).with_columns(pl.col(col_name).fill_null(False))
+
+
+    visits = data.location_visits.select(
+        "user_id", "loc_id", is_visited=True
+    ).unique()
+
+    home_locations = data.home_locations.select("user_id", "loc_id", is_home=True)
+
+    feature_df = data.user_ids.to_frame().join(locations, how="cross")
+
+    feature_df = (
+        feature_df.lazy()
+        .pipe(add_indicator_column, data.home_locations, "is_home")
+        .pipe(add_indicator_column, data.work_locations, "is_work")
+        .pipe(add_indicator_column, data.edu_locations, "is_edu")
+        .pipe(add_indicator_column, data.location_visits, "is_visited")
+        .sort("user_id", "loc_order")
+        .drop("loc_order")
+        .collect()
+    )
+
+    n_users = feature_df["user_id"].n_unique()
+    n_locs = len(locations)
+
+    feature_cols = [col for col in feature_df.columns if col not in ["user_id", "loc_id"]]
+
+    spatial_demographics = torch.tensor(feature_df.select(feature_cols).to_numpy(), dtype=torch.float32).reshape(n_users, n_locs, len(feature_cols))
+
+    spatial_demographics.shape, spatial_demographics.sum(dim=[0,1])
+    return home_locations, spatial_demographics
+
+
+@app.cell
+def _(spatial_demographics):
+    import sys
+
+    spatial_demographics[0].sum(dim=0)
     return
 
 
 @app.cell
-def _(data, load_toronto_network_graph):
-    network_nodes, network_edges = load_toronto_network_graph(data, cfg.data, project_root)
-    return network_edges, network_nodes
+def _(spatial_demographics):
+    spatial_demographics[0]
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(data):
+    data.locations_gdf
+    return
+
+
+@app.cell
+def _(home_locations):
+    home_locations
+    return
+
+
+@app.cell
+def _(home_locations, network_nodes, pl):
+    home_locations.with_columns(pl.col("loc_id").is_in(network_nodes.index).alias("is_valid_home"))
+    return
 
 
 @app.cell(hide_code=True)
