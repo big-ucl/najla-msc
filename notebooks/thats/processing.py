@@ -30,17 +30,16 @@ def _():
 @app.cell
 def _():
     from activitygraphs.data.toronto import TorontoData
-    from activitygraphs.data.overture import Overture
-    from activitygraphs.dataprocessing import load_toronto_network_graph, create_spatial_demographics
+    from activitygraphs.dataprocessing import load_toronto_network_graph, convert_to_torch
 
-    return TorontoData, create_spatial_demographics, load_toronto_network_graph
+    from activitygraphs.ml.dataset import ActivityDataset
 
-
-@app.cell
-def _():
-    import torch
-
-    return (torch,)
+    return (
+        ActivityDataset,
+        TorontoData,
+        convert_to_torch,
+        load_toronto_network_graph,
+    )
 
 
 @app.cell(hide_code=True)
@@ -52,38 +51,30 @@ def _():
 
 
 @app.cell
-def _(TorontoData):
+def _(
+    ActivityDataset,
+    TorontoData,
+    convert_to_torch,
+    load_toronto_network_graph,
+):
     data = TorontoData.load(cfg.data, project_root).with_filter("subsector")
-    return (data,)
 
-
-@app.cell
-def _(data, load_toronto_network_graph):
     network_nodes, network_edges = load_toronto_network_graph(
         data, cfg.data, project_root
     )
-    return network_edges, network_nodes
 
+    network_graph, spatial_features, spatial_labels, demographics = convert_to_torch(data, network_nodes, network_edges)
 
-@app.cell
-def _(create_spatial_demographics, data):
-    spatial_features, spatial_labels = create_spatial_demographics(data)
-    return
+    dataset_path = project_root / cfg.data.paths.pyg_datasets
 
-
-@app.cell
-def _(data, torch):
-    def create_individual_demographics(data) -> torch.Tensor:
-        data.users_df
-
-    data.users_df
-    return
+    dataset = ActivityDataset(dataset_path, network_graph, spatial_features, spatial_labels, demographics)
+    return data, network_edges, network_nodes
 
 
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    TODO rework load_pyg_graph to generate three tensors/ PyG objects:
+    The PyG Dataset is composed of three objects:
     1. network graph (PyG) - simple city2graph call on network_nodes & network_edges
     2. user spatial features (Tensor, dim N_users x N_nodes x 1) - is_home indicator, to be concatenated with NG.x in dataset
     3. user features (Tensor, dim N_users x N_features) - socio-demographics about users, can be concatenated with each row of NG.x

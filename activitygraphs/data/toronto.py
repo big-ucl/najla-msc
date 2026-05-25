@@ -510,11 +510,16 @@ def build_toronto_users(
     inputs: TorontoInputs, locations_gdf: gpd.GeoDataFrame, user_journeys_df: pl.DataFrame
 ) -> pl.DataFrame:
     persons = inputs.raw_person_df.select(
-        "person_id", "hh_id"
+        "person_id", "hh_id", has_driving_license="THATS driverslicence", has_pt_pass="THATS transitpass"
     )  # TODO add demographics: HH role, age, gender, education, employment status, student status, driving license, PT pass.
 
     hhs = inputs.raw_household_df.select(
-        "hh_id", home_loc_id="THATS HomeCT"
+        "hh_id",
+        home_loc_id="THATS HomeCT",
+        hh_num_adults="THATS NumAdults",
+        hh_num_children="THATS NumChildren",
+        hh_num_vehicles="THATS NumVeh",
+        hh_num_bikes="THATS NumBike",
     )  # TODO add HH demographics: HH size (num adults, num children), HH income, HH location, num vehicles, num bikes.
 
     demographics = persons.join(hhs, on="hh_id", how="left").drop("hh_id")

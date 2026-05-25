@@ -65,6 +65,13 @@ USER_JOURNEY_SCHEMA = pl.Schema({
     "arr_purpose": pl.Categorical(),
 })
 
+USER_SCHEMA = pl.Schema({
+    "user_id": pl.String,
+    "home_loc_id": pl.String,
+    "hh_num_adults": pl.UInt32,
+    "hh_num_children": pl.UInt32,
+})
+
 EDGE_LIST_SCHEMA = pl.Schema({
     "orig_loc_id": pl.String,
     "dest_loc_id": pl.String,

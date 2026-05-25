@@ -7,6 +7,7 @@ import geopandas as gpd
 import pandas as pd
 import polars as pl
 import torch
+import torch_geometric as pyg
 import torch_geometric.transforms as T
 from joblib import Parallel, delayed
 
@@ -250,12 +251,33 @@ def add_indicator_column(feature_df: pl.LazyFrame, indicator_df: pl.DataFrame, c
 
 
 def create_individual_demographics(data: NetworkData) -> torch.Tensor:
-    pass
+    indiv_demographics = data.users_df.drop("user_id", "home_loc_id")
+    return torch.tensor(indiv_demographics.to_numpy(), dtype=torch.float32)
 
 
 # =========================================
 # PyG / Torch creation
 # =========================================
+
+
+def convert_to_torch(
+    data: NetworkData, network_nodes: gpd.GeoDataFrame, network_edges: gpd.GeoDataFrame
+) -> tuple[pyg.data.Data | pyg.data.HeteroData, torch.Tensor, torch.Tensor, torch.Tensor]:
+    spatial_features, spatial_labels = create_spatial_demographics(data)
+    demographics = create_individual_demographics(data)
+
+    node_feature_cols = [col for col in network_nodes.columns if col not in COLS_EXCLUDED_FROM_FEATURES]
+
+    network_graph = c2g.gdf_to_pyg(
+        network_nodes,
+        network_edges,
+        node_feature_cols=node_feature_cols,
+        edge_feature_cols=["weight"],
+        keep_geom=False,
+        device="cpu",
+    )
+
+    return network_graph, spatial_features, spatial_labels, demographics
 
 
 def load_pyg_graphs(
