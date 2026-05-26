@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -68,7 +68,15 @@ def _(
     dataset_path = project_root / cfg.data.paths.pyg_datasets
 
     dataset = ActivityDataset(dataset_path, network_graph, spatial_features, spatial_labels, demographics)
-    return data, network_edges, network_nodes
+    return data, dataset, network_edges, network_nodes
+
+
+@app.cell
+def _(dataset):
+    from torch_geometric.loader import DataLoader
+
+    dataset.num_classes
+    return
 
 
 @app.cell(hide_code=True)

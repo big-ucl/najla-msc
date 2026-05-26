@@ -4,16 +4,15 @@ __generated_with = "0.21.1"
 app = marimo.App(width="medium")
 
 with app.setup:
-    import marimo as mo
+    from pathlib import Path
 
+    import geopandas as gpd
+    import marimo as mo
+    import polars as pl
     import torch
     import torch_geometric as pyg
 
-    import geopandas as gpd
-    import polars as pl
-
     from activitygraphs.config import load_config
-    from pathlib import Path
 
     project_root = Path(mo.notebook_dir().parent.parent)
     cfg = load_config(project_root)
@@ -39,10 +38,10 @@ def _():
 
 @app.cell
 def _():
-    from activitygraphs.ml.dataset import load_dataset
+    from activitygraphs.ml.dataset import load_gva_dataset
     from activitygraphs.run import build_gat, build_mlp
 
-    return build_gat, build_mlp, load_dataset
+    return build_gat, build_mlp, load_gva_dataset
 
 
 @app.cell
@@ -76,7 +75,7 @@ def _(build_gat, build_mlp, models_path, train_set):
 
 @app.cell
 def _(train_loader, train_set):
-    from activitygraphs.ml.baselines import NodeBaseline, ConditionalNodeBaseline
+    from activitygraphs.ml.baselines import ConditionalNodeBaseline, NodeBaseline
 
     node_baseline = NodeBaseline(train_set[0].num_nodes).fit(train_loader)
     cond_baseline = ConditionalNodeBaseline(train_set[0].num_nodes).fit(train_loader)
@@ -218,7 +217,14 @@ def _(
 
         return nodes
 
-    user_nodes = add_user_cols(user_id, network_nodes, gva_data.location_visits, gva_data.home_locations, gva_data.work_locations, gva_data.edu_locations)
+    user_nodes = add_user_cols(
+        user_id,
+        network_nodes,
+        gva_data.location_visits,
+        gva_data.home_locations,
+        gva_data.work_locations,
+        gva_data.edu_locations,
+    )
     user_nodes = add_preds_and_sample(user_nodes, probs, poisson, pps)
     user_nodes = add_preds_and_sample(user_nodes, mlp_probs, mlp_poisson, mlp_pps, prefix="mlp_")
     user_nodes = add_preds_and_sample(user_nodes, node_probs, node_poisson, node_pps, prefix="node_")

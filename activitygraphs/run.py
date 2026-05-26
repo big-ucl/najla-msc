@@ -1,21 +1,22 @@
 from pathlib import Path
+from typing import Callable
 
 import polars as pl
 import torch_geometric as pyg
 
 from activitygraphs.config import Config
 from activitygraphs.ml.baselines import (
-    UniformBaseline,
+    ConditionalNodeBaseline,
     GlobalBaseline,
     NodeBaseline,
-    ConditionalNodeBaseline,
+    UniformBaseline,
 )
-from activitygraphs.ml.dataset import GenevaDataset, load_dataset
-from activitygraphs.ml.experiment import run_experiment, evaluate_baseline, compute_training_weights
-from activitygraphs.ml.models import GATSkip, NodeMLP, GraphTransformer
+from activitygraphs.ml.dataset import load_dataset
+from activitygraphs.ml.experiment import compute_training_weights, evaluate_baseline, run_experiment
+from activitygraphs.ml.models import GATSkip, GraphTransformer, NodeMLP
 
 
-def build_gat(dataset: GenevaDataset, num_gcn_layers: int, hidden_channels: int, dropout: float) -> GATSkip:
+def build_gat(dataset: pyg.data.Dataset, num_gcn_layers: int, hidden_channels: int, dropout: float) -> GATSkip:
     edge_dim = dataset[0].edge_attr.size(-1)
 
     return GATSkip(
@@ -24,20 +25,20 @@ def build_gat(dataset: GenevaDataset, num_gcn_layers: int, hidden_channels: int,
         num_post_layers=3,
         in_channels=dataset.num_features,
         hidden_channels=hidden_channels,
-        out_channels=dataset.num_classes,
+        out_channels=dataset.num_classes - 1,
         edge_dim=edge_dim,
         dropout=dropout,
         residuals=True,
     )
 
 
-def build_gps(dataset: GenevaDataset, num_gps_layers: int, hidden_channels: int, dropout: float):
+def build_gps(dataset: pyg.data.Dataset, num_gps_layers: int, hidden_channels: int, dropout: float):
     edge_dim = dataset[0].edge_attr.size(-1)
 
     return GraphTransformer(
         in_channels=dataset.num_features,
         hidden_channels=hidden_channels,
-        out_channels=dataset.num_classes,
+        out_channels=dataset.num_classes - 1,
         edge_dim=edge_dim,
         num_layers=num_gps_layers,
         num_heads=4,
@@ -45,12 +46,12 @@ def build_gps(dataset: GenevaDataset, num_gps_layers: int, hidden_channels: int,
     )
 
 
-def build_mlp(dataset: GenevaDataset, mlp_layers: int, hidden_channels: int, dropout: float) -> NodeMLP:
+def build_mlp(dataset: pyg.data.Dataset, mlp_layers: int, hidden_channels: int, dropout: float) -> NodeMLP:
     return NodeMLP(
         mlp_layers,
         in_channels=dataset.num_features,
         hidden_channels=hidden_channels,
-        out_channels=dataset.num_classes,
+        out_channels=dataset.num_classes - 1,
         dropout=dropout,
     )
 
@@ -82,12 +83,12 @@ def measure_baselines(num_nodes, train_loader, test_loader):
     return results
 
 
-def geneva_experiment(cfg: Config):
+def comparison_experiment(cfg: Config):
     batch_size = 64
     test_size = 0.2
     seed = 42
 
-    train_dataset, test_dataset = load_dataset(cfg, test_size, seed)
+    train_dataset, test_dataset, _ = load_dataset(cfg, test_size, seed)
     train_loader = pyg.loader.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = pyg.loader.DataLoader(test_dataset, batch_size=batch_size)
 

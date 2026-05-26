@@ -4,15 +4,14 @@ __generated_with = "0.21.1"
 app = marimo.App(width="medium")
 
 with app.setup:
-    import marimo as mo
+    from pathlib import Path
 
+    import marimo as mo
+    import polars as pl
     import torch
     import torch_geometric as pyg
 
-    import polars as pl
-
     from activitygraphs.config import load_config
-    from pathlib import Path
 
     project_root = Path(mo.notebook_dir().parent.parent)
     cfg = load_config(project_root)
@@ -20,12 +19,12 @@ with app.setup:
 
 @app.cell
 def _():
-    from activitygraphs.ml.dataset import load_dataset
+    from activitygraphs.ml.dataset import load_gva_dataset
 
     test_size = 0.2
     seed = 42
 
-    train_dataset, test_dataset = load_dataset(cfg, test_size, seed)
+    train_dataset, test_dataset = load_gva_dataset(cfg, test_size, seed)
     return test_dataset, train_dataset
 
 

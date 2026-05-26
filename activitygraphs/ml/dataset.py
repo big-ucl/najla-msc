@@ -1,6 +1,9 @@
+import json
 import pickle
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import torch
 import torch_geometric as pyg
@@ -44,10 +47,10 @@ class ActivityDataset(pyg.data.Dataset):
     def __init__(
         self,
         root: str,
-        network_graph: pyg.data.Data | None,
-        spatial_features: torch.Tensor | None,
-        spatial_labels: torch.Tensor | None,
-        demographics: torch.Tensor | None,
+        network_graph: pyg.data.Data | None = None,
+        spatial_features: torch.Tensor | None = None,
+        spatial_labels: torch.Tensor | None = None,
+        demographics: torch.Tensor | None = None,
         transform: Callable | None = None,
         pre_transform: Callable | None = None,
         pre_filter: Callable | None = None,
@@ -148,7 +151,7 @@ class ActivityDataset(pyg.data.Dataset):
         y = self.spatial_labels[i]
         graph_x = self.demographics[i]
         edge_index = self.network_graph.edge_index
-        edge_attr = getattr(self.network_graph, "edge_attr", None)
+        edge_attr = self.network_graph.edge_attr
 
         data = pyg.data.Data(x=full_x, edge_index=edge_index, edge_attr=edge_attr, y=y)
 
@@ -166,7 +169,149 @@ class ActivityDataset(pyg.data.Dataset):
         return data
 
 
+@dataclass
+class FittedScalers:
+    network_features: StandardScaler | None
+    network_edges: StandardScaler | None
+    spatial: StandardScaler | None
+    demographics: StandardScaler | None
+
+    def save(self, path: Path) -> None:
+        with path.open("wb") as f:
+            pickle.dump(self, f)
+
+    @staticmethod
+    def load(path: Path) -> "FittedScalers":
+        with path.open("rb") as f:
+            return pickle.load(f)
+
+
+def load_or_build_dataset(
+    cfg: Config,
+    project_root: Path | None = None,
+    **build_kwargs,
+) -> ActivityDataset:
+    project_root = get_project_root(project_root)
+    root = project_root / cfg.data.paths.pyg_datasets
+    return ActivityDataset(root=str(root), **build_kwargs)
+
+
+def split_indices(
+    dataset: ActivityDataset,
+    test_size: float,
+    seed: int,
+    cache_path: Path | None = None,
+) -> tuple[list[int], list[int]]:
+    if cache_path is not None and cache_path.exists():
+        with cache_path.open() as f:
+            indices = json.load(f)
+
+        return indices["train"], indices["test"]
+
+    train_idx, test_idx = train_test_split(
+        list(range(len(dataset))),
+        test_size=test_size,
+        random_state=seed,
+    )
+
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with cache_path.open("w") as f:
+            json.dump({"train": train_idx, "test": test_idx, "seed": seed}, f)
+
+    return train_idx, test_idx
+
+
+def fit_scalers(
+    dataset: ActivityDataset,
+    train_idx: list[int],
+    exclude_spatial_cols: list[int] | None = None,
+    exclude_demographic_cols: list[int] | None = None,
+) -> FittedScalers:
+    network_features = dataset.network_graph.x
+    edge_attr = dataset.network_graph.edge_attr
+
+    # Network node features: no need to separate between train and test, the network is the same.
+    network_scaler = None
+    if network_features is not None and network_features.numel() > 0:
+        network_scaler = StandardScaler()
+        network_scaler.fit(network_features.numpy())
+
+    # Network edge attributes: same as above
+    edge_scaler = None
+    if edge_attr is not None:
+        edge_scaler = StandardScaler()
+        edge_scaler.fit(edge_attr.numpy())
+
+    # Spatial features: individual-specific, fit only on train
+    spatial_train = dataset.spatial_features[train_idx]
+    if exclude_spatial_cols:
+        keep = [c for c in range(spatial_train.shape[-1]) if c not in exclude_spatial_cols]
+        spatial_train = spatial_train[..., keep]
+    spatial_flat = spatial_train.reshape(-1, spatial_train.shape[-1]).float().numpy()
+    spatial_scaler = StandardScaler()
+    spatial_scaler.fit(spatial_flat)
+
+    # Demographics: individual-specific, fit only on train
+    demo_train = dataset.demographics[train_idx]
+    if exclude_demographic_cols:
+        keep = [c for c in range(demo_train.shape[-1]) if c not in exclude_demographic_cols]
+        demo_train = demo_train[..., keep]
+    demo_scaler = StandardScaler()
+    demo_scaler.fit(demo_train.float().numpy())
+
+    return FittedScalers(
+        network_features=network_scaler, network_edges=edge_scaler, spatial=spatial_scaler, demographics=demo_scaler
+    )
+
+
+def apply_scalers(dataset: ActivityDataset, scalers: FittedScalers) -> None:
+    if scalers.network_features is not None:
+        x = dataset.network_graph.x.numpy()
+        dataset.network_graph.x = torch.from_numpy(scalers.network_features.transform(x)).float()
+
+    if scalers.network_edges is not None:
+        ea = dataset.network_graph.edge_attr.numpy()
+        dataset.network_graph.edge_attr = torch.from_numpy(scalers.network_edges.transform(ea)).float()
+
+    if scalers.spatial is not None:
+        sf = dataset.spatial_features.float()
+        flat = sf.reshape(-1, sf.shape[-1]).numpy()
+        scaled = torch.from_numpy(scalers.spatial.transform(flat)).float()
+        dataset.spatial_features = scaled.reshape(sf.shape)
+
+    if scalers.demographics is not None:
+        demo = dataset.demographics.float().numpy()
+        dataset.demographics = torch.from_numpy(scalers.demographics.transform(demo)).float()
+
+
 def load_dataset(
+    cfg: Config,
+    test_size: float,
+    seed: int,
+    project_root: Path | None = None,
+    **build_kwargs,
+) -> tuple[ActivityDataset, ActivityDataset, FittedScalers]:
+    project_root = get_project_root(project_root)
+    pyg_dir = project_root / cfg.data.paths.pyg_datasets
+    splits_cache = pyg_dir / "splits.json"
+    scalers_cache = pyg_dir / "scalers.pkl"
+
+    dataset = load_or_build_dataset(cfg, project_root=project_root, **build_kwargs)
+    train_idx, test_idx = split_indices(dataset, test_size, seed, cache_path=splits_cache)
+
+    if scalers_cache.exists():
+        scalers = FittedScalers.load(scalers_cache)
+    else:
+        scalers = fit_scalers(dataset, train_idx, exclude_spatial_cols=[IS_HOME_COL_IDX])
+        scalers.save(scalers_cache)
+
+    apply_scalers(dataset, scalers)
+
+    return cast(ActivityDataset, dataset[train_idx]), cast(ActivityDataset, dataset[test_idx]), scalers
+
+
+def load_gva_dataset(
     cfg: Config, test_size: float, seed: int, project_root: Path | None = None, graphs_name: str = "Graphs"
 ) -> tuple[GenevaDataset, GenevaDataset]:
     project_root: Path = get_project_root(project_root)
