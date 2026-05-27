@@ -16,6 +16,13 @@ def extract_is_home(x: torch.Tensor) -> torch.Tensor:
     return (x[..., IS_HOME_COL_IDX] > 0.0).bool()
 
 
+def compute_ptr_from_batch(batch: torch.Tensor):
+    ptr = torch.zeros(batch.max().item() + 2, dtype=torch.long, device=batch.device)
+    ptr[1:] = batch.bincount().cumsum(0)
+
+    return ptr
+
+
 class UniformBaseline(torch.nn.Module):
     """P(y_i = 1) = 0.5 for all nodes."""
 
@@ -39,8 +46,8 @@ class GlobalBaseline(torch.nn.Module):
             num_pos += batch.y.sum().item()
             num_total += batch.y.numel()
 
-        p = num_pos / num_total
-        self.logit = inverse_sigmoid(torch.tensor(p))
+        p = torch.tensor(num_pos / num_total).clamp(1e-6, 1 - 1e-6)
+        self.logit = inverse_sigmoid(p)
 
         return self
 
@@ -62,7 +69,7 @@ class NodeBaseline(torch.nn.Module):
         graph_counts = torch.zeros(self.num_nodes)
 
         for batch in loader:
-            node_indices = torch.arange(batch.num_nodes) % self.num_nodes
+            node_indices = torch.arange(batch.num_nodes) - batch.ptr[batch.batch]
             visit_counts.scatter_add_(0, node_indices, batch.y.float().squeeze().cpu())
             graph_counts.scatter_add_(0, node_indices, torch.ones(batch.num_nodes))
 
@@ -72,8 +79,9 @@ class NodeBaseline(torch.nn.Module):
         return self
 
     def forward(self, x, edge_index, edge_attr=None, batch=None):
-        node_indices = torch.arange(x.shape[0], device=x.device) % self.num_nodes
-        return self.logits.to(x.device)[node_indices].unsqueeze(1).to(x.device)
+        ptr = compute_ptr_from_batch(batch)
+        node_indices = torch.arange(x.shape[0], device=x.device) - ptr[batch]
+        return self.logits.to(x.device)[node_indices].unsqueeze(1)
 
 
 class ConditionalNodeBaseline(torch.nn.Module):
@@ -90,7 +98,7 @@ class ConditionalNodeBaseline(torch.nn.Module):
         graph_counts = torch.zeros(self.num_nodes)
 
         for batch in loader:
-            node_indices = torch.arange(batch.num_nodes) % self.num_nodes
+            node_indices = torch.arange(batch.num_nodes) - batch.ptr[batch.batch]
             home_mask = extract_is_home(batch.x)
 
             for i in range(batch.num_graphs):
@@ -111,7 +119,8 @@ class ConditionalNodeBaseline(torch.nn.Module):
         return self
 
     def forward(self, x, edge_index, edge_attr=None, batch=None):
-        node_indices = torch.arange(x.shape[0], device=x.device) % self.num_nodes
+        ptr = compute_ptr_from_batch(batch)
+        node_indices = torch.arange(x.shape[0], device=x.device) - ptr[batch]
         home_mask = extract_is_home(x)
         home_indices = torch.zeros(batch.max().item() + 1, dtype=torch.long, device=x.device)
 

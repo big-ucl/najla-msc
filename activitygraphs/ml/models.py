@@ -87,7 +87,11 @@ class GCN(torch.nn.Module):
             x = F.leaky_relu(x)
 
         x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, edge_index)
+
+        if edge_attr is not None:
+            x = self.convs[-1](x, edge_index, edge_attr)
+        else:
+            x = self.convs[-1](x, edge_index)
 
         return x
 
@@ -130,7 +134,7 @@ class GCNPlus(torch.nn.Module):
     def forward(
         self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None, batch=None
     ) -> torch.Tensor:
-        x = self.gcn(x, edge_index).relu()
+        x = self.gcn(x, edge_index, edge_attr).relu()
         x = self.lin(x, edge_index)
 
         return x

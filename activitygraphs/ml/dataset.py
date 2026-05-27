@@ -73,6 +73,7 @@ class ActivityDataset(pyg.data.Dataset):
         self._demographics_in = demographics
 
         super().__init__(root, transform, pre_transform, pre_filter)
+        del self._network_graph_in, self._spatial_features_in, self._spatial_labels_in, self._demographics_in
 
         processed_dir = Path(self.processed_dir)
         self.network_graph: pyg.data.Data = torch.load(processed_dir / "network_graph.pt", weights_only=False)
@@ -86,6 +87,7 @@ class ActivityDataset(pyg.data.Dataset):
 
         self.num_individuals: int = self.demographics.size(0)
         self.num_nodes: int = num_nodes
+        self._is_scaled: bool = False
 
     @property
     def raw_file_names(self) -> list[str]:
@@ -189,6 +191,7 @@ class FittedScalers:
     network_edges: StandardScaler | None
     spatial: StandardScaler | None
     demographics: StandardScaler | None
+    exclude_spatial_cols: list[int] | None = None
 
     def save(self, path: Path) -> None:
         with path.open("wb") as f:
@@ -288,12 +291,19 @@ def fit_scalers(
     demo_scaler.fit(demo_train.float().numpy())
 
     return FittedScalers(
-        network_features=network_scaler, network_edges=edge_scaler, spatial=spatial_scaler, demographics=demo_scaler
+        network_features=network_scaler,
+        network_edges=edge_scaler,
+        spatial=spatial_scaler,
+        demographics=demo_scaler,
+        exclude_spatial_cols=exclude_spatial_cols,
     )
 
 
 def apply_scalers(dataset: ActivityDataset, scalers: FittedScalers) -> None:
     """Apply fitted scalers to the dataset in-place, transforming network/spatial/demographic tensors."""
+    if dataset._is_scaled:
+        raise RuntimeError("apply_scalers called twice on the same ActivityDataset")
+
     if scalers.network_features is not None:
         x = dataset.network_graph.x.numpy()
         dataset.network_graph.x = torch.from_numpy(scalers.network_features.transform(x)).float()
@@ -304,13 +314,20 @@ def apply_scalers(dataset: ActivityDataset, scalers: FittedScalers) -> None:
 
     if scalers.spatial is not None:
         sf = dataset.spatial_features.float()
-        flat = sf.reshape(-1, sf.shape[-1]).numpy()
-        scaled = torch.from_numpy(scalers.spatial.transform(flat)).float()
-        dataset.spatial_features = scaled.reshape(sf.shape)
+        n_cols = sf.shape[-1]
+        exclude = scalers.exclude_spatial_cols or []
+        keep = [c for c in range(n_cols) if c not in exclude]
+        flat = sf.reshape(-1, n_cols)[:, keep].numpy()
+        scaled_keep = torch.from_numpy(scalers.spatial.transform(flat)).float()
+        result = sf.reshape(-1, n_cols).clone()
+        result[:, keep] = scaled_keep
+        dataset.spatial_features = result.reshape(sf.shape)
 
     if scalers.demographics is not None:
         demo = dataset.demographics.float().numpy()
         dataset.demographics = torch.from_numpy(scalers.demographics.transform(demo)).float()
+
+    dataset._is_scaled = True
 
 
 def load_dataset(
@@ -331,7 +348,7 @@ def load_dataset(
     project_root = get_project_root(project_root)
     pyg_dir = project_root / cfg.data.paths.pyg_datasets
     splits_cache = pyg_dir / "splits.json"
-    scalers_cache = pyg_dir / "scalers.pkl"
+    scalers_cache = pyg_dir / f"scalers_{seed}_{test_size}.pkl"
 
     positional_encodings_transforms = T.Compose([
         T.AddRandomWalkPE(walk_length=20, attr_name=None),
@@ -347,9 +364,7 @@ def load_dataset(
     if scalers_cache.exists():
         scalers = FittedScalers.load(scalers_cache)
     else:
-        scalers = fit_scalers(
-            dataset, train_idx
-        )  # TODO Fix boolean columns being scaled. Idea: stop column type in dataset
+        scalers = fit_scalers(dataset, train_idx, exclude_spatial_cols=[IS_HOME_COL_IDX])
         scalers.save(scalers_cache)
 
     apply_scalers(dataset, scalers)

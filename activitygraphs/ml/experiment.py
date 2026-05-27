@@ -76,11 +76,12 @@ def train(
         optimizer.zero_grad()
         out = model(x, batch.edge_index, batch.edge_attr, batch.batch)
         loss = loss_fn(out, batch.y.float(), pos_weight=pos_weight)
-        loss.backward()
 
         if reg == "l1":
             l1_norm = sum(p.abs().sum() for p in model.parameters())
             loss += lambda_reg * l1_norm
+
+        loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
@@ -251,7 +252,7 @@ def run_experiment(
 
     # noinspection PyTypeChecker
     loss_fn: LossFn = F.binary_cross_entropy_with_logits
-    pos_weight = compute_training_weights(train_loader)
+    pos_weight = compute_training_weights(train_loader).to(device)
 
     log(Model=name)
 
@@ -280,10 +281,10 @@ def run_experiment(
                 train_eval_bce=train_eval_loss,
                 bce=test_loss,
                 w_bce=test_loss_weight,
-                precision_at_3=metrics["precision@5"],
-                recall_at_3=metrics["recall@5"],
+                precision_at_5=metrics["precision@5"],
+                recall_at_5=metrics["recall@5"],
                 mrr=metrics["mrr"],
-                ndcg_at_3=metrics["ndcg@5"],
+                ndcg_at_5=metrics["ndcg@5"],
             )
 
     log(
@@ -292,10 +293,10 @@ def run_experiment(
         train_eval_bce=train_eval_loss,
         bce=test_loss,
         w_bce=test_loss_weight,
-        precision_at_3=metrics["precision@5"],
-        recall_at_3=metrics["recall@5"],
+        precision_at_5=metrics["precision@5"],
+        recall_at_5=metrics["recall@5"],
         mrr=metrics["mrr"],
-        ndcg_at_3=metrics["ndcg@5"],
+        ndcg_at_5=metrics["ndcg@5"],
     )
 
     if save:
@@ -303,7 +304,7 @@ def run_experiment(
 
     return {
         "name": name,
-        "epoch": range(1, num_epochs + 1),
+        "epoch": list(range(1, num_epochs + 1)),
         "train_bce": train_losses,
         "train_eval_bce": train_eval_losses,
         "bce": test_losses,

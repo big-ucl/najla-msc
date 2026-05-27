@@ -11,14 +11,14 @@ class LossFn(Protocol):
     """Protocol for loss functions that accept ``inputs``, ``targets``, and an optional ``pos_weight``."""
 
     def __call__(
-        self, inputs: int, targets: str, *, pos_weight: torch.Tensor | None = ..., **kwargs
+        self, inputs: torch.Tensor, targets: torch.Tensor, *, pos_weight: torch.Tensor | None = ..., **kwargs
     ) -> torch.Tensor: ...
 
 
 class MetricFn(Protocol):
     """Protocol for metric functions that map ``(inputs, targets)`` to a scalar float."""
 
-    def __call__(self, inputs: int, targets: str) -> float: ...
+    def __call__(self, inputs: torch.Tensor, targets: torch.Tensor) -> float: ...
 
 
 def focal_loss(
