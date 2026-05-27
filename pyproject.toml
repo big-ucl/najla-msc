@@ -44,9 +44,13 @@ dependencies = [
     "scipy>=1.15.3",
     "seaborn>=0.13.2",
     "sqlglot>=26.29.0",
+    "lightning>=2.0",
     "torch>=2.10.0",
     "torch-geometric>=2.7.0",
     "tqdm>=4.67.1",
+    "torchmetrics>=1.9.0",
+    "scipy-stubs~=1.17.1",
+    "wandb>=0.27.0",
 ]
 
 [project.scripts]
@@ -124,3 +128,8 @@ line-length = 120
 [tool.ruff.format]
 # Enable preview style formatting.
 preview = true
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that need processed data on disk; skipped automatically when absent",
+]

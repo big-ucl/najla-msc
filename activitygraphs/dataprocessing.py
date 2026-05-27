@@ -2,10 +2,11 @@
 
 import pickle
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 import city2graph as c2g
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import polars as pl
 import torch
@@ -13,8 +14,16 @@ import torch_geometric as pyg
 import torch_geometric.transforms as T
 from joblib import Parallel, delayed
 
+
 from activitygraphs.base import CRS
-from activitygraphs.config import DataConfig, GenevaStatsInputs, StatsInputs, TorontoStatsInputs
+from activitygraphs.config import (
+    DataConfig,
+    GenevaStatsInputs,
+    StatsInputs,
+    TorontoStatsInputs,
+    TorontoDataConfig,
+    GenevaDataConfig,
+)
 from activitygraphs.data.geneva import GenevaData
 from activitygraphs.data.overture import Overture
 from activitygraphs.data.statistics import (
@@ -37,6 +46,12 @@ COLS_EXCLUDED_FROM_FEATURES = [
     "geometry",
     "original_geometry",
 ]
+
+# Single source of truth for the per-user spatial feature columns, in the order they are
+# appended after the network node features in the concatenated node feature matrix `x`.
+# `is_home` must stay first so that the derived home-column index (see ActivityDataset)
+# remains valid for `extract_is_home` / the conditional baseline.
+SPATIAL_FEATURE_NAMES = ["is_home"]
 
 # =========================================
 # A. Network graph
@@ -250,7 +265,7 @@ def create_spatial_demographics(data: NetworkData) -> tuple[torch.Tensor, torch.
         .collect()
     )
 
-    feature_cols = ["is_home"]
+    feature_cols = SPATIAL_FEATURE_NAMES
     spatial_features = torch.tensor(feature_df.select(feature_cols).to_numpy(), dtype=torch.float32).reshape(
         n_users, n_locs, len(feature_cols)
     )
@@ -272,6 +287,28 @@ def create_spatial_demographics(data: NetworkData) -> tuple[torch.Tensor, torch.
     return spatial_features, spatial_labels
 
 
+def create_home_distances(data, network_nodes: gpd.GeoDataFrame) -> torch.Tensor:
+    """Build a distance-from-home tensor over all network nodes for every user. Uses Euclidian distance between
+    centroids.
+
+    Returns:
+        Float tensor of shape ``[n_users, n_nodes, 1]``.
+    """
+    nodes = network_nodes.sort_index().to_crs(network_nodes.estimate_utm_crs())
+    coords = nodes.geometry.get_coordinates()
+
+    home_by_user = dict(data.home_locations.iter_rows())
+
+    n_users, n_nodes = len(data.user_ids), len(coords)
+    distances = np.zeros((n_users, n_nodes, 1), dtype=np.float32)
+
+    for user_idx, user_id in enumerate(data.user_ids):
+        home_loc_id = home_by_user[user_id]
+        distances[user_idx, :, 0] = np.linalg.norm(coords - coords.loc[home_loc_id], axis=1)
+
+    return torch.from_numpy(distances)
+
+
 def add_indicator_column(feature_df: pl.LazyFrame, indicator_df: pl.DataFrame, col_name: str):
     """Add an indicator column with name ``col_name`` to ``feature_df`` which is ``True`` if ``[loc_id, user_id]`` appears in ``indicator_df`` and ``False`` otherwise."""
     true_indicators = indicator_df.select("user_id", "loc_id", pl.lit(True).alias(col_name)).unique().lazy()
@@ -287,8 +324,13 @@ def add_indicator_column(feature_df: pl.LazyFrame, indicator_df: pl.DataFrame, c
 
 
 def create_individual_demographics(data: NetworkData) -> torch.Tensor:
-    """Create the demographic tensor from NetworkData, returns a float32 tensor of shape ``[n_users, n_demo_features]``."""
+    """Create the demographic tensor from NetworkData, returns a float32 tensor of shape ``[n_users, n_demo_features]``.
+    If there are no demographics (e.g. Geneva), returns a (n_users, 1) dummy tensor of ones."""
     indiv_demographics = data.users_df.drop("user_id", "home_loc_id")
+
+    if len(indiv_demographics) == 0:
+        return torch.ones((len(data.user_ids), 1), dtype=torch.float32)
+
     return torch.tensor(indiv_demographics.to_numpy(), dtype=torch.float32)
 
 
@@ -299,16 +341,18 @@ def create_individual_demographics(data: NetworkData) -> torch.Tensor:
 
 def convert_to_torch(
     data: NetworkData, network_nodes: gpd.GeoDataFrame, network_edges: gpd.GeoDataFrame
-) -> tuple[pyg.data.Data | pyg.data.HeteroData, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[pyg.data.Data | pyg.data.HeteroData, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Convert network graph and network data into PyG and tensor form.
 
     Returns:
-        Tuple ``(network_graph, spatial_features, spatial_labels, demographics)``:
+        Tuple ``(network_graph, spatial_features, spatial_labels, demographics, distances)``:
         the shared PyG graph, per-user spatial features ``[n_users, n_nodes, n_feat]``,
-        per-user labels ``[n_users, n_nodes, 1]``, and individual demographics ``[n_users, n_demo]``.
+        per-user labels ``[n_users, n_nodes, 1]``, individual demographics ``[n_users, n_demo]``,
+        and per-user distance-from-home ``[n_users, n_nodes, 1]``.
     """
     spatial_features, spatial_labels = create_spatial_demographics(data)
     demographics = create_individual_demographics(data)
+    distances = create_home_distances(data, network_nodes)
 
     node_feature_cols = [col for col in network_nodes.columns if col not in COLS_EXCLUDED_FROM_FEATURES]
 
@@ -321,7 +365,7 @@ def convert_to_torch(
         device="cpu",
     )
 
-    return network_graph, spatial_features, spatial_labels, demographics
+    return network_graph, spatial_features, spatial_labels, demographics, distances
 
 
 def load_pyg_graphs(
@@ -424,3 +468,28 @@ def build_user_pyg_graph(
     ])
 
     return transforms(indiv_graph)
+
+
+def load_data(cfg: DataConfig, project_root: Path | None = None):
+    if cfg.name == "THATS":
+        cfg = cast(TorontoDataConfig, cfg)
+        return _load_toronto_data(cfg, project_root)
+    elif cfg.name == "GenevaTPG":
+        cfg = cast(TorontoDataConfig, cfg)
+        return _load_geneva_data(cfg, project_root)
+
+    raise ValueError(f"Unknown Dataset {cfg.name}")
+
+
+def _load_toronto_data(cfg: TorontoDataConfig, project_root: Path | None = None):
+    data = TorontoData.load(cfg, project_root).with_filter("subsector")
+    network_nodes, network_edges = load_toronto_network_graph(data, cfg, project_root)
+
+    return data, network_nodes, network_edges
+
+
+def _load_geneva_data(cfg: GenevaDataConfig, project_root: Path | None = None):
+    data = GenevaData.load(cfg, project_root).with_filter("subsector")
+    network_nodes, network_edges = load_gva_network_graph(data, cfg, project_root)
+
+    return data, network_nodes, network_edges

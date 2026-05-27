@@ -194,11 +194,28 @@ class OutputPaths:
 
 
 @dataclass
+class TrainConfig:
+    """Training configuration for development and debugging."""
+
+    epochs: int
+
+    fast_dev_run: bool
+    overfit_batches: int
+    schedule_lr: bool
+    debug: bool
+
+    wandb: bool
+    wandb_project: str
+    wandb_entity: str | None
+
+
+@dataclass
 class Config:
     """Top-level Hydra config: dataset config plus output paths."""
 
     data: DataConfig
     paths: OutputPaths
+    train: TrainConfig
 
 
 # cs = ConfigStore.instance()

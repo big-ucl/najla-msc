@@ -28,12 +28,12 @@ TDataFrame = TypeVar("TDataFrame", pl.DataFrame, gpd.GeoDataFrame)
 
 
 class NetworkData(ABC):
-    """Wrapper around survey DataFrames that provides a cached, filterable network view. Each datset (Geneva, Toronto, etc...) 
+    """Wrapper around survey DataFrames that provides a cached, filterable network view. Each datset (Geneva, Toronto, etc...)
     inherits from this class
 
     Locations are filtered by ``filters``. It will only show locations that match the `loc_type` provided in the filter.
     Only journeys with both endpoints in filtered locations and users with home locations inside filtered locations will not be shown.
-    
+
     Use ``with_filter(loc_types)`` to create a restricted copy without mutating the original.
     Concrete subclasses must implement ``_copy``.
     """
@@ -100,7 +100,7 @@ class NetworkData(ABC):
 
     @cached_property
     def users_df(self) -> pl.DataFrame:
-        return self._filter_loc_types(self.home_locations).sort("user_id")
+        return self._filter_loc_types(self.home_locations).sort("user_id").select("user_id", home_loc_id="loc_id")
 
     @cached_property
     def user_ids(self) -> pl.Series:
@@ -112,6 +112,11 @@ class NetworkData(ABC):
 
         users = valid_homes["user_id"].unique().sort()
         return users
+
+    @cached_property
+    def num_obs_days_per_user(self) -> pl.DataFrame:
+        """Per-user observed-day count t_i, keyed by user_id."""
+        return self.user_journeys_df.group_by("user_id").agg(n_days=pl.col("dep_day").n_unique().cast(pl.Int32))
 
     def with_filter(self, loc_types: str | list[str]) -> Self:
         """Return a new instance restricted to locations whose ``type`` is in ``loc_types``.
@@ -182,7 +187,12 @@ class NetworkData(ABC):
         locations_by_purpose = (
             location_visits.group_by("user_id", "purpose").agg(pl.col("loc_id").unique()).sort("user_id")
         )
-        home_locations = locations_by_purpose.filter(purpose=Purpose.HOME).with_columns(pl.col("loc_id").list.first())
+        home_locations = (
+            locations_by_purpose
+            .filter(purpose=Purpose.HOME)
+            .with_columns(pl.col("loc_id").list.first())
+            .drop("purpose")
+        )
 
         return home_locations
 
