@@ -9,6 +9,7 @@ from typing import cast
 
 import torch
 import torch_geometric as pyg
+import torch_geometric.transforms as T
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch_geometric.data.data import BaseData
@@ -183,6 +184,7 @@ class ActivityDataset(pyg.data.Dataset):
 @dataclass
 class FittedScalers:
     """Container for ``StandardScaler`` instances fitted on the training split."""
+
     network_features: StandardScaler | None
     network_edges: StandardScaler | None
     spatial: StandardScaler | None
@@ -331,7 +333,15 @@ def load_dataset(
     splits_cache = pyg_dir / "splits.json"
     scalers_cache = pyg_dir / "scalers.pkl"
 
-    dataset = load_or_build_dataset(cfg, project_root=project_root, **build_kwargs)
+    positional_encodings_transforms = T.Compose([
+        T.AddRandomWalkPE(walk_length=20, attr_name=None),
+        T.AddLaplacianEigenvectorPE(k=8, attr_name=None),
+    ])
+
+    dataset = load_or_build_dataset(
+        cfg, project_root=project_root, pre_transform=positional_encodings_transforms, **build_kwargs
+    )
+
     train_idx, test_idx = split_indices(dataset, test_size, seed, cache_path=splits_cache)
 
     if scalers_cache.exists():
