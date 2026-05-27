@@ -1,3 +1,5 @@
+"""Geneva TPG survey loader and NetworkData subclass."""
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,6 +89,8 @@ FUZZY_MATCH_THRESHOLD = 65
 
 @dataclass(frozen=True)
 class GenevaInputs:
+    """Parsed raw inputs for the Geneva TPG survey (journeys, boundary GeoDataFrames, and GTFS)."""
+
     raw_journeys_df: pl.DataFrame
 
     subsectors_gdf: gpd.GeoDataFrame
@@ -99,6 +103,8 @@ class GenevaInputs:
 
 
 class GenevaData(NetworkData, DataFrameStore):
+    """Geneva TPG ``NetworkData`` subclass with caching via ``DataFrameStore``."""
+
     def __init__(
         self,
         inputs: GenevaInputs,
@@ -143,6 +149,7 @@ class GenevaData(NetworkData, DataFrameStore):
 
 
 def load_files(cfg: GenevaDataConfig, project_root: Path | None = None) -> GenevaInputs:
+    """Read all raw Geneva files (journeys, boundaries, GTFS) into a ``GenevaInputs`` container."""
     def parse_gtfs_date(*cols: str) -> pl.Expr:
         return pl.col(*cols).cast(pl.String).str.to_date("%Y%m%d")
 
@@ -205,6 +212,7 @@ def load_files(cfg: GenevaDataConfig, project_root: Path | None = None) -> Genev
 
 
 def build_geneva_data(inputs: GenevaInputs) -> GenevaData:
+    """Parse raw Geneva inputs into a standardised ``GenevaData`` instance."""
     # Create locations with all PT stops
     locations_gdf = build_geneva_locations(
         inputs.gtfs.stops_df,
@@ -256,6 +264,7 @@ def build_geneva_locations(
     swiss_boundaries: gpd.GeoDataFrame,
     french_gdf: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
+    """Concatenate all Geneva location types (NA sentinel, PT stops, subsectors, Swiss and French municipalities)."""
     special_locations = build_special_locations()
     pt_locations = _build_pt_locations(stops)
     subsector_locations = _build_subsector_locations(subsectors)
@@ -348,6 +357,7 @@ def _build_municipality_french_locations(french_gdf: gpd.GeoDataFrame) -> gpd.Ge
 
 
 def build_stop_names_to_loc_id_mapping(stops_df: pl.DataFrame) -> pl.DataFrame:
+    """Return a ``(loc_name, loc_id)`` DataFrame mapping stop names to their parent station IDs."""
     df = stops_df.with_columns(
         pl
         .when(pl.col("stop_id").str.starts_with("Parent"))
@@ -374,6 +384,7 @@ def build_stop_names_to_loc_id_mapping(stops_df: pl.DataFrame) -> pl.DataFrame:
 
 
 def match_loc_ids(user_journeys_df: pl.DataFrame, locations_df: pl.DataFrame, stops_df: pl.DataFrame) -> pl.DataFrame:
+    """Match raw location strings in journey records to ``loc_id`` values via a cascade of matching strategies."""
     stop_names_to_id_df = build_stop_names_to_loc_id_mapping(stops_df)
 
     user_journeys_df = manual_patch_stop_names(user_journeys_df, "lieu_depart_trajet", "lieu_arrivee_trajet")

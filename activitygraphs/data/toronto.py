@@ -1,3 +1,5 @@
+"""Toronto THATS survey loader and NetworkData subclass."""
+
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -128,6 +130,8 @@ ACTIVITY_MAP = invert_mapping({
 
 @dataclass(frozen=True)
 class TorontoInputs:
+    """Parsed raw inputs for the Toronto THATS survey (journeys, persons, households, activities, boundaries)."""
+
     raw_journeys_df: pl.DataFrame
     raw_person_df: pl.DataFrame
     raw_household_df: pl.DataFrame
@@ -139,6 +143,8 @@ class TorontoInputs:
 
 
 class TorontoData(NetworkData, DataFrameStore):
+    """Toronto THATS ``NetworkData`` subclass with caching via ``DataFrameStore``."""
+
     def __init__(
         self,
         inputs: TorontoInputs,
@@ -199,6 +205,7 @@ class TorontoData(NetworkData, DataFrameStore):
 
 
 def load_files(cfg: TorontoDataConfig, project_root: Path | None = None) -> TorontoInputs:
+    """Read all raw Toronto files (journeys, persons, households, activities, boundaries) into a ``TorontoInputs`` container."""
     project_root = get_project_root(project_root)
 
     raw_data_dir = project_root / cfg.paths.raw
@@ -218,6 +225,7 @@ def load_files(cfg: TorontoDataConfig, project_root: Path | None = None) -> Toro
 
 
 def build_toronto_data(inputs: TorontoInputs) -> TorontoData:
+    """Parse raw Toronto inputs into a standardised ``TorontoData`` instance."""
     locations_gdf = build_toronto_locations(inputs)
     user_journeys_df = build_toronto_journeys(inputs, locations_gdf)
     activities_df = build_toronto_activities(inputs, user_journeys_df)
@@ -232,6 +240,7 @@ def build_toronto_data(inputs: TorontoInputs) -> TorontoData:
 
 
 def build_toronto_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
+    """Build the Toronto locations GeoDataFrame (census tracts and NA)."""
     special_locations = build_special_locations()
     subsector_locations = build_subsector_locations(inputs)
     return gpd.GeoDataFrame(
@@ -247,6 +256,7 @@ def build_toronto_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
 
 
 def build_subsector_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
+    """Extract census-tract "subsector" locations within the Toronto CMA and return them as subsector locations."""
     toronto_cma = inputs.metropolitan_areas_gdf.query(f"CMAUID == '{TORONTO_CMA}'")
     utm_crs = toronto_cma.estimate_utm_crs()
 
@@ -270,6 +280,7 @@ def build_subsector_locations(inputs: TorontoInputs) -> gpd.GeoDataFrame:
 
 
 def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFrame) -> pl.DataFrame:
+    """Parse raw trip records into standardised journey DF conforming to ``USER_JOURNEY_SCHEMA``."""
     trips = inputs.raw_journeys_df
     persons = inputs.raw_person_df
 
@@ -371,6 +382,7 @@ def build_toronto_journeys(inputs: TorontoInputs, locations_gdf: gpd.GeoDataFram
 
 
 def build_toronto_activities(inputs: TorontoInputs, user_journeys_df: pl.DataFrame):
+    """Parse the wide-format hourly activity DF into a long, collapsed by span, activity DataFrame."""
     # Move from a wide to long data format by adding an "index" column for activities that happen in the same hour
     activities = unpivot_activities(inputs.raw_activities_df)
 
@@ -423,6 +435,7 @@ def build_toronto_activities(inputs: TorontoInputs, user_journeys_df: pl.DataFra
 
 
 def unpivot_activities(activity_df: pl.LazyFrame) -> pl.LazyFrame:
+    """Convert the wide per-hour, per-index activity columns into a long LazyFrame."""
     value_cols = [
         "StrtTripID",
         "EndTripID",
@@ -464,6 +477,7 @@ def unpivot_activities(activity_df: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def collapse_activities(activity_df: pl.LazyFrame) -> pl.LazyFrame:
+    """Merge consecutive same-purpose hourly activity rows into contiguous spans with start/end times."""
     # Find the hour of the previous activity with the same purpose that day
     activities = activity_df.with_columns(
         prev_hour_same_purpose=pl.col("act_hour").shift(1).over("hh_id", "person_id", "act_date", "act_purpose")
@@ -509,6 +523,7 @@ def collapse_activities(activity_df: pl.LazyFrame) -> pl.LazyFrame:
 def build_toronto_users(
     inputs: TorontoInputs, locations_gdf: gpd.GeoDataFrame, user_journeys_df: pl.DataFrame
 ) -> pl.DataFrame:
+    """Build the user DataFrame with household demographics and home location for Toronto."""
     persons = inputs.raw_person_df.select(
         "person_id", "hh_id", has_driving_license="THATS driverslicence", has_pt_pass="THATS transitpass"
     )  # TODO add demographics: HH role, age, gender, education, employment status, student status, driving license, PT pass.

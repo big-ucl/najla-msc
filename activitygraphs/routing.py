@@ -1,3 +1,5 @@
+"""OSRM-backed travel-time routers with optional in-memory caching."""
+
 import abc
 from collections.abc import Iterable
 from typing import Self
@@ -34,15 +36,27 @@ EDGE_COORDS_SCHEMA = pl.Schema({
 
 
 class Router(abc.ABC):
+    """Abstract base for travel-time routers that operate on edge coordinate DataFrames."""
+
     @abc.abstractmethod
     def travel_times(self, edge_coords_df: pl.DataFrame) -> pl.DataFrame:
-        pass
+        """Compute travel times for every (orig, dest) pair in ``edge_coords_df``.
+
+        Args:
+            edge_coords_df: DataFrame conforming to ``EDGE_COORDS_SCHEMA``.
+
+        Returns:
+            DataFrame with columns ``orig_loc_id``, ``dest_loc_id``, ``travel_time_min``.
+        """
 
     def with_cache(self) -> Self:
+        """Wrap this router in a ``CachedRouter`` for in-memory result caching."""
         return CachedRouter(self)
 
 
 class TravelTimeCalculator:
+    """Joins a ``Router`` with a location lookup to add ``travel_time_min`` to edge DataFrames."""
+
     def __init__(self, locations_gdf: gpd.GeoDataFrame, router: Router):
         check_schema(locations_gdf, {"loc_id": "object", "lon": "float64", "lat": "float64"}, ignore_extra_cols=True)
 
@@ -54,6 +68,14 @@ class TravelTimeCalculator:
         self._router = router
 
     def add_travel_times(self, edge_df: pl.DataFrame) -> pl.DataFrame:
+        """Join ``travel_time_min`` onto ``edge_df`` using this instance's router.
+
+        Args:
+            edge_df: DataFrame with at least ``orig_loc_id`` and ``dest_loc_id`` columns.
+
+        Returns:
+            ``edge_df`` left-joined with a ``travel_time_min`` column (minutes, float).
+        """
         check_schema(edge_df, pl.Schema({"orig_loc_id": pl.String, "dest_loc_id": pl.String}), ignore_extra_cols=True)
 
         edge_locations = pl.concat([edge_df["orig_loc_id"], edge_df["dest_loc_id"]]).unique()
@@ -76,7 +98,17 @@ class TravelTimeCalculator:
 
 
 class OSRMRouter(Router):
+    """Router that calls a local OSRM HTTP table service."""
+
     def __init__(self, url: str, mode: Mode, max_coordinates: int = MAX_COORDS, precision: int = PRECISION):
+        """Initialise the OSRM router.
+
+        Args:
+            url: Base URL of the OSRM server (e.g. ``"http://localhost:5000"``).
+            mode: Travel mode; must be one of ``Mode.CAR``, ``Mode.WALK``, or ``Mode.CYCLE``.
+            max_coordinates: Maximum number of unique locations per OSRM table request.
+            precision: Polyline encoding precision (default 5).
+        """
         if mode not in MODE_TO_OSRM_PROFILE_MAP.keys():
             raise ValueError(f"Invalid mode: {mode}, accepted: {MODE_TO_OSRM_PROFILE_MAP.keys()}")
 
@@ -113,6 +145,14 @@ class OSRMRouter(Router):
         return edge_coords_df.select("orig_loc_id", "dest_loc_id").with_columns(travel_time_min=travel_times)
 
     def table(self, coordinates: Iterable[tuple[float, float]]) -> np.ndarray:
+        """Call the OSRM ``/table`` endpoint and return a duration matrix in minutes.
+
+        Args:
+            coordinates: (lon, lat) pairs; length must not exceed ``max_coordinates``.
+
+        Returns:
+            2-D numpy array of shape ``[n, n]`` with travel times in minutes (OSRM returns seconds).
+        """
         coordinates = list(coordinates)
 
         if len(coordinates) > self.max_coordinates:
@@ -137,6 +177,8 @@ class OSRMRouter(Router):
 
 
 class CachedRouter(Router):
+    """Decorator that adds an in-memory (orig, dest) → travel_time_min cache to any ``Router``."""
+
     def __init__(self, router: Router):
         self.router = router
         self.cache: dict[tuple[str, str], float] = {}

@@ -1,3 +1,5 @@
+"""Top-level experiment runners: model builders, baseline evaluation, and result persistence."""
+
 from pathlib import Path
 from typing import Callable
 
@@ -17,6 +19,7 @@ from activitygraphs.ml.models import GATSkip, GraphTransformer, NodeMLP
 
 
 def build_gat(dataset: pyg.data.Dataset, num_gcn_layers: int, hidden_channels: int, dropout: float) -> GATSkip:
+    """Instantiate a ``GATSkip`` model sized for ``dataset`` (1 pre-layer, 3 post-layers)."""
     edge_dim = dataset[0].edge_attr.size(-1)
 
     return GATSkip(
@@ -33,6 +36,7 @@ def build_gat(dataset: pyg.data.Dataset, num_gcn_layers: int, hidden_channels: i
 
 
 def build_gps(dataset: pyg.data.Dataset, num_gps_layers: int, hidden_channels: int, dropout: float):
+    """Instantiate a ``GraphTransformer`` (GPS) model sized for ``dataset``."""
     edge_dim = dataset[0].edge_attr.size(-1)
 
     return GraphTransformer(
@@ -47,6 +51,7 @@ def build_gps(dataset: pyg.data.Dataset, num_gps_layers: int, hidden_channels: i
 
 
 def build_mlp(dataset: pyg.data.Dataset, mlp_layers: int, hidden_channels: int, dropout: float) -> NodeMLP:
+    """Instantiate a ``NodeMLP`` model sized for ``dataset``."""
     return NodeMLP(
         mlp_layers,
         in_channels=dataset.num_features,
@@ -57,12 +62,14 @@ def build_mlp(dataset: pyg.data.Dataset, mlp_layers: int, hidden_channels: int, 
 
 
 def save_results(path: str | Path, name: str, *results: dict):
+    """Concatenate result dicts and write to ``<path>/data/<name>-results.parquet``."""
     path = Path(path) / "data"
     results_df = pl.concat(pl.DataFrame(result) for result in results)
     results_df.write_parquet(path / f"{name}-results.parquet")
 
 
 def measure_baselines(num_nodes, train_loader, test_loader):
+    """Fit and evaluate all four frequency baselines; return a list of result dicts."""
     uniform_base = UniformBaseline()
     global_base = GlobalBaseline().fit(train_loader)
     node_base = NodeBaseline(num_nodes).fit(train_loader)
@@ -84,6 +91,11 @@ def measure_baselines(num_nodes, train_loader, test_loader):
 
 
 def comparison_experiment(cfg: Config):
+    """Compare the prediction performance of MLP, GATSkip, GPS (with and without L1) plus baselines.
+
+    Fixed hyperparameters: batch_size=64, epochs=50, hidden_channels=128, dropout=0.2.
+    Results are written to ``cfg.paths.reports/data/geneva-results.parquet``.
+    """
     batch_size = 64
     test_size = 0.2
     seed = 42

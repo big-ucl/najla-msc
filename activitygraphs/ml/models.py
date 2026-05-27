@@ -1,3 +1,5 @@
+"""PyTorch GNN architectures: GATSkip (primary), GraphTransformer, NodeMLP, and helpers."""
+
 import functools
 import itertools
 
@@ -15,6 +17,19 @@ def build_module_list(
     hidden_channels: int | None = None,
     **module_kwargs,
 ) -> torch.nn.ModuleList:
+    """Construct a ``ModuleList`` of ``num_layers`` stacked ``module_f`` instances.
+
+    Args:
+        module_f: Callable ``(in, out, **kwargs) → nn.Module`` used to create each layer.
+        num_layers: Total number of layers; must be ≥ 1.
+        in_channels: Input size of the first layer.
+        out_channels: Output size of the last layer.
+        hidden_channels: Hidden size for intermediate layers; required when ``num_layers > 1``.
+        **module_kwargs: Extra keyword arguments forwarded to ``module_f``.
+
+    Returns:
+        ``ModuleList`` of length ``num_layers``.
+    """
     if num_layers > 1 and hidden_channels is None:
         raise ValueError(f"Hidden channels not provided for {num_layers=} and {hidden_channels=}")
 
@@ -31,6 +46,8 @@ def build_module_list(
 
 
 class GCN(torch.nn.Module):
+    """Multi-layer graph convolutional network with optional residual connections and leaky-ReLU activations."""
+
     def __init__(
         self,
         num_layers: int,
@@ -76,6 +93,8 @@ class GCN(torch.nn.Module):
 
 
 class NodeMLP(torch.nn.Module):
+    """Node-wise MLP with dropout and ReLU activations."""
+
     def __init__(
         self, num_layers: int, in_channels: int, hidden_channels: int, out_channels: int, dropout: float = 0.2
     ):
@@ -98,6 +117,8 @@ class NodeMLP(torch.nn.Module):
 
 
 class GCNPlus(torch.nn.Module):
+    """GCN followed by a node-wise MLP post-processing head."""
+
     def __init__(
         self, num_gcn: int, num_lin: int, in_channels: int, hidden_channels: int, out_channels: int, dropout=0.2
     ):
@@ -116,6 +137,8 @@ class GCNPlus(torch.nn.Module):
 
 
 class GCNRes(torch.nn.Module):
+    """GCN with separate MLP pre-/post-processing heads and residual connections in the GCN."""
+
     def __init__(
         self,
         num_pre_layers: int,
@@ -144,6 +167,8 @@ class GCNRes(torch.nn.Module):
 
 
 class GCNSkip(torch.nn.Module):
+    """GCN with a skip connection that concatenates raw input features to the post-GCN representation."""
+
     def __init__(
         self,
         num_pre_layers: int,
@@ -180,6 +205,8 @@ class GCNSkip(torch.nn.Module):
 
 
 class GATSkip(GCNSkip):
+    """Primary model: ``GCNSkip`` with GAT convolutions and edge features. Preferred over ``GCNSkip``."""
+
     def __init__(
         self,
         num_pre_layers: int,
@@ -206,6 +233,8 @@ class GATSkip(GCNSkip):
 
 
 class GPSLayer(torch.nn.Module):
+    """Single GPS layer: GAT local message-passing + Performer global attention."""
+
     def __init__(self, hidden_channels, edge_dim, num_heads=4, dropout=0.2):
         super().__init__()
         self.conv = GPSConv(
@@ -221,6 +250,8 @@ class GPSLayer(torch.nn.Module):
 
 
 class GraphTransformer(torch.nn.Module):
+    """Graph Transformer (GPS architecture) with linear input/edge projections and an MLP output head."""
+
     def __init__(
         self,
         in_channels,

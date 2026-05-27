@@ -1,3 +1,5 @@
+"""Build Network Graphs and per-user PyG tensors from NetworkData."""
+
 import pickle
 from pathlib import Path
 from typing import Callable
@@ -52,6 +54,20 @@ def load_network_graph(
     project_root: Path | None = None,
     name: str = "NetworkGraph",
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Load the Network Graph from cache, or build and cache it.
+
+    Cached parquet files are stored under ``cfg.paths.processed/<name>/``.
+
+    Args:
+        data: ``NetworkData`` instance for this dataset.
+        cfg: Dataset config providing processed and raw paths.
+        build_network_graph: Callable ``(locations_gdf, overture, stats_cfg) -> (nodes, edges)``.
+        project_root: Repo root, defaults to ``Path(".")``.
+        name: Sub-directory name for the cached files.
+
+    Returns:
+        Tuple of ``(nodes_gdf, edges_gdf)`` GeoDataFrames.
+    """
     root = get_project_root(project_root)
     network_path = root / cfg.paths.processed / name
     nodes_path = network_path / "nodes.parquet"
@@ -81,6 +97,7 @@ def load_gva_network_graph(
     project_root: Path | None = None,
     name: str = "NetworkGraph",
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Wrapper around ``load_network_graph`` for the Geneva dataset."""
     return load_network_graph(gva_data, cfg, build_gva_network_graph, project_root, name)
 
 
@@ -90,6 +107,7 @@ def load_toronto_network_graph(
     project_root: Path | None = None,
     name: str = "NetworkGraph",
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Wrapper around ``load_network_graph`` for the Toronto dataset."""
     return load_network_graph(toronto_data, cfg, build_toronto_network_graph, project_root, name)
 
 
@@ -98,6 +116,10 @@ def build_gva_network_graph(
     overture: Overture,
     stats_cfg: StatsInputs,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Build the Geneva spatial contiguity graph enriched with census stats, POIs, and land uses.
+
+    Disconnected island subsectors are connected to the mainland via a kNN graph.
+    """
     utm_crs = locations.estimate_utm_crs()
     locations = locations.to_crs(utm_crs)
 
@@ -139,6 +161,7 @@ def build_toronto_network_graph(
     overture: Overture,
     stats_cfg: StatsInputs,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Build the Toronto spatial contiguity graph enriched with census stats, POIs, and land uses."""
     utm_crs = locations.estimate_utm_crs()
     locations = locations.to_crs(utm_crs)
 
@@ -171,6 +194,11 @@ def add_user_cols(
     work_locations: pl.DataFrame,
     edu_locations: pl.DataFrame,
 ) -> gpd.GeoDataFrame:
+    """Annotate network nodes with per-user binary indicators and visit purposes.
+
+    Adds columns ``is_home``, ``is_work``, ``is_edu``, ``is_visited``, and ``purpose``
+    (comma-joined string of visit purposes) to a copy of ``network_nodes``.
+    """
     network_nodes = network_nodes.copy().reset_index()
 
     user_visits = location_visits.filter(user_id=user_id)["loc_id"].to_list()
@@ -198,6 +226,13 @@ def add_user_cols(
 
 
 def create_spatial_demographics(data: NetworkData) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build per-user spatial feature and label tensors over all network nodes.
+
+    Returns:
+        Tuple ``(spatial_features, spatial_labels)`` of shapes
+        ``[n_users, n_nodes, n_features]`` and ``[n_users, n_nodes, 1]``.
+        Features contain ``is_home``; labels contain ``is_visited``.
+    """
     locations = data.locations_df.select("loc_id").with_row_index("loc_order")
     all_users_and_locs = data.user_ids.to_frame().join(locations, how="cross").lazy()
 
@@ -238,6 +273,7 @@ def create_spatial_demographics(data: NetworkData) -> tuple[torch.Tensor, torch.
 
 
 def add_indicator_column(feature_df: pl.LazyFrame, indicator_df: pl.DataFrame, col_name: str):
+    """Add an indicator column with name ``col_name`` to ``feature_df`` which is ``True`` if ``[loc_id, user_id]`` appears in ``indicator_df`` and ``False`` otherwise."""
     true_indicators = indicator_df.select("user_id", "loc_id", pl.lit(True).alias(col_name)).unique().lazy()
 
     return feature_df.join(true_indicators, on=["user_id", "loc_id"], how="left").with_columns(
@@ -251,6 +287,7 @@ def add_indicator_column(feature_df: pl.LazyFrame, indicator_df: pl.DataFrame, c
 
 
 def create_individual_demographics(data: NetworkData) -> torch.Tensor:
+    """Create the demographic tensor from NetworkData, returns a float32 tensor of shape ``[n_users, n_demo_features]``."""
     indiv_demographics = data.users_df.drop("user_id", "home_loc_id")
     return torch.tensor(indiv_demographics.to_numpy(), dtype=torch.float32)
 
@@ -263,6 +300,13 @@ def create_individual_demographics(data: NetworkData) -> torch.Tensor:
 def convert_to_torch(
     data: NetworkData, network_nodes: gpd.GeoDataFrame, network_edges: gpd.GeoDataFrame
 ) -> tuple[pyg.data.Data | pyg.data.HeteroData, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Convert network graph and network data into PyG and tensor form.
+
+    Returns:
+        Tuple ``(network_graph, spatial_features, spatial_labels, demographics)``:
+        the shared PyG graph, per-user spatial features ``[n_users, n_nodes, n_feat]``,
+        per-user labels ``[n_users, n_nodes, 1]``, and individual demographics ``[n_users, n_demo]``.
+    """
     spatial_features, spatial_labels = create_spatial_demographics(data)
     demographics = create_individual_demographics(data)
 
@@ -288,6 +332,7 @@ def load_pyg_graphs(
     project_root: Path | None = None,
     name: str = "Graphs",
 ):
+    """Load a list of per-user PyG graphs from pickle cache, building and caching on first call."""
     dataset_path = get_project_root(project_root) / cfg.paths.pyg_datasets / f"{name}.pickle"
 
     if dataset_path.exists():
@@ -308,6 +353,7 @@ def convert_to_pyg_graphs(
     network_nodes: gpd.GeoDataFrame,
     network_edges: gpd.GeoDataFrame,
 ):
+    """Build one annotated PyG graph per user in parallel using ``joblib``."""
     visits = network_data.location_visits
     home_locations = network_data.home_locations
     work_locations = network_data.work_locations
@@ -343,6 +389,10 @@ def build_user_pyg_graph(
     work_locations: pl.DataFrame,
     edu_locations: pl.DataFrame,
 ):
+    """Build a single user's PyG graph with user-specific indicators and positional encodings.
+
+    Applies random-walk PE (length 20) and Laplacian eigenvector PE (k=8) transforms.
+    """
     indiv_nodes = add_user_cols(
         user_id,
         network_nodes,

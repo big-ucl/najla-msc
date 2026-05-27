@@ -1,3 +1,5 @@
+"""Training loop, evaluation functions, and ``run_experiment`` orchestrator."""
+
 import torch
 import torch.nn.functional as F
 import torch_geometric as pyg
@@ -8,6 +10,7 @@ from activitygraphs.ml.metrics import precision_at_k, recall_at_k, mean_reciproc
 
 
 def compute_training_weights(loader: pyg.loader.DataLoader) -> torch.Tensor:
+    """Compute BCE positive-class weight as sqrt(neg_count / pos_count) over the full loader."""
     num_neg = torch.tensor(0, dtype=torch.float)
     num_pos = torch.tensor(0, dtype=torch.float)
 
@@ -20,6 +23,7 @@ def compute_training_weights(loader: pyg.loader.DataLoader) -> torch.Tensor:
 
 
 def extract_features(batch: pyg.data.Data | pyg.data.Batch, full_info: bool):
+    """Return node features from ``batch.x``, optionally augmented with home features and distances."""
     if not full_info:
         return batch.x
 
@@ -44,6 +48,22 @@ def train(
     reg: str = None,
     lambda_reg: float = 0.01,
 ):
+    """Run one training epoch and return the mean per-node loss.
+
+    Args:
+        device: Device to run on.
+        model: Model to train.
+        loader: Training data loader.
+        optimizer: Optimizer instance (gradients are zeroed and stepped internally).
+        full_info: If True, augment features with home info and distances via ``extract_features``.
+        pos_weight: Positive-class weight tensor for BCE loss.
+        loss_fn: Loss function conforming to ``LossFn`` protocol.
+        reg: Optional regularisation type; currently only ``"l1"`` is supported.
+        lambda_reg: L1 regularisation coefficient (ignored when ``reg`` is None).
+
+    Returns:
+        Mean per-node training loss for the epoch.
+    """
     model.train()
 
     epoch_loss = 0.0
@@ -82,6 +102,7 @@ def evaluate(
     full_info: bool,
     pos_weight: torch.Tensor | None = None,
 ):
+    """Compute mean per-node BCE loss over the loader without gradients."""
     model.eval()
 
     epoch_loss = 0.0
@@ -108,6 +129,7 @@ def evaluate_at_k(
     full_info: bool,
     k: int = 5,
 ):
+    """Return a dict of mean precision@k, recall@k, MRR, and NDCG@k over all graphs in the loader."""
     model.eval()
     precisions, recalls, mrrs, ndcgs = [], [], [], []
 
@@ -145,6 +167,7 @@ def evaluate_baseline(
     full_info: bool = False,
     pos_weight: torch.Tensor = None,
 ):
+    """Evaluate a baseline model and return a results dict matching the ``run_experiment`` format."""
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     baseline = baseline.to(device)
     loss = evaluate(device, baseline, loader, full_info)
@@ -187,6 +210,26 @@ def run_experiment(
     full_info: bool = False,
     save: bool = False,
 ):
+    """Train a model and return per-epoch metrics as a dict.
+
+    Uses Adam with weight decay 1e-4 and ReduceLROnPlateau scheduling.
+
+    Args:
+        model: Model to train.
+        train_loader: Training data loader.
+        test_loader: Test data loader for evaluation.
+        num_epochs: Number of training epochs.
+        verbose: Log every ``verbose`` epochs; 0 disables mid-training logging.
+        name: Name used for logging and the saved checkpoint filename.
+        lr: Initial learning rate.
+        reg: Optional regularisation; ``"l1"`` adds L1 weight penalty.
+        full_info: Passed to ``extract_features`` to optionally include home/distance features.
+        save: If True, save the final model state dict to ``models/<name>.pth``.
+
+    Returns:
+        Dict with keys ``name``, ``epoch``, ``train_bce``, ``train_eval_bce``,
+        ``bce``, ``bce_weight``, ``precision@5``, ``recall@5``, ``mrr``, ``ndcg@5``.
+    """
     name = name or model.__class__.__name__
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")

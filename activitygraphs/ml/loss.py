@@ -1,3 +1,5 @@
+"""Loss and metric Protocol types, focal loss, and BCE helpers."""
+
 import functools
 from typing import Protocol
 
@@ -6,12 +8,16 @@ import torch.nn.functional as F
 
 
 class LossFn(Protocol):
+    """Protocol for loss functions that accept ``inputs``, ``targets``, and an optional ``pos_weight``."""
+
     def __call__(
         self, inputs: int, targets: str, *, pos_weight: torch.Tensor | None = ..., **kwargs
     ) -> torch.Tensor: ...
 
 
 class MetricFn(Protocol):
+    """Protocol for metric functions that map ``(inputs, targets)`` to a scalar float."""
+
     def __call__(self, inputs: int, targets: str) -> float: ...
 
 
@@ -22,7 +28,15 @@ def focal_loss(
     gamma: float = 2.0,
     alpha: float = -1,
 ) -> torch.Tensor:
-    """Focal loss from https://arxiv.org/abs/1708.02002"""
+    """Focal loss from https://arxiv.org/abs/1708.02002.
+
+    Args:
+        inputs: Raw logits of shape ``[N]`` or ``[N, 1]``.
+        targets: Binary labels of the same shape.
+        pos_weight: Optional positive-class BCE weight.
+        gamma: Focusing parameter; higher values down-weight easy examples more.
+        alpha: Class balance factor; set to ``-1`` to disable.
+    """
 
     bce = F.binary_cross_entropy_with_logits(inputs, targets, pos_weight=pos_weight, reduction="none")
 
@@ -40,6 +54,7 @@ def focal_loss(
 
 
 def bce_metric(inputs: torch.Tensor, targets: torch.Tensor) -> float:
+    """Return the binary cross-entropy between ``inputs`` and ``targets`` as a Python float."""
     return F.binary_cross_entropy_with_logits(inputs, targets).detach().item()
 
 
@@ -62,4 +77,5 @@ def recall_at_k(scores: torch.Tensor, labels: torch.Tensor, k: int) -> float:
 
 
 def metric_at_k(metric_fn, k) -> MetricFn:
+    """Return a partial application of ``metric_fn`` with ``k`` fixed."""
     return functools.partial(metric_fn, k=k)

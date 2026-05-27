@@ -1,3 +1,5 @@
+"""Hydra entry point: registers config store and dispatches to ``comparison_experiment``."""
+
 import hydra
 from hydra.core.config_store import ConfigStore
 

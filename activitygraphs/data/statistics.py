@@ -1,3 +1,5 @@
+"""Census population and employment statistics enrichment for network nodes."""
+
 from pathlib import Path
 
 import geopandas as gpd
@@ -11,6 +13,14 @@ from activitygraphs.utils import gdf_to_polars
 def add_geneva_population_job_statistics(
     locations: gpd.GeoDataFrame, cfg: GenevaStatsInputs, normalise: bool = True, project_root: Path | None = None
 ) -> gpd.GeoDataFrame:
+    """Add population and job counts to Geneva subsector locations
+
+    Args:
+        locations: Subsector locations (must have a ``loc_id`` column).
+        cfg: Geneva census file config.
+        normalise: If True, divide counts by polygon area to obtain densities.
+        project_root: Repo root; defaults to ``Path(".")``.
+    """
     project_root: Path = project_root if project_root is not None else Path(".")
 
     utm_crs = locations.estimate_utm_crs()
@@ -37,6 +47,14 @@ def add_geneva_population_job_statistics(
 def add_toronto_population_job_statistics(
     locations: gpd.GeoDataFrame, cfg: TorontoStatsInputs, normalise: bool = True, project_root: Path | None = None
 ) -> gpd.GeoDataFrame:
+    """Add census population and job counts to Toronto (CT/subsector) locations.
+
+    Args:
+        locations: toronto locations (must have a ``loc_id`` matching ``ALT_GEO_CODE``).
+        cfg: Toronto census file config.
+        normalise: If True, divide counts by area to obtain densities.
+        project_root: Repo root; defaults to ``Path(".")``.
+    """
     project_root: Path = project_root if project_root is not None else Path(".")
 
     utm_crs = locations.estimate_utm_crs()
@@ -96,6 +114,7 @@ def add_toronto_population_job_statistics(
 
 
 def normalise_statistics(stats_by_sector: gpd.GeoDataFrame, normalise: bool = True) -> gpd.GeoDataFrame:
+    """Divide ``population`` and ``jobs`` columns by ``area`` if ``normalise`` is True."""
     if normalise:
         stats_by_sector = stats_by_sector.copy()
         stats_by_sector["population"] = stats_by_sector["population"] / stats_by_sector["area"]

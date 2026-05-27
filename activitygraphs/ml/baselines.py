@@ -1,3 +1,5 @@
+"""Frequency-based (no learning) baselines for visit prediction."""
+
 import torch
 import torch_geometric as pyg
 
@@ -5,10 +7,12 @@ from activitygraphs.base import IS_HOME_COL_IDX
 
 
 def inverse_sigmoid(prob):
+    """Return logit(prob) = log(prob / (1 - prob))."""
     return torch.log(prob / (1 - prob))
 
 
 def extract_is_home(x: torch.Tensor) -> torch.Tensor:
+    """Return a boolean mask indicating home nodes (column ``IS_HOME_COL_IDX > 0``)."""
     return (x[..., IS_HOME_COL_IDX] > 0.0).bool()
 
 
@@ -27,6 +31,7 @@ class GlobalBaseline(torch.nn.Module):
         self.logit = None
 
     def fit(self, loader: pyg.loader.DataLoader):
+        """Compute the global positive rate over ``loader`` and store as a logit."""
         num_pos = 0
         num_total = 0
 
@@ -52,6 +57,7 @@ class NodeBaseline(torch.nn.Module):
         self.logits = None
 
     def fit(self, loader: pyg.loader.DataLoader):
+        """Compute per-node visit rates over ``loader`` and store as logits."""
         visit_counts = torch.zeros(self.num_nodes)
         graph_counts = torch.zeros(self.num_nodes)
 
@@ -79,6 +85,7 @@ class ConditionalNodeBaseline(torch.nn.Module):
         self.logits = None  # shape: [num_nodes, num_nodes] (node, home)
 
     def fit(self, loader: pyg.loader.DataLoader):
+        """Compute per-node-per-home visit rates over ``loader`` and store as logits ``[num_nodes, num_nodes]``."""
         visit_counts = torch.zeros(self.num_nodes, self.num_nodes)
         graph_counts = torch.zeros(self.num_nodes)
 

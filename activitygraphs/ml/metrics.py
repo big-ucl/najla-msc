@@ -1,12 +1,16 @@
+"""Ranking metrics: precision@k, recall@k, MRR, NDCG@k."""
+
 import torch
 
 
 def precision_at_k(scores: torch.Tensor, labels: torch.Tensor, k: int) -> float:
+    """Return the fraction of the top-k scoring nodes that are true positives."""
     top_k_indices = scores.topk(k).indices
     return labels[top_k_indices].sum().item() / k
 
 
 def recall_at_k(scores: torch.Tensor, labels: torch.Tensor, k: int) -> float:
+    """Return the fraction of all positives that fall within the top-k scoring nodes."""
     top_k_indices = scores.topk(k).indices
     num_pos = labels.sum().int().item()
     if num_pos == 0:
@@ -15,6 +19,7 @@ def recall_at_k(scores: torch.Tensor, labels: torch.Tensor, k: int) -> float:
 
 
 def mean_reciprocal_rank(scores: torch.Tensor, labels: torch.Tensor) -> float:
+    """Return the mean reciprocal rank of positive labels given ``scores``."""
     ranked_indices = scores.argsort(descending=True)
     ranked_labels = labels[ranked_indices]
     positive_ranks = (ranked_labels == 1).nonzero().squeeze(1) + 1  # 1-indexed
@@ -24,6 +29,7 @@ def mean_reciprocal_rank(scores: torch.Tensor, labels: torch.Tensor) -> float:
 
 
 def ndcg_at_k(scores: torch.Tensor, labels: torch.Tensor, k: int) -> float:
+    """Return normalised discounted cumulative gain at rank k."""
     ranked_indices = scores.argsort(descending=True)[:k]
     ranked_labels = labels[ranked_indices].float()
 

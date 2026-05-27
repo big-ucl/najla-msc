@@ -1,14 +1,20 @@
+"""Enums (Mode, Purpose) and Polars/GeoPandas schemas shared across all modules."""
+
 from enum import StrEnum
 
 import polars as pl
 
 
 class PTNodeType(StrEnum):
+    """Type of node for PT graph nodes: one node per route or one per stop."""
+
     ONE_PER_ROUTE = "ONE_PER_ROUTE"
     ONE_PER_STOP = "ONE_PER_STOP"
 
 
 class Mode(StrEnum):
+    """Travel modes used as categorical values in journey legs."""
+
     OTHER = "mode_other"
     UNKNOWN = "mode_unknown"
     BOAT = "mode_boat"
@@ -25,6 +31,8 @@ class Mode(StrEnum):
 
 
 class Purpose(StrEnum):
+    """Trip purposes used as categorical values in journey departure/arrival records."""
+
     OTHER = "purp_other"
     UNKNOWN = "purp_unknown"
     HOME = "purp_home"

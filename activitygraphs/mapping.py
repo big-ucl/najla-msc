@@ -1,3 +1,5 @@
+"""Folium/Plotly map helpers for visualising locations and journeys."""
+
 from collections import defaultdict
 
 import folium

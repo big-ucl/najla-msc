@@ -1,3 +1,5 @@
+"""Overture Maps data loader for POI counts and land-use features."""
+
 from pathlib import Path
 from typing import Self
 
@@ -10,6 +12,8 @@ from activitygraphs.config import OvertureInputs
 
 
 class Overture:
+    """Overture Maps feature extractor; use ``Overture.load()`` to download and cache data."""
+
     def __init__(self, land_use: gpd.GeoDataFrame, place: gpd.GeoDataFrame):
         self.land_use = land_use
         self.place = place
@@ -20,6 +24,16 @@ class Overture:
         normalise: bool = True,
         category: str = "top_category",
     ) -> gpd.GeoDataFrame:
+        """Add Overture place POIs to ``locations``, in one column per category.
+
+        Args:
+            locations: Polygon locations to enrich; must have a ``loc_id`` column and polygon geometry.
+            normalise: If True, divide counts by polygon area (POIs per m^2).
+            category: Taxonomy field to use as the pivot column (default ``"top_category"``).
+
+        Returns:
+            ``locations`` with additional ``poi_<category>`` columns.
+        """
         utm_crs = locations.estimate_utm_crs()
 
         original_locations = locations
@@ -54,6 +68,12 @@ class Overture:
         locations: gpd.GeoDataFrame,
         normalise: bool = True,
     ) -> gpd.GeoDataFrame:
+        """Add ``land_use_<subtype>`` columns representing location area taken by land-use subtype.
+
+        Args:
+            locations: Must have Polygon or MultiPolygon geometry.
+            normalise: If True, express each land-use column as fraction of total area.
+        """
         if not locations.geometry.geom_type.isin(["Polygon", "MultiPolygon"]).all():
             raise ValueError("Locations geometries must all be Polygons or MultiPolygons")
 
@@ -93,6 +113,7 @@ class Overture:
     def load(
         cls, locations: gpd.GeoDataFrame | gpd.GeoSeries, cfg: OvertureInputs, project_root: Path | None = None
     ) -> Self:
+        """Load Overture land-use and place data from disk, downloading via city2graph if not cached."""
         project_root: Path = project_root if project_root is not None else Path(".")
 
         output_dir = project_root / cfg.directory

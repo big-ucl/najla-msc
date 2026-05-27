@@ -1,3 +1,5 @@
+"""NetworkData class that wraps raw DataFrames from different travel surveys into a unified interface."""
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import cached_property
@@ -26,12 +28,28 @@ TDataFrame = TypeVar("TDataFrame", pl.DataFrame, gpd.GeoDataFrame)
 
 
 class NetworkData(ABC):
+    """Wrapper around survey DataFrames that provides a cached, filterable network view. Each datset (Geneva, Toronto, etc...) 
+    inherits from this class
+
+    Locations are filtered by ``filters``. It will only show locations that match the `loc_type` provided in the filter.
+    Only journeys with both endpoints in filtered locations and users with home locations inside filtered locations will not be shown.
+    
+    Use ``with_filter(loc_types)`` to create a restricted copy without mutating the original.
+    Concrete subclasses must implement ``_copy``.
+    """
+
     _user_journeys_df: pl.DataFrame
     _locations_gdf: gpd.GeoDataFrame
 
     def __init__(
         self, user_journeys_df: pl.DataFrame, locations_gdf: gpd.GeoDataFrame, filters: list[str] | None = None
     ):
+        """
+        Args:
+            user_journeys_df: Journey legs conforming to ``USER_JOURNEY_SCHEMA``.
+            locations_gdf: Locations conforming to ``LOCATIONS_SCHEMA``, sorted by ``loc_id``.
+            filters: Optional list of ``type`` values to restrict locations (e.g. ``["subsector"]``).
+        """
         locations_gdf = locations_gdf.sort_values("loc_id")
 
         self._user_journeys_df = check_schema(user_journeys_df, USER_JOURNEY_SCHEMA)
@@ -96,6 +114,14 @@ class NetworkData(ABC):
         return users
 
     def with_filter(self, loc_types: str | list[str]) -> Self:
+        """Return a new instance restricted to locations whose ``type`` is in ``loc_types``.
+
+        Args:
+            loc_types: One or more location type strings (e.g. ``"subsector"``).
+
+        Returns:
+            A new ``NetworkData`` of the same concrete type with the filter applied.
+        """
         filters = [loc_types] if isinstance(loc_types, str) else loc_types
         return self._copy(filters)
 
@@ -162,6 +188,7 @@ class NetworkData(ABC):
 
 
 def build_special_locations() -> gpd.GeoDataFrame:
+    """Return a GeoDataFrame containing the single ``NA`` special location."""
     na_location = {
         "loc_id": "NA",
         "loc_name": "NA",

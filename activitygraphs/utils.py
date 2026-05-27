@@ -1,3 +1,5 @@
+"""Schema validation, geometry helpers, and I/O utilities."""
+
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
@@ -17,6 +19,7 @@ TSchema = TypeVar("TSchema", pl.Schema, PandasSchema)
 
 
 def get_project_root(project_root: Path | None = None) -> Path:
+    """Return ``project_root`` if provided, otherwise ``Path(".")``."""
     project_root: Path = project_root if project_root is not None else Path(".")
     return project_root
 
@@ -46,6 +49,7 @@ def check_schema(df: TDataFrame, schema: TSchema, ignore_extra_cols: bool = Fals
 
 
 def check_polars_schema(df: pl.DataFrame, schema: pl.Schema, ignore_extra_cols: bool) -> pl.DataFrame:
+    """Validate a Polars DataFrame against a ``pl.Schema``, raise ``ValueError`` on mismatch."""
     df_items = set(df.schema.items())
     schema_items = set(schema.items())
 
@@ -62,6 +66,7 @@ def check_polars_schema(df: pl.DataFrame, schema: pl.Schema, ignore_extra_cols: 
 
 
 def check_geopandas_schema(gdf: gpd.GeoDataFrame, schema: PandasSchema, ignore_extra_cols: bool) -> gpd.GeoDataFrame:
+    """Validate a GeoPandas/Pandas DataFrame against a column-name -> dtype-string mapping."""
     def dtypes_match(dtype: str, expected: str) -> bool:
         return (dtype == "str" and expected == "object") or dtype == expected
 
@@ -87,6 +92,7 @@ def check_geopandas_schema(gdf: gpd.GeoDataFrame, schema: PandasSchema, ignore_e
 
 
 def check_geometry_shapes(geometry: gpd.GeoSeries, *shapes: str) -> gpd.GeoSeries:
+    """Raise ``ValueError`` if any geometry in ``geometry`` is not one of the permitted ``shapes``."""
     geom_types: pd.Series = geometry.geom_type
     is_valid = geom_types.isin(shapes)
 
@@ -124,10 +130,12 @@ def check_shape(tensor: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
 
 
 def gdf_to_polars(gdf: gpd.GeoDataFrame) -> pl.DataFrame:
+    """Convert a GeoDataFrame to a Polars DataFrame, dropping the geometry column."""
     return pl.DataFrame(gdf.drop(columns=["geometry"]))
 
 
 def convert_locations_to_point_geometry(locations_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Replace a locations GeoDataFrame's geometry with point geometries derived from ``lon``/``lat``."""
     check_schema(locations_gdf, LOCATIONS_SCHEMA)
 
     locations_gdf = locations_gdf.copy()
@@ -137,6 +145,7 @@ def convert_locations_to_point_geometry(locations_gdf: gpd.GeoDataFrame) -> gpd.
 
 
 def extract_unique_loc_ids(*edge_dfs: TDataFrame) -> list[str]:
+    """Collect all unique location IDs from the ``orig_loc_id`` and ``dest_loc_id`` columns of one or more edge DataFrames."""
     loc_dfs = []
     for edge_df in edge_dfs:
         edge_df = edge_df if isinstance(edge_df, pl.DataFrame) else gdf_to_polars(edge_df)
@@ -149,6 +158,7 @@ def extract_unique_loc_ids(*edge_dfs: TDataFrame) -> list[str]:
 
 
 def convert_excel_to_parquet(data_path: Path, *files: Path) -> list[Path]:
+    """Convert Excel files under ``data_path`` to parquet in-place and return the new file paths."""
     new_files = []
 
     for file in files:
@@ -162,6 +172,7 @@ def convert_excel_to_parquet(data_path: Path, *files: Path) -> list[Path]:
 
 
 def read_from_parquet(path: Path, schema: dict = None) -> pl.DataFrame:
+    """Read a parquet file into a Polars DataFrame with optional schema overrides."""
     schema = {} if schema is None else schema
 
     df = pl.read_parquet(path)
@@ -171,6 +182,7 @@ def read_from_parquet(path: Path, schema: dict = None) -> pl.DataFrame:
 def add_lon_lat_from_centroid(
     gdf: gpd.GeoDataFrame, index_col: str, lon_name="lon", lat_name="lat"
 ) -> gpd.GeoDataFrame:
+    """Add ``lon``/``lat`` columns computed from polygon centroids (projected to WGS-84)."""
     gdf = gdf.copy()
 
     projected_crs = gdf.estimate_utm_crs()
@@ -185,6 +197,8 @@ def add_lon_lat_from_centroid(
 
 
 class DataFrameStore(ABC):
+    """Mixin that provides a standard cache-directory layout for concrete ``NetworkData`` subclasses."""
+
     @classmethod
     def _dirs(cls, cfg: DataConfig, project_root: Path | None = None, name: str | None = None) -> tuple[Path, Path]:
         project_root: Path = project_root if project_root is not None else Path(".")
@@ -195,6 +209,7 @@ class DataFrameStore(ABC):
 
 
 def invert_mapping(mapping: dict[Hashable, list[Hashable]]) -> dict[Hashable, Hashable]:
+    """Invert a one-to-many mapping to a many-to-one mapping; raises ``ValueError`` on duplicate values."""
     inversion = {}
 
     for k, vs in mapping.items():

@@ -1,3 +1,5 @@
+"""ActivityDataset, FittedScalers, and the ``load_dataset`` entry point for the ML pipeline."""
+
 import json
 import pickle
 from collections.abc import Callable
@@ -18,6 +20,8 @@ from activitygraphs.utils import get_project_root
 
 
 class GenevaDataset(pyg.data.InMemoryDataset):
+    """Legacy in-memory dataset: wraps a list of per-user PyG graphs loaded from a pickle file."""
+
     def __init__(self, dataset_path: Path):
         super().__init__()
 
@@ -44,6 +48,13 @@ class GenevaDataset(pyg.data.InMemoryDataset):
 
 
 class ActivityDataset(pyg.data.Dataset):
+    """Main PyG dataset for a travel survey: shared network graph + per-user spatial features/labels + demographics.
+
+    Stores the network graph once and slices per-user tensors on ``get()`` call.
+    Each item returned by ``get(i)`` is a ``pyg.data.Data`` with ``x = [network_features || spatial_features[i]]``,
+    ``y = spatial_labels[i]``, and ``graph_x = demographics[i]``.
+    """
+
     def __init__(
         self,
         root: str,
@@ -171,6 +182,7 @@ class ActivityDataset(pyg.data.Dataset):
 
 @dataclass
 class FittedScalers:
+    """Container for ``StandardScaler`` instances fitted on the training split."""
     network_features: StandardScaler | None
     network_edges: StandardScaler | None
     spatial: StandardScaler | None
@@ -191,6 +203,7 @@ def load_or_build_dataset(
     project_root: Path | None = None,
     **build_kwargs,
 ) -> ActivityDataset:
+    """Construct an ``ActivityDataset`` rooted at ``cfg.data.paths.pyg_datasets``."""
     project_root = get_project_root(project_root)
     root = project_root / cfg.data.paths.pyg_datasets
     return ActivityDataset(root=str(root), **build_kwargs)
@@ -202,6 +215,7 @@ def split_indices(
     seed: int,
     cache_path: Path | None = None,
 ) -> tuple[list[int], list[int]]:
+    """Return (train_indices, test_indices). Loads from ``cache_path`` if it exists, otherwise splits and caches."""
     if cache_path is not None and cache_path.exists():
         with cache_path.open() as f:
             indices = json.load(f)
@@ -228,6 +242,17 @@ def fit_scalers(
     exclude_spatial_cols: list[int] | None = None,
     exclude_demographic_cols: list[int] | None = None,
 ) -> FittedScalers:
+    """Fit ``StandardScaler`` instances on the training split of each feature group.
+
+    Args:
+        dataset: The full ``ActivityDataset`` (not yet scaled).
+        train_idx: Indices of training individuals.
+        exclude_spatial_cols: Column indices excluded from spatial scaler fitting (e.g. ``[IS_HOME_COL_IDX]``).
+        exclude_demographic_cols: Column indices excluded from demographics scaler fitting.
+
+    Returns:
+        ``FittedScalers`` with one scaler per feature group (network nodes, edges, spatial, demographics).
+    """
     network_features = dataset.network_graph.x
     edge_attr = dataset.network_graph.edge_attr
 
@@ -266,6 +291,7 @@ def fit_scalers(
 
 
 def apply_scalers(dataset: ActivityDataset, scalers: FittedScalers) -> None:
+    """Apply fitted scalers to the dataset in-place, transforming network/spatial/demographic tensors."""
     if scalers.network_features is not None:
         x = dataset.network_graph.x.numpy()
         dataset.network_graph.x = torch.from_numpy(scalers.network_features.transform(x)).float()
@@ -292,6 +318,14 @@ def load_dataset(
     project_root: Path | None = None,
     **build_kwargs,
 ) -> tuple[ActivityDataset, ActivityDataset, FittedScalers]:
+    """Load, split, scale, and return the dataset as train/test subsets with cached scalers.
+
+    Split indices are cached in ``splits.json``; scalers are cached in ``scalers.pkl``
+    under ``cfg.data.paths.pyg_datasets``.
+
+    Returns:
+        Tuple ``(train_dataset, test_dataset, scalers)``.
+    """
     project_root = get_project_root(project_root)
     pyg_dir = project_root / cfg.data.paths.pyg_datasets
     splits_cache = pyg_dir / "splits.json"
@@ -380,5 +414,6 @@ def load_gva_dataset(
 
 
 def replace_scaled_features(g: BaseData, e_scaler: StandardScaler, x_scaler: StandardScaler, non_home_cols: list[int]):
+    """Scale ``g.x`` (excluding ``is_home``) and ``g.edge_attr`` in-place using the provided scalers."""
     g.x[:, non_home_cols] = torch.tensor(x_scaler.transform(g.x[:, non_home_cols].numpy()), dtype=torch.float)
     g.edge_attr = torch.tensor(e_scaler.transform(g.edge_attr.numpy()), dtype=torch.float)

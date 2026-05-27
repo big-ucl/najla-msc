@@ -1,3 +1,5 @@
+"""Hydra/OmegaConf dataclass config tree and ``load_config`` helper."""
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -12,6 +14,8 @@ from omegaconf import OmegaConf
 
 @dataclass
 class GTFSInputs:
+    """File names for a GTFS feed directory."""
+
     directory: str
 
     stops: str
@@ -26,6 +30,8 @@ class GTFSInputs:
 
 @dataclass
 class OvertureInputs:
+    """File names for Overture Maps land-use and place data."""
+
     directory: str
     land_use: str
     place: str
@@ -33,6 +39,8 @@ class OvertureInputs:
 
 @dataclass
 class GenevaBoundaryInputs:
+    """File names for Geneva boundary shapefiles (subsectors, postcodes, boundaries)."""
+
     directory: str
 
     geneva_subsectors: str
@@ -44,6 +52,8 @@ class GenevaBoundaryInputs:
 
 @dataclass
 class TorontoBoundaryInputs:
+    """File names for Toronto boundary shapefiles (CMA, census tracts, dissemination areas)."""
+
     directory: str
 
     metropolitan_areas: str
@@ -53,16 +63,22 @@ class TorontoBoundaryInputs:
 
 @dataclass
 class StatsInputs:
+    """Base class for census statistics file config."""
+
     directory: str
 
 
 @dataclass
 class GenevaStatsInputs(StatsInputs):
+    """Census statistics file config for Geneva (single grid file)."""
+
     file: str
 
 
 @dataclass
 class TorontoStatsInputs(StatsInputs):
+    """Census statistics file config for Toronto (separate population and jobs CSVs)."""
+
     population: str
     jobs: str
 
@@ -74,6 +90,8 @@ class TorontoStatsInputs(StatsInputs):
 
 @dataclass
 class Inputs:
+    """Base class for dataset raw-file inputs."""
+
     raw_journeys: str
     overture: OvertureInputs
     statistics: StatsInputs
@@ -81,6 +99,8 @@ class Inputs:
 
 @dataclass
 class LTDSInputs(Inputs):
+    """Raw-file inputs for the LTDS survey."""
+
     raw_household: str
     raw_person: str
     raw_trip: str
@@ -89,12 +109,16 @@ class LTDSInputs(Inputs):
 
 @dataclass
 class GenevaInputs(Inputs):
+    """Raw-file inputs for the Geneva MTMC survey."""
+
     boundaries: GenevaBoundaryInputs
     gtfs: GTFSInputs
 
 
 @dataclass
 class TorontoInputs(Inputs):
+    """Raw-file inputs for the Toronto TTS survey."""
+
     boundaries: TorontoBoundaryInputs
 
     raw_person: str
@@ -109,6 +133,8 @@ class TorontoInputs(Inputs):
 
 @dataclass
 class DataPaths:
+    """Filesystem paths for a dataset (raw, processed, external, PyG)."""
+
     processed: Path
     raw: Path
 
@@ -125,6 +151,8 @@ class DataPaths:
 
 @dataclass
 class DataConfig:
+    """Base dataset configuration: name, inputs, and paths."""
+
     name: str
     inputs: Inputs
     paths: DataPaths
@@ -132,16 +160,22 @@ class DataConfig:
 
 @dataclass
 class LTDSDataConfig(DataConfig):
+    """Dataset config for the LTDS survey."""
+
     inputs: LTDSInputs
 
 
 @dataclass
 class GenevaDataConfig(DataConfig):
+    """Dataset config for the Geneva MTMC survey."""
+
     inputs: GenevaInputs
 
 
 @dataclass
 class TorontoDataConfig(DataConfig):
+    """Dataset config for the Toronto TTS survey."""
+
     inputs: TorontoInputs
 
 
@@ -152,6 +186,8 @@ class TorontoDataConfig(DataConfig):
 
 @dataclass
 class OutputPaths:
+    """Filesystem paths for experiment outputs (reports, figures, saved models)."""
+
     reports: Path
     figures: Path
     models: Path
@@ -159,6 +195,8 @@ class OutputPaths:
 
 @dataclass
 class Config:
+    """Top-level Hydra config: dataset config plus output paths."""
+
     data: DataConfig
     paths: OutputPaths
 
@@ -168,6 +206,16 @@ class Config:
 
 
 def load_config(project_root: Path, verbose=True, data: Literal["ltds", "geneva", "toronto"] = "geneva") -> Config:
+    """Load Hydra config for the given dataset.
+
+    Args:
+        project_root: Repo root; the config dir is resolved as ``project_root/activitygraphs/conf``.
+        verbose: Print the resolved YAML to stdout.
+        data: Dataset name, one of ``ltds``, ``geneva``, or ``toronto``.
+
+    Returns:
+        Populated OmegaConf ``Config`` object.
+    """
     _config_dir = str(project_root / "activitygraphs/conf")
 
     with initialize_config_dir(version_base=None, config_dir=_config_dir):
