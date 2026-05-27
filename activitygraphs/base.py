@@ -112,4 +112,4 @@ TRANSFER_EDGE_LIST_SCHEMA = pl.Schema({
 })
 CRS = "EPSG:4326"
 
-IS_HOME_COL_IDX = 37
+IS_HOME_COL_IDX = 38  # TODO get rid of this hardcoded index in future work

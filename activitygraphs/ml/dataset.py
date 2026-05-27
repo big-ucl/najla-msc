@@ -337,7 +337,9 @@ def load_dataset(
     if scalers_cache.exists():
         scalers = FittedScalers.load(scalers_cache)
     else:
-        scalers = fit_scalers(dataset, train_idx, exclude_spatial_cols=[IS_HOME_COL_IDX])
+        scalers = fit_scalers(
+            dataset, train_idx
+        )  # TODO Fix boolean columns being scaled. Idea: stop column type in dataset
         scalers.save(scalers_cache)
 
     apply_scalers(dataset, scalers)
