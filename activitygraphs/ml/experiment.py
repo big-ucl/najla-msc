@@ -6,7 +6,7 @@ import torch_geometric as pyg
 from torch_geometric.logging import log
 
 from activitygraphs.ml.loss import LossFn
-from activitygraphs.ml.metrics import precision_at_k, recall_at_k, mean_reciprocal_rank, ndcg_at_k
+from activitygraphs.ml.metrics import mean_reciprocal_rank, ndcg_at_k, precision_at_k, recall_at_k
 
 
 def compute_training_weights(loader: pyg.loader.DataLoader) -> torch.Tensor:
@@ -234,7 +234,7 @@ def run_experiment(
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
 
     epoch = train_loss = train_eval_loss = test_loss = test_loss_weight = metrics = None
