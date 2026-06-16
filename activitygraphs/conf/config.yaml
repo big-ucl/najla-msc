@@ -16,5 +16,5 @@ train:
   debug: false
 
   wandb: true
-  wandb_project: activity-graphs
-  wandb_entity: luca-bataillard-ucl-university-college-london
+  wandb_project: najla-msc
+  wandb_entity: najla-hs-alqahtani-ucl

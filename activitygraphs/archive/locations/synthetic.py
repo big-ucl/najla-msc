@@ -9,10 +9,36 @@ import polars.selectors as cs
 
 
 def _set_binary_graph_attribute(G: nx.Graph, included_nodes: np.ndarray, attr_name: str):
+    """
+    Description: Sets a binary (True/False) node attribute on every node in the graph.
+    For each node, the attribute is True if the node is in `included_nodes`, and False otherwise.
+    Used to mark nodes as home locations, workplaces, or shopping destinations.
+
+    Input:
+      - G (nx.Graph): The NetworkX graph on which to set the attribute.
+      - included_nodes (np.ndarray): Array of node IDs that should receive the value True.
+      - attr_name (str): The name of the node attribute to set (e.g. 'is_home', 'is_workplace').
+
+    Output:
+      - None. Modifies the graph G in place.
+    """
     nx.set_node_attributes(G, {node: node in included_nodes for node in G.nodes}, attr_name)
 
 
 def _shifted(name, prefix="to_"):
+    """
+    Description: Creates a Polars expression that shifts a column by -1 (one row backwards) and
+    renames it with the given prefix. Used to create 'to_*' columns alongside 'from_*' columns
+    when building a trip DataFrame from a sequence of schedule visits (e.g. 'to_loc_id' is the
+    location that comes AFTER the current one in the schedule).
+
+    Input:
+      - name (str): The original column name (e.g. 'loc_id', 'type').
+      - prefix (str): The prefix to prepend to the shifted column name. Defaults to 'to_'.
+
+    Output:
+      - (pl.Expr): A Polars expression representing the shifted column, renamed to '{prefix}{name}'.
+    """
     return pl.col(name).shift(-1).alias(prefix + name)
 
 
@@ -127,6 +153,13 @@ class SyntheticGraph:
         nx.set_node_attributes(self._G, home_prices, "home_price")
 
     def __repr__(self):
+        """
+        Description: Returns a concise human-readable representation of the SyntheticGraph,
+        showing the number of nodes and edges.
+
+        Output:
+          - (str): A string like 'SyntheticGraph(8 nodes, 12 edges)'.
+        """
         return f"SyntheticGraph({len(self.nodes)} nodes, {len(self.edges)} edges)"
 
     def with_home_nodes(self, home_nodes: np.ndarray) -> "SyntheticGraph":
@@ -199,30 +232,62 @@ class SyntheticSchedules:
         person_choices_df: pl.DataFrame | None,
         schedule_df: pl.DataFrame,
     ):
-        self.n_samples = n_samples
-        self.graph = graph
-        self.person_df = person_df
-        self.person_choices_df = person_choices_df
-        self.schedule_df = schedule_df
+        """
+        Description: Initialises the SyntheticSchedules object from pre-generated population and
+        schedule data. Automatically constructs a trip DataFrame from consecutive schedule entries
+        by pairing each visit with the next one (from_loc_id -> to_loc_id), and joins travel
+        distances from the graph's distance matrix.
+
+        Input:
+          - n_samples (int): The number of persons (agents) in the population.
+          - graph (SyntheticGraph): The transport network graph the population lives on.
+          - person_df (pl.DataFrame | None): DataFrame of person attributes (e.g. income),
+            one row per person. May be None if not yet generated.
+          - person_choices_df (pl.DataFrame | None): DataFrame of each person's chosen locations
+            (home, work, shopping), one row per (person, type). May be None if not yet generated.
+          - schedule_df (pl.DataFrame): DataFrame of each person's activity sequence.
+            Must contain columns: 'person_id', 'sequence_num', 'type', 'loc_id'.
+        """
+        self.n_samples = n_samples  # Total number of persons in the synthetic population
+        self.graph = graph  # The transport network on which agents are placed
+        self.person_df = person_df  # Personal attributes (e.g. income) per person
+        self.person_choices_df = person_choices_df  # Chosen activity locations per person
+        self.schedule_df = schedule_df  # Activity schedule: who visits where in what order
+        # All unique activity types present in this schedule (e.g. ['H', 'W', 'S1', 'S2'])
         self.visit_types = schedule_df["type"].unique().to_list()
 
-        distances_df = graph.distance_matrix_df
+        distances_df = graph.distance_matrix_df  # Pairwise distances between all nodes (long format)
 
+        # Build trip DataFrame: for each consecutive pair of visits, create one row with
+        # from_loc_id, to_loc_id, from_type, to_type, and the distance travelled
         trip_df = (
             self.schedule_df
             .sort(by=["person_id", "sequence_num"])
+            # Shift columns by -1 to get the NEXT visit in sequence alongside the current one
             .with_columns(_shifted("loc_id"), _shifted("type"), _shifted("person_id"))
+            # Remove the last row for each person (shift introduces None at the boundary)
             .filter(pl.col("person_id") == pl.col("to_person_id"))
             .drop("to_person_id")
             .rename({"type": "from_type", "loc_id": "from_loc_id"})
         )
 
+        # Join trip distance from the graph's distance matrix
         self.trip_df = trip_df.join(distances_df, on=["from_loc_id", "to_loc_id"]).sort(
             by=["person_id", "sequence_num"]
         )
 
 
 class SyntheticGenerator(ABC):
+    """
+    Description: Abstract base class (ABC) for generating synthetic populations and activity
+    schedules on a SyntheticGraph. Subclasses implement `generate_population` and
+    `generate_schedules` with different behavioural models (probabilistic, deterministic, etc.).
+    Provides shared internal methods for setting person choices and schedules. After calling
+    `generate_population()` and `generate_schedules()`, call `build()` to get a SyntheticSchedules.
+    """
+    # All valid daily schedule patterns (as sequences of activity types, '-' means no activity).
+    # Each row is one possible ordered schedule (e.g. ['W', '-', '-'] = just work, no shopping).
+    # Schedules are later expanded by replacing activity codes with chosen location IDs.
     AVAILABLE_SCHEDULES = np.array([
         ["W", "-", "-"],
         ["S1", "-", "-"],
@@ -242,13 +307,25 @@ class SyntheticGenerator(ABC):
     ])
 
     def __init__(self, graph: SyntheticGraph, rng: np.random.Generator):
-        self._graph = graph
+        """
+        Description: Initialises the generator with the transport network and a random number
+        generator. All data attributes are initially None; they are populated by calling
+        `generate_population()` and `generate_schedules()`.
+
+        Input:
+          - graph (SyntheticGraph): The transport network on which to generate the population.
+          - rng (np.random.Generator): A numpy random number generator for reproducibility.
+            If None, creates a new `np.random.default_rng()`.
+        """
+        self._graph = graph  # The transport network graph (nodes = locations, edges = distances)
+        # Use the provided RNG or create a fresh one with a random seed
         self._rng = rng if rng is not None else np.random.default_rng()
 
-        self._n_samples = None
-        self._person_df = None
-        self._person_choices_df = None
-        self._schedule_df = None
+        # These are populated by calling generate_population() and generate_schedules()
+        self._n_samples = None  # Will hold the number of persons in the population
+        self._person_df = None  # Will hold a DataFrame of person attributes (e.g. income)
+        self._person_choices_df = None  # Will hold a DataFrame of each person's chosen locations
+        self._schedule_df = None  # Will hold the full activity sequence for each person
 
     @property
     def person_df(self) -> pl.DataFrame:
@@ -313,6 +390,15 @@ class SyntheticGenerator(ABC):
         pass
 
     def build(self) -> SyntheticSchedules:
+        """
+        Description: Assembles and returns a SyntheticSchedules object from the generated
+        population and schedule data. Must be called AFTER `generate_population()` and
+        `generate_schedules()` have been called (or those methods will raise LookupError).
+
+        Output:
+          - (SyntheticSchedules): A complete dataset object containing the graph, all person
+            attributes, location choices, and activity sequences.
+        """
         return SyntheticSchedules(
             self.n_samples,
             self._graph,
@@ -322,6 +408,20 @@ class SyntheticGenerator(ABC):
         )
 
     def _set_person_choices(self, homes, workplaces, home_shopping, work_shopping):
+        """
+        Description: Internal method that constructs and stores the person_choices_df DataFrame.
+        This DataFrame records the chosen home, workplace, home-side shopping, and work-side shopping
+        location for each person, labelled with their activity type ('H', 'W', 'S1', 'S2').
+
+        Input:
+          - homes (np.ndarray): Array of home location IDs, one per person.
+          - workplaces (np.ndarray): Array of workplace location IDs, one per person.
+          - home_shopping (np.ndarray): Array of home-side shopping location IDs, one per person.
+          - work_shopping (np.ndarray): Array of work-side shopping location IDs, one per person.
+
+        Output:
+          - None. Stores the result in self._person_choices_df.
+        """
         self._person_choices_df = pl.concat([
             pl.DataFrame({
                 "type": "H",
@@ -342,7 +442,22 @@ class SyntheticGenerator(ABC):
         ]).sort(by="person_id")
 
     def _set_schedules(self, chosen_schedules):
+        """
+        Description: Internal method that builds and stores the schedule_df DataFrame from an
+        array of schedule indices. Each schedule is a sequence of activity codes (e.g. 'W', 'S1')
+        that is bookended by home visits ('H') and expanded to include the actual chosen location
+        IDs from person_choices_df. Placeholder '-' entries are filtered out.
+
+        Input:
+          - chosen_schedules (np.ndarray): Integer array of shape (n_samples,) where each value
+            is an index into AVAILABLE_SCHEDULES, selecting which daily schedule pattern to use.
+
+        Output:
+          - None. Stores the result in self._schedule_df.
+        """
+        # Look up the actual schedule pattern rows from the AVAILABLE_SCHEDULES table
         schedules = self.AVAILABLE_SCHEDULES[chosen_schedules]
+        # Prepend and append 'H' to every schedule: all persons start and end at home
         home_col = np.repeat("H", self.n_samples).reshape(self.n_samples, 1)
         schedules = np.hstack([home_col, schedules, home_col])
 
@@ -372,7 +487,12 @@ class ProbabilisticSyntheticGenerator(SyntheticGenerator):
         income_mu: float = 0,
         income_sigma: float = 0.8,
     ):
-        """_summary_
+        """
+        Description: Initialises the probabilistic generator with behavioural model parameters.
+        This generator creates agents with lognormally-distributed incomes and selects their
+        activity locations using probabilistic models: home and workplace are chosen based on
+        income sensitivity (richer agents prefer more expensive/prestigious locations), while
+        shopping locations are chosen based on inverse-distance probability (closer is more likely).
 
         Args:
             graph (SyntheticGraph): the graph on which to generate the data.
@@ -389,10 +509,10 @@ class ProbabilisticSyntheticGenerator(SyntheticGenerator):
         """
         super().__init__(graph, rng)
 
-        self._distance_scale = distance_scale
-        self._income_mu = income_mu
-        self._income_sigma = income_sigma
-        self._income_scale = 10
+        self._distance_scale = distance_scale  # Controls how strongly distance influences shopping choice
+        self._income_mu = income_mu  # Log-mean of the lognormal income distribution
+        self._income_sigma = income_sigma  # Log-std of the lognormal income distribution
+        self._income_scale = 10  # Multiplicative scaling factor applied to raw income samples
 
     def _choice_with_incomes(
         self,
@@ -402,17 +522,38 @@ class ProbabilisticSyntheticGenerator(SyntheticGenerator):
         n_samples: int,
         inverse: bool = True,
     ):
-        """Given a list of target nodes, ranks them alphabetically and samples in that order with income as 'price
-        sensitivity'"""
+        """
+        Description: Samples a location choice for each person using a logit model where
+        income acts as the price sensitivity parameter. The probability of choosing a node
+        is proportional to exp(-price / income): richer agents are less sensitive to high prices
+        and are therefore more likely to choose expensive nodes. If inverse=True, the prices
+        array is reversed so that higher indices are more expensive.
+
+        Input:
+          - nodes (np.ndarray): Array of candidate node IDs to choose from.
+          - prices (np.ndarray): Array of prices for each node, same length as nodes.
+          - incomes (np.ndarray): Array of income values, one per person (n_samples,).
+          - n_samples (int): Number of persons to sample for.
+          - inverse (bool): If True, reverse the price order (higher rank = more expensive).
+            Defaults to True.
+
+        Output:
+          - (tuple[np.ndarray, np.ndarray]): A tuple of (choices_idx, choices) where:
+              choices_idx : integer array of chosen node indices, shape=(n_samples,)
+              choices     : array of chosen node IDs, shape=(n_samples,)
+        """
+        # Optionally reverse the prices so that the last node is the most expensive
         prices = prices[::-1] if inverse else prices
+        # Compute logits: lower income → more negative logits for expensive nodes (more price sensitive)
         logits = (-1 / incomes.reshape(-1, 1)) * prices
+        # Softmax to convert logits to probabilities (one distribution per person)
         probabilities = np.exp(logits) / np.sum(np.exp(logits), axis=1, keepdims=True)
 
-        choices_idx = np.empty(n_samples, dtype=int)
-        choices = np.empty(n_samples, dtype=str)
+        choices_idx = np.empty(n_samples, dtype=int)  # Will store the index of the chosen node per person
+        choices = np.empty(n_samples, dtype=str)  # Will store the node ID of the chosen node per person
 
         for i, p in enumerate(probabilities):
-            choice_idx = self._rng.choice(range(len(nodes)), p=p)
+            choice_idx = self._rng.choice(range(len(nodes)), p=p)  # Sample one node index per person
             choices_idx[i] = choice_idx
             choices[i] = nodes[choice_idx]
 
@@ -459,23 +600,30 @@ class ProbabilisticSyntheticGenerator(SyntheticGenerator):
         Args:
             n_samples (int): the number of samples (people) to generate.
         """
-        self._schedule_df = None
+        self._schedule_df = None  # Reset any previously generated schedules
 
+        # Draw incomes from a lognormal distribution (scaled to realistic range)
         incomes = self._rng.lognormal(self._income_mu, self._income_sigma, size=n_samples) * self._income_scale
+        # Use simple rank ordering [0, 1, 2, ...] as workplace "prices" (proxy for prestige)
         work_prices = np.arange(len(self._graph.workplace_nodes))
 
+        # Choose home location: income-sensitive (richer agents choose more expensive homes)
         homes_idx, homes = self._choice_with_incomes(
             self._graph.home_nodes, self._graph.home_prices, incomes, n_samples
         )
+        # Choose workplace: income-sensitive (richer agents choose more prestigious workplaces)
         workplaces_idx, workplaces = self._choice_with_incomes(
             self._graph.workplace_nodes, work_prices, incomes, n_samples
         )
 
+        # Choose home-side shopping: distance-based (closer to home is more likely)
         home_shopping = self._choice_with_distance_probs(homes_idx, self._graph.shopping_nodes)
+        # Choose work-side shopping: distance-based (closer to work is more likely)
         work_shopping = self._choice_with_distance_probs(workplaces_idx, self._graph.shopping_nodes)
 
-        self._n_samples = n_samples
+        self._n_samples = n_samples  # Store the population size
 
+        # Build and store the person attributes DataFrame (one row per person, with person_id index)
         self._person_df = pl.DataFrame({
             "income": incomes,
         }).with_row_index("person_id")
@@ -493,29 +641,69 @@ class ProbabilisticSyntheticGenerator(SyntheticGenerator):
 
 
 class DeterministicSyntheticGenerator(SyntheticGenerator):
+    """
+    Description: A SyntheticGenerator that creates agents with deterministic binary behavioural
+    rules rather than continuous probabilistic models. Each agent is randomly labelled as
+    'rich' or 'not rich' and as 'shops first' or 'does not shop first', and their location
+    choices are deterministically assigned based on these labels. This creates a simpler,
+    more interpretable synthetic dataset where the ground-truth decision rule is known exactly.
+    Useful for testing whether a model can learn these binary patterns.
+    """
     def __init__(
         self, graph: SyntheticGraph, rng: np.random.Generator = None, p_is_rich: bool = 0.3, p_shop_first: bool = 0.2
     ):
+        """
+        Description: Initialises the deterministic generator with the two key behavioural
+        probabilities controlling what fraction of agents are labelled as 'rich' or 'shops first'.
+
+        Input:
+          - graph (SyntheticGraph): The transport network on which to generate the population.
+          - rng (np.random.Generator | None): Random number generator for reproducibility.
+            Defaults to None (creates new default generator).
+          - p_is_rich (float): Probability that any given agent is 'rich' (affects home and
+            workplace choices). Defaults to 0.3.
+          - p_shop_first (float): Probability that any given agent 'shops first' (affects which
+            shopping nodes they choose). Defaults to 0.2.
+        """
         super().__init__(graph, rng)
 
-        self.p_is_rich = p_is_rich
-        self.p_shop_first = p_shop_first
+        self.p_is_rich = p_is_rich  # Fraction of population labelled as 'rich'
+        self.p_shop_first = p_shop_first  # Fraction of population that shops before work
 
     def generate_population(self, n_samples: int):
-        p_is_rich = self.p_is_rich
-        p_shop_first = self.p_shop_first
-        n_schedules = len(self.AVAILABLE_SCHEDULES)
+        """
+        Description: Generates a deterministic synthetic population. Each person is assigned:
+          - is_rich: True with probability p_is_rich → chooses the last home node and first workplace.
+          - shop_first: True with probability p_shop_first → chooses the last two shopping nodes.
+          - chosen_schedule: A randomly selected schedule index from AVAILABLE_SCHEDULES.
 
+        Input:
+          - n_samples (int): Number of persons to generate.
+
+        Output:
+          - None. Stores person_df and person_choices_df in self.
+        """
+        p_is_rich = self.p_is_rich  # Local copy for clarity
+        p_shop_first = self.p_shop_first  # Local copy for clarity
+        n_schedules = len(self.AVAILABLE_SCHEDULES)  # Total number of available schedule types
+
+        # Randomly assign binary wealth and shopping preference labels per person
         is_rich = self._rng.choice([True, False], size=n_samples, p=[p_is_rich, 1 - p_is_rich])
         shop_first = self._rng.choice([True, False], size=n_samples, p=[p_shop_first, 1 - p_shop_first])
+        # Randomly assign a schedule type to each person
         chosen_schedule = self._rng.integers(low=0, high=n_schedules, size=n_samples)
 
+        # Rich agents choose the last (most expensive) home node, non-rich choose the second-to-last
         homes = np.where(is_rich, self._graph.home_nodes[-1], self._graph.home_nodes[-2])
+        # Rich agents choose the first (most prestigious) workplace, non-rich choose the last
         workplaces = np.where(is_rich, self._graph.workplace_nodes[0], self._graph.workplace_nodes[-1])
+        # 'Shops first' agents choose the last shopping node near home, others choose second-to-last
         home_shopping = np.where(shop_first, self._graph.shopping_nodes[-1], self._graph.shopping_nodes[-2])
+        # 'Shops first' agents choose the first shopping node near work, others choose the second
         work_shopping = np.where(shop_first, self._graph.shopping_nodes[0], self._graph.shopping_nodes[1])
 
-        self._n_samples = n_samples
+        self._n_samples = n_samples  # Store population size
+        # Build person attributes DataFrame with binary feature columns and a person_id index
         self._person_df = pl.DataFrame({
             "is_rich": is_rich,
             "shop_first": shop_first,
@@ -524,11 +712,35 @@ class DeterministicSyntheticGenerator(SyntheticGenerator):
         self._set_person_choices(homes, workplaces, home_shopping, work_shopping)
 
     def generate_schedules(self):
+        """
+        Description: Generates schedules for the population using the pre-assigned schedule
+        indices stored in person_df. Must be called after `generate_population()`.
+
+        Output:
+          - None. Stores the schedule in self._schedule_df.
+        """
+        # Retrieve the pre-assigned schedule indices (one per person) from the person DataFrame
         chosen_schedules = self.person_df["chosen_schedule"].to_numpy()
         self._set_schedules(chosen_schedules)
 
 
 def make_generator(kind: str = "probabilistic", *generator_args, **generator_kwargs) -> SyntheticGenerator:
+    """
+    Description: Factory function that creates and returns the correct SyntheticGenerator subclass
+    based on a string identifier. This allows experiment code to select a generator type without
+    importing the concrete classes directly.
+
+    Input:
+      - kind (str): Which generator type to create. Options are:
+          'probabilistic' → ProbabilisticSyntheticGenerator (income + distance-based choices)
+          'deterministic' → DeterministicSyntheticGenerator (binary rich/shop-first rules)
+        Defaults to 'probabilistic'.
+      - *generator_args: Positional arguments forwarded to the generator's __init__.
+      - **generator_kwargs: Keyword arguments forwarded to the generator's __init__.
+
+    Output:
+      - (SyntheticGenerator): An instance of the requested generator subclass.
+    """
     if kind == "probabilistic":
         return ProbabilisticSyntheticGenerator(*generator_args, **generator_kwargs)
     elif kind == "deterministic":
@@ -549,12 +761,16 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
         pl.DataFrame: the schedules
     """
 
+    # Build all possible (home, workplace) combinations using a cartesian product
+    # home_choice_idx[i] and work_choice_idx[i] give the indices of one combination
     home_choice_idx = np.repeat(range(len(graph.home_nodes)), len(graph.workplace_nodes))
     work_choice_idx = np.tile(range(len(graph.workplace_nodes)), len(graph.home_nodes))
 
+    # Actual node IDs for each (home, workplace) combination
     home_choice = graph.home_nodes[home_choice_idx]
     work_choice = graph.workplace_nodes[work_choice_idx]
 
+    # For each home node, find the closest valid shopping node (excluding the home itself)
     closest_home_shopping = _select_closest_from_choice(
         graph.nodes,
         graph.distance_matrix,
@@ -562,6 +778,7 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
         valid=graph.shopping_nodes,
         exclude_chosen=True,
     )
+    # For each workplace node, find the closest valid shopping node (excluding the workplace itself)
     closest_work_shopping = _select_closest_from_choice(
         graph.nodes,
         graph.distance_matrix,
@@ -570,6 +787,7 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
         exclude_chosen=True,
     )
 
+    # Stack all 4 location choices into a (n_combinations, 4) array: [home, work, home_shop, work_shop]
     person_choices = np.stack([
         home_choice,
         work_choice,
@@ -577,17 +795,23 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
         closest_work_shopping,
     ]).T
 
+    # Repeat each (home, work, shop, shop) combination once per available schedule pattern
     choices_repeated = np.repeat(person_choices, len(available_schedules), axis=0)
+    # Extract the home node for each row (used to bookend each schedule with H...H)
     home_choice_repeated = choices_repeated[:, 0].reshape(-1, 1)
+    # Tile schedule patterns across all location combinations
     scheds = np.tile(available_schedules.T, len(person_choices)).T
 
+    # Replace activity type codes ('H', 'W', 'S1', 'S2') with the actual chosen location IDs
     for i, activity in enumerate(["H", "W", "S1", "S2"]):
         chosen_locs_repeated = choices_repeated[:, i].reshape(-1, 1)
         scheds = np.where(scheds == activity, chosen_locs_repeated, scheds)
 
+    # Bookend every schedule with the home location at the start and end (H → ... → H)
     scheds = np.concat([home_choice_repeated, scheds, home_choice_repeated], axis=1)
 
     # Move all "-" to the left of the array, see https://stackoverflow.com/a/43011036
+    # This left-justifies the schedule so all valid entries come first and "-" pad the right
     valid_mask = scheds != "-"
     flipped_mask = valid_mask.sum(axis=1, keepdims=1) > np.arange(scheds.shape[1] - 1, -1, -1)
     flipped_mask = flipped_mask[:, ::-1]
@@ -595,31 +819,37 @@ def compute_all_possible_schedules(graph: SyntheticGraph, available_schedules: n
     scheds[flipped_mask] = scheds[valid_mask]
     scheds[~flipped_mask] = "-"
 
+    # Convert the raw schedule array to a Polars DataFrame in long format
     schedule_df = (
         pl
         .DataFrame(scheds, schema=["1", "2", "3", "4", "5"], orient="row")
         .with_row_index("person_id")
         .unpivot(index="person_id", variable_name="numpy_seq", value_name="loc_id")
         .sort(by=["person_id", "numpy_seq"])
-        .filter(pl.col("loc_id") != "-")
+        .filter(pl.col("loc_id") != "-")  # Remove padding entries
         .with_columns(
             pl.int_range(pl.len()).over("person_id", order_by="numpy_seq").alias("sequence_num"),
-            pl.lit("-").alias("type"),
+            pl.lit("-").alias("type"),  # Placeholder type column (not used for this lookup)
         )
         .drop("numpy_seq")
     )
 
+    # Build a temporary SyntheticSchedules to access the trip DataFrame (for sequence features)
     s = SyntheticSchedules(0, graph, None, None, schedule_df)
+    # Build cumulative indicator features: for each step, which nodes have been visited so far?
     features = (
         s.trip_df
         .group_by("person_id")
         .agg(pl.col("from_loc_id").unique(maintain_order=True))
         .explode("from_loc_id")
         .with_columns(pl.int_range(pl.len()).over("person_id").alias("sequence_num"))
-        .to_dummies("from_loc_id")
+        .to_dummies("from_loc_id")  # One-hot encode the current location
+        # Cumulative sum gives the set of all locations visited up to this step
         .with_columns(cs.starts_with("from_loc_id").cum_sum().over("person_id", order_by="sequence_num"))
     )
+    # Shift features by -1 to get the NEXT state (used as prediction targets)
     targets = features.with_columns(pl.col("sequence_num") - 1).rename(lambda col: col.replace("from_", "to_"))
+    # Join current state features with next state targets for each (person_id, sequence_num) pair
     dataset_df = features.join(targets, on=["person_id", "sequence_num"]).sort(by=["person_id", "sequence_num"])
 
     return dataset_df

@@ -1,4 +1,26 @@
-"""GTFS feed parser for building public-transport edge lists."""
+"""
+GTFS feed parser for building public-transport edge lists.
+
+GTFS (General Transit Feed Specification) is the standard format for public transport
+timetable data. This module parses a GTFS feed into directed edge DataFrames suitable
+for graph construction:
+
+  - **PT edges**: Directed edges between consecutive stops on the same route. Each edge
+    carries the mode, line name, travel time, dwell time, headway, and service frequency.
+  - **Transfer edges**: Edges representing platform changes within the same station
+    (intra-station) and walking connections between nearby stations (inter-station).
+
+The module operates on a sample weekday (Wednesday 2022-05-18) for headway computation,
+and filters out trips not active on that day using the GTFS calendar and exceptions tables.
+
+Key functions:
+  - ``build_pt_layer_edges``: Main entry point; returns (pt_edges, transfer_edges).
+  - ``filter_active_stop_times``: Restrict stop times to trips visiting active locations.
+  - ``create_pt_trip_df``: Build origin-destination trip segments with dwell/travel times.
+  - ``compute_avg_headways``: Compute average service headway per edge on the sample day.
+  - ``add_route_attributes_to_edges``: Enrich edges with mode and route name.
+  - ``create_transfer_edges``: Build within-station and between-station transfer edges.
+"""
 
 from dataclasses import dataclass
 
@@ -8,36 +30,63 @@ import polars.selectors as cs
 from activitygraphs.base import PT_EDGE_LIST_SCHEMA, TRANSFER_EDGE_LIST_SCHEMA, Mode, PTNodeType
 from activitygraphs.utils import check_schema
 
+# Synthetic route ID used for the central "transfer hub" node at each PT stop.
+# Every (route_id, loc_id) pair connects to and from (PARENT_STOP_ROUTE_ID, loc_id).
 PARENT_STOP_ROUTE_ID = "parent"
+
+# Default walking time in minutes when no GTFS transfer time is specified.
+# Used as a fallback for within-station transfers when min_transfer_time is missing.
 DEFAULT_TRANSFER_TIME_MIN = 2
 
 
 @dataclass(frozen=True)
 class GTFSInputs:
-    """Parsed GTFS tables for a single feed (stops, stop times, trips, routes, agency, calendar, transfers)."""
+    """
+    Description: Immutable container (frozen dataclass) holding all parsed GTFS tables
+    for a single public transport feed. All tables are stored as Polars DataFrames or
+    LazyFrames. Stop times and trips are stored lazily to avoid loading large files
+    into memory until needed.
 
-    stops_df: pl.DataFrame
-    stop_times_df: pl.LazyFrame
-    trips_df: pl.LazyFrame
-    routes_df: pl.DataFrame
-    agency_df: pl.DataFrame
-    calendar_df: pl.DataFrame
-    calendar_dates_df: pl.DataFrame
-    transfers_df: pl.DataFrame
+    Attributes:
+      - stops_df (pl.DataFrame): All stops with stop_id, stop_name, lat, lon, parent_station,
+        and derived loc_id (parent or self).
+      - stop_times_df (pl.LazyFrame): All stop times (large): trip_id, stop_id, arrival/departure
+        time, stop_sequence, and joined loc_id.
+      - trips_df (pl.LazyFrame): All trips: trip_id, route_id, service_id.
+      - routes_df (pl.DataFrame): All routes: route_id, agency_id, route_type, route_short_name.
+      - agency_df (pl.DataFrame): All agencies: agency_id, agency_name.
+      - calendar_df (pl.DataFrame): Weekly service patterns: service_id, weekday flags, date range.
+      - calendar_dates_df (pl.DataFrame): Service exceptions: service additions/removals by date.
+      - transfers_df (pl.DataFrame): Transfer times between stops: from/to stop_id,
+        transfer_type, min_transfer_time (seconds).
+    """
+
+    stops_df: pl.DataFrame          # Stop metadata (loc_id derived from parent_station)
+    stop_times_df: pl.LazyFrame     # Stop departure/arrival times (large; lazy)
+    trips_df: pl.LazyFrame          # Trip metadata (large; lazy)
+    routes_df: pl.DataFrame         # Route metadata and type codes
+    agency_df: pl.DataFrame         # Agency (operator) names
+    calendar_df: pl.DataFrame       # Regular weekly service patterns
+    calendar_dates_df: pl.DataFrame # Exception overrides (added/removed services by date)
+    transfers_df: pl.DataFrame      # Minimum transfer times between stops
 
 
+# Mapping from GTFS route_type integer codes (extended GTFS) to internal Mode enum values.
+# GTFS uses a hierarchical type code; the extended codes (100–1000) are used by Swiss GTFS.
 ROUTE_TYPE_TO_MODE_MAP = {
-    101: Mode.TRAIN,
-    102: Mode.TRAIN,
-    103: Mode.TRAIN,
-    106: Mode.TRAIN,
-    109: Mode.TRAIN,
-    117: Mode.TRAIN,
-    700: Mode.BUS,
-    900: Mode.TRAMWAY,
-    1000: Mode.BOAT,
+    101: Mode.TRAIN,    # High-speed rail
+    102: Mode.TRAIN,    # Long-distance rail
+    103: Mode.TRAIN,    # Inter-regional rail
+    106: Mode.TRAIN,    # Cog railway
+    109: Mode.TRAIN,    # Suburban railway
+    117: Mode.TRAIN,    # Rail shuttle
+    700: Mode.BUS,      # Bus
+    900: Mode.TRAMWAY,  # Tram / light rail
+    1000: Mode.BOAT,    # Ferry / water transport
 }
 
+# Abbreviation mapping for Swiss/French transit agency names to short codes.
+# Used when building human-readable route name labels for the PT graph.
 AGENCY_NAME_MAP = {
     "Schweizerische Bundesbahnen SBB": "SBB",
     "Schweizerische Südostbahn (sob)": "SOB",
@@ -47,6 +96,8 @@ AGENCY_NAME_MAP = {
     "Transports Publics de l'agglomération d'Annemasse": "TAC",
 }
 
+# Prefix strings for route names displayed in the graph. Used to create labels like
+# "Train : IC8 (SBB)" or "Tram  : 12 (TPG)".
 MODE_TO_SHORT_NAME_MAP = {
     Mode.TRAIN: "Train : ",
     Mode.TRAMWAY: "Tram  : ",
@@ -54,9 +105,15 @@ MODE_TO_SHORT_NAME_MAP = {
     Mode.BOAT: "Boat : ",
 }
 
-
+# The specific date used for headway computation.
+# A regular Wednesday chosen to represent a typical weekday in the 2022 Swiss GTFS.
 SAMPLE_DATE = pl.date(2022, 5, 18)
+
+# The day-of-week column name in the GTFS calendar table for the sample date.
 SAMPLE_WEEKDAY = "wednesday"
+
+# Time window for counting trips when computing headways.
+# Only trips departing between 06:00 and 21:00 (the main service window) are counted.
 SAMPLE_DAY_START = pl.time(6, 0, 0)
 SAMPLE_DAY_END = pl.time(21, 0, 0)
 

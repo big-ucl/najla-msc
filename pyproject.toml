@@ -45,7 +45,7 @@ dependencies = [
     "seaborn>=0.13.2",
     "sqlglot>=26.29.0",
     "lightning>=2.0",
-    "torch>=2.10.0",
+    "torch==2.8.0",
     "torch-geometric>=2.7.0",
     "tqdm>=4.67.1",
     "torchmetrics>=1.9.0",

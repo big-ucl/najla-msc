@@ -15,8 +15,25 @@ class Overture:
     """Overture Maps feature extractor; use ``Overture.load()`` to download and cache data."""
 
     def __init__(self, land_use: gpd.GeoDataFrame, place: gpd.GeoDataFrame):
-        self.land_use = land_use
-        self.place = place
+        """
+        Description: Store the two pre-loaded Overture Maps GeoDataFrames that this object
+        will use to enrich location polygons with POI counts and land-use fractions.
+        Do not call this constructor directly — use the class method ``Overture.load()``
+        instead, which handles downloading and caching the data from disk.
+
+        Input:
+          - land_use (gpd.GeoDataFrame): Land-use polygons from the Overture Maps "land_use"
+            theme. Must have columns: ``id`` (index), ``subtype``, ``class``, ``geometry``
+            (Polygon or MultiPolygon). Used by ``add_land_uses()``.
+          - place (gpd.GeoDataFrame): Point-of-interest (POI) data from the Overture Maps
+            "place" theme. Must have columns: ``id`` (index), ``names``, ``basic_category``,
+            ``taxonomy``, ``geometry`` (Point). Used by ``add_poi_counts()``.
+
+        Output:
+          - None (sets ``self.land_use`` and ``self.place`` instance attributes).
+        """
+        self.land_use = land_use  # Overture land-use polygon GeoDataFrame indexed by id
+        self.place = place        # Overture POI point GeoDataFrame indexed by id
 
     def add_poi_counts(
         self,
