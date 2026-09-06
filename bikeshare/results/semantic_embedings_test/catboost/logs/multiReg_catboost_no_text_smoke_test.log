@@ -1,0 +1,22 @@
+Loading model dataframe: /home/najla/dev/najla-msc/bikeshare/data/processed/model_df/df_2targets_txtTokens_graphFeat.parquet
+Loaded dataframe shape: (740505, 73)
+Using no_text feature set: wiki_items_text dropped, no embeddings joined
+Loading fold assignments: /home/najla/dev/najla-msc/bikeshare/data/processed/model_df/folds_of_2targets_txtTokens_graphFeat.parquet
+Loaded fold-assignment shape: (200, 3)
+Prepared folds: 10
+Search method: smoke_test
+Hyperparameter trials: 1
+Active spatial folds: 1
+Expected validation model fits: 1
+Expected final test model fits: 1
+VALID | trial=001 | fold=00 | epoch=77 | batch=N/A | MSE=48.4738 | RMSE=6.9584 | Recall@20=0.5203
+Completed trial 001/001
+TEST  | fold=00 | epoch=77 | batch=N/A | MSE=7.0225 | RMSE=2.6500 | Recall@20=0.4589
+
+Best trial: 1
+Best average validation RMSE: 6.9584
+Grid results saved to: /home/najla/dev/najla-msc/bikeshare/results/catboost/multiReg_catboost_no_text_smoke_test_grid.csv
+Fold results saved to: /home/najla/dev/najla-msc/bikeshare/results/catboost/multiReg_catboost_no_text_smoke_test_fold.csv
+Feature importance saved to: /home/najla/dev/najla-msc/bikeshare/results/catboost/multiReg_catboost_no_text_smoke_test_feature_importance.csv
+Target order used: ['inflow_count', 'outflow_count']
+Number of model features: 63

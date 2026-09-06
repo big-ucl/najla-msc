@@ -1,0 +1,58 @@
+
+PYTHON=.venv/bin/python
+CATBOOST_WIKI_MODE=pca16
+Loading model dataframe: /home/najla/dev/najla-msc/bikeshare/data/processed/model_df/df_2targets_txtTokens_graphFeat.parquet
+Loaded dataframe shape: (740505, 73)
+Loading fold assignments: /home/najla/dev/najla-msc/bikeshare/data/processed/model_df/folds_of_2targets_txtTokens_graphFeat.parquet
+Loaded fold-assignment shape: (200, 3)
+Prepared folds: 10
+Search method: catboost_test
+Hyperparameter trials: 1
+Active spatial folds: 1
+Expected validation model fits: 1
+Expected final test model fits: 1
+VALID | trial=001 | fold=00 | epoch=40 | batch=N/A | MSE=40.1314 | RMSE=6.3347 | Recall@20=0.5005
+Completed trial 001/001
+TEST  | fold=00 | epoch=40 | batch=N/A | MSE=12.8358 | RMSE=3.5826 | Recall@20=0.4587
+
+Best trial: 1
+Best average validation RMSE: 6.3347
+Grid results saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df0_baseline_semantic_no_node2vec_catboost_test_grid.csv
+Fold results saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df0_baseline_semantic_no_node2vec_catboost_test_fold.csv
+Feature importance saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df0_baseline_semantic_no_node2vec_catboost_test_feature_importance.csv
+Target order used: ['inflow_count', 'outflow_count']
+Number of model features: 63
+Prepared folds: 10
+Search method: catboost_test
+Hyperparameter trials: 1
+Active spatial folds: 1
+Expected validation model fits: 1
+Expected final test model fits: 1
+VALID | trial=001 | fold=00 | epoch=208 | batch=N/A | MSE=36.3655 | RMSE=6.0299 | Recall@20=0.5134
+Completed trial 001/001
+TEST  | fold=00 | epoch=208 | batch=N/A | MSE=11.3054 | RMSE=3.3623 | Recall@20=0.5032
+
+Best trial: 1
+Best average validation RMSE: 6.0299
+Grid results saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df1_baseline_node2vec_no_semantic_catboost_test_grid.csv
+Fold results saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df1_baseline_node2vec_no_semantic_catboost_test_fold.csv
+Feature importance saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df1_baseline_node2vec_no_semantic_catboost_test_feature_importance.csv
+Target order used: ['inflow_count', 'outflow_count']
+Number of model features: 63
+Prepared folds: 10
+Search method: catboost_test
+Hyperparameter trials: 1
+Active spatial folds: 1
+Expected validation model fits: 1
+Expected final test model fits: 1
+VALID | trial=001 | fold=00 | epoch=59 | batch=N/A | MSE=39.4257 | RMSE=6.2788 | Recall@20=0.5320
+Completed trial 001/001
+TEST  | fold=00 | epoch=59 | batch=N/A | MSE=12.8589 | RMSE=3.5857 | Recall@20=0.4322
+
+Best trial: 1
+Best average validation RMSE: 6.2788
+Grid results saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df2_baseline_catboost_test_grid.csv
+Fold results saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df2_baseline_catboost_test_fold.csv
+Feature importance saved to: /home/najla/dev/najla-msc/bikeshare/results/semantic_enhancement/catboost/multiReg_catboost_12pm_5yrs_pca16_0no_text_df2_baseline_catboost_test_feature_importance.csv
+Target order used: ['inflow_count', 'outflow_count']
+Number of model features: 47

@@ -1,0 +1,31 @@
+PyTorch device: cuda
+Loading model dataframe: /home/najla/dev/najla-msc/bikeshare/data/processed/model_df/df_2targets_txtTokens_graphFeat.parquet
+Loaded dataframe shape: (740505, 73)
+Loading fold assignments: /home/najla/dev/najla-msc/bikeshare/data/processed/model_df/folds_of_2targets_txtTokens_graphFeat.parquet
+Loaded fold-assignment shape: (200, 3)
+Loading MiniLM embeddings: /home/najla/dev/najla-msc/bikeshare/data/processed/graph/all_wikidata_minilm_embeddings.parquet
+Loaded MiniLM embedding shape: (469, 385)
+Joined MLP dataframe shape: (740505, 456)
+Targets: ['inflow_count', 'outflow_count']
+Categorical feature count: 4
+Numerical feature count: 59
+MiniLM feature count: 384
+Number of SPCV folds: 10
+Fold 00 | train groups=(0, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 17, 18) | val groups=(1, 7, 11) | test groups=(2, 16, 19)
+Fold 01 | train groups=(2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 18) | val groups=(0, 1, 5) | test groups=(13, 17, 19)
+Fold 02 | train groups=(0, 3, 5, 6, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19) | val groups=(1, 4, 7) | test groups=(2, 8, 12)
+Fold 03 | train groups=(0, 3, 4, 5, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19) | val groups=(1, 6, 7) | test groups=(2, 8, 12)
+Fold 04 | train groups=(0, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18) | val groups=(2, 16, 19) | test groups=(1, 4, 5)
+Fold 05 | train groups=(0, 2, 3, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 18) | val groups=(1, 4, 7) | test groups=(16, 17, 19)
+Fold 06 | train groups=(0, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 14, 15, 18) | val groups=(16, 17, 19) | test groups=(1, 10, 11)
+Fold 07 | train groups=(0, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18) | val groups=(2, 16, 19) | test groups=(1, 5, 12)
+Fold 08 | train groups=(0, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18) | val groups=(1, 5, 12) | test groups=(2, 16, 19)
+Fold 09 | train groups=(0, 3, 5, 6, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19) | val groups=(2, 8, 12) | test groups=(1, 4, 7)
+MLP folds prepared one at a time: 10
+Search method: full_grid
+Hyperparameter trials: 384
+Active spatial folds: 10
+Expected model fits: 3840
+Comparison metric: Avg_MSE_mean
+First fold X_train shape: (517921, 100)
+First fold y_train shape: (517921, 2)

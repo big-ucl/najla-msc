@@ -1,0 +1,18 @@
+Started MLP smoke test pca32 semantic_vs_node2vec at 2026-08-14T20:29:52+01:00
+Working directory: /home/najla/dev/najla-msc
+CUDA_VISIBLE_DEVICES=0
+MLP_WIKI_MODE=pca32
+PYTHONUNBUFFERED=1
+Command: .venv/bin/python -u bikeshare/scripts/semantic_enhancement/mlp/mlp_smoke_test.py
+DEVICE | cuda
+KEEPING_POI_LAND_USE | n_poi_cols=13 | n_land_use_cols=22
+VARIANT | df_indx=0 | trials=1 | folds=1
+FOLD | df_indx=0 | fold=00 | 1/1 complete
+BEST | df_indx=0 | trial=001 | validation_MSE=40.2133
+VARIANT | df_indx=1 | trials=1 | folds=1
+FOLD | df_indx=1 | fold=00 | 1/1 complete
+BEST | df_indx=1 | trial=001 | validation_MSE=36.0463
+VARIANT | df_indx=2 | trials=1 | folds=1
+FOLD | df_indx=2 | fold=00 | 1/1 complete
+BEST | df_indx=2 | trial=001 | validation_MSE=35.8452
+Finished MLP smoke test pca32 semantic_vs_node2vec at 2026-08-14T20:34:19+01:00 with exit code 0

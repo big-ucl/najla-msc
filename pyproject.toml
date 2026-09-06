@@ -1,11 +1,12 @@
 [project]
-name = "activity-graphs"
+name = "bikeshare"
 version = "0.1.0"
-description = "Add your description here"
+description = "Toronto bike-share modelling and graph-semantic experiments"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "altair[all]>=5.5.0",
+    "catboost>=1.2",
     "city2graph>=0.3.0",
     "contextily>=1.6.2",
     "dash>=3.0.4",
@@ -16,7 +17,7 @@ dependencies = [
     "hydra-core>=1.3.2",
     "joblib>=1.5.3",
     "mapclassify>=2.10.0",
-    "marimo[lsp]>=0.13.11",
+    "marimo[lsp,recommended]>=0.13.11",
     "matplotlib>=3.10.3",
     "mypy>=1.15.0",
     "nbconvert>=7.17.0",
@@ -51,16 +52,12 @@ dependencies = [
     "torchmetrics>=1.9.0",
     "scipy-stubs~=1.17.1",
     "wandb>=0.27.0",
+    "pydantic-ai-slim>=2.2.0",
+    "openai>=2.44.0",
 ]
 
-[project.scripts]
-activity-graphs = "activitygraphs.main:main"
-
-[tool.setuptools.packages.find]
-include = ["activitygraphs*"]
-
 [tool.uv]
-package = true
+package = false
 no-build-isolation-package = [
   "torch-cluster",
   "torch-scatter",
@@ -132,4 +129,10 @@ preview = true
 [tool.pytest.ini_options]
 markers = [
     "integration: tests that need processed data on disk; skipped automatically when absent",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.3.0",
+    "jupyterlab>=4.6.1",
 ]

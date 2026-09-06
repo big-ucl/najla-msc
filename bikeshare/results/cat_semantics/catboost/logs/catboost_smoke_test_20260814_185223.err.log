@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/home/najla/dev/najla-msc/bikeshare/scripts/semantic_enhancement/catboost_smoke_test.py", line 26, in <module>
+    from catboost import CatBoostRegressor
+  File "/home/najla/dev/najla-msc/bikeshare/scripts/semantic_enhancement/catboost.py", line 26, in <module>
+    from catboost import CatBoostRegressor
+ImportError: cannot import name 'CatBoostRegressor' from partially initialized module 'catboost' (most likely due to a circular import) (/home/najla/dev/najla-msc/bikeshare/scripts/semantic_enhancement/catboost.py)

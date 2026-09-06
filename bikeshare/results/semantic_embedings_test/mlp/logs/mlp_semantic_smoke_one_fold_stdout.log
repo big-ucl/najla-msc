@@ -1,0 +1,4 @@
+DEVICE | cuda
+VARIANT | df_indx=0 | trials=32 | folds=1
+FOLD | df_indx=0 | fold=00 | 1/1 complete
+BEST | df_indx=0 | trial=003 | validation_MSE=39.7779

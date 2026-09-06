@@ -1,0 +1,18 @@
+Started MLP smoke test pca32 no_poi at 2026-08-14T20:07:27+01:00
+Working directory: /home/najla/dev/najla-msc
+CUDA_VISIBLE_DEVICES=0
+MLP_WIKI_MODE=pca32
+PYTHONUNBUFFERED=1
+Command: .venv/bin/python -u bikeshare/scripts/semantic_enhancement/mlp/mlp_smoke_test.py
+DEVICE | cuda
+DROPPING_POI | n_cols=13 | cols=['poi_arts_and_entertainment', 'poi_community_and_government', 'poi_cultural_and_historic', 'poi_education', 'poi_food_and_drink', 'poi_geographic_entities', 'poi_health_care', 'poi_lifestyle_services', 'poi_lodging', 'poi_services_and_business', 'poi_shopping', 'poi_sports_and_recreation', 'poi_travel_and_transportation']
+VARIANT | df_indx=0 | trials=1 | folds=1
+FOLD | df_indx=0 | fold=00 | 1/1 complete
+BEST | df_indx=0 | trial=001 | validation_MSE=38.3977
+VARIANT | df_indx=1 | trials=1 | folds=1
+FOLD | df_indx=1 | fold=00 | 1/1 complete
+BEST | df_indx=1 | trial=001 | validation_MSE=35.5698
+VARIANT | df_indx=2 | trials=1 | folds=1
+FOLD | df_indx=2 | fold=00 | 1/1 complete
+BEST | df_indx=2 | trial=001 | validation_MSE=36.7645
+Finished MLP smoke test pca32 no_poi at 2026-08-14T20:11:29+01:00 with exit code 0

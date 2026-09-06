@@ -1,0 +1,3 @@
+
+PYTHON=.venv/bin/python
+CATBOOST_WIKI_MODE=pca32
